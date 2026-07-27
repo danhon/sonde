@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Settings — sonde{% endblock %}
+{% block content %}
+
+{% if needs_review %}
+<form method="post" action="/settings/accept-departures"
+      class="mb-8 border-l-4 border-red-700 bg-red-50 px-5 py-4">
+  <p class="font-semibold text-red-900">Sweep held for review</p>
+  <p class="mt-1 max-w-2xl text-sm text-red-800">
+    The last full sweep would have marked <strong>{{ needs_review }}</strong> followers
+    departed, above the {{ settings.mass_departure_pct }}% threshold. No events were
+    written. If this was real — a moderation action or a bot purge — accept it once
+    to apply the departures and clear the flag.
+  </p>
+  <button type="submit"
+          class="mt-3 bg-red-800 px-4 py-1.5 font-mono text-xs uppercase tracking-widest text-white hover:bg-red-900">
+    Accept this sweep
+  </button>
+</form>
+{% endif %}
+
+<section>
+  <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+    Run a job
+  </h2>
+  {% if running %}
+  <p class="mt-3 font-mono text-xs text-slate-500">running: {{ running | join(", ") }}</p>
+  {% endif %}
+  <div class="mt-3 flex flex-wrap gap-2">
+    {% for kind, label, note in [
+        ('head','Head sweep','1–2 calls'),
+        ('full','Full sweep','115 calls, ~38s'),
+        ('hydrate','Hydrate profiles','up to 40 calls'),
+        ('follows','Sync my follows','46 calls'),
+        ('rescore','Rescore','no API calls'),
+        ('backup','Backup now','no API calls')] %}
+    <form method="post" action="/settings/sync/{{ kind }}">
+      <button type="submit" title="{{ note }}"
+              class="border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs hover:border-red-800 hover:text-red-800
+                     {% if kind in running %}opacity-40{% endif %}">
+        {{ label }} <span class="text-slate-400">{{ note }}</span>
+      </button>
+    </form>
+    {% endfor %}
+  </div>
+  <p class="mt-2 text-xs text-slate-500">
+    Jobs are single-flight — triggering one that's already running attaches to it
+    rather than starting a second.
+  </p>
+</section>
+
+<div class="mt-10 grid gap-10 lg:grid-cols-2">
+  <section>
+    <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+      Coverage
+    </h2>
+    <dl class="mt-3 space-y-1 text-sm">
+      {% for label, value in [
+          ('Followers tracked', "{:,}".format(counts.tracked)),
+          ('Reported by Bluesky', "{:,}".format(counts.reported) if counts.reported else "—"),
+          ('Verified', "{:,}".format(counts.verified)),
+          ('Mutuals', "{:,}".format(counts.mutuals)),
+          ('Private', "{:,}".format(counts.private)),
+          ('Departed', "{:,}".format(counts.departed)),
+          ('Profiles hydrated', "{:,} of {:,} ({}%)".format(progress.hydrated, progress.total, progress.pct)),
+          ('Unservable', "{:,}".format(progress.unservable)) ] %}
+      <div class="flex justify-between gap-4 border-b border-slate-100 py-1">
+        <dt class="text-slate-600">{{ label }}</dt>
+        <dd class="font-mono tabular-nums">{{ value }}</dd>
+      </div>
+      {% endfor %}
+    </dl>
+    {% if counts.reported %}
+    <p class="mt-2 text-xs text-slate-500">
+      Tracked will never equal reported: {{ "{:,}".format(counts.reported - counts.tracked) }}
+      accounts count as follow records while being unservable as profiles. That gap
+      is permanent, not a bug.
+    </p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+      Scoring weights
+    </h2>
+    <dl class="mt-3 space-y-1 text-sm">
+      {% for key, weight in weights.items() %}
+      <div class="flex items-center justify-between gap-4 border-b border-slate-100 py-1
+                  {% if key not in active %}opacity-40{% endif %}">
+        <dt class="text-slate-600">{{ key.replace('_',' ') }}
+          {% if key not in active %}<span class="font-mono text-[10px] uppercase tracking-wider text-slate-400">no data yet</span>{% endif %}
+        </dt>
+        <dd class="font-mono tabular-nums">{{ weight }}</dd>
+      </div>
+      {% endfor %}
+    </dl>
+    <p class="mt-2 text-xs text-slate-500">
+      Read-only for now — edit <code class="font-mono">sonde/scoring.py</code> and
+      rescore. Components with no data corpus-wide are excluded from every
+      denominator equally, so scores stay comparable.
+    </p>
+  </section>
+</div>
+
+<section class="mt-10">
+  <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+    Backup
+  </h2>
+  {% if last_backup %}
+  <p class="mt-3 text-sm">
+    Last snapshot <strong>{{ last_backup.age_hours }}h</strong> ago —
+    <code class="font-mono text-xs">{{ last_backup.path }}</code>
+  </p>
+  {% else %}
+  <p class="mt-3 text-sm text-amber-800">No snapshot has been taken yet.</p>
+  {% endif %}
+  <p class="mt-2 max-w-2xl text-xs text-slate-500">
+    The event history is the only data here that can't be re-fetched from Bluesky,
+    and Docker volumes on ubuntuplex aren't backed up. Snapshots go to a host bind
+    mount so Syncthing can replicate them off-box — if that ever becomes a named
+    volume, backups silently stop leaving the machine.
+  </p>
+  <a href="/export.csv" class="mt-3 inline-block border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs hover:border-red-800 hover:text-red-800">
+    Export CSV
+  </a>
+</section>
+
+<section class="mt-10">
+  <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+    Recent runs
+  </h2>
+  <div class="overflow-x-auto">
+    <table class="mt-3 w-full text-sm">
+      <thead>
+        <tr class="border-b border-slate-200 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
+          <th class="py-2 pr-4">Kind</th><th class="py-2 pr-4">Started</th><th class="py-2 pr-4">Status</th>
+          <th class="py-2 pr-4 text-right">Pages</th><th class="py-2 pr-4 text-right">Seen</th>
+          <th class="py-2 pr-4 text-right">Calls</th><th class="py-2 pr-4">Error</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in runs %}
+        <tr class="border-b border-slate-100">
+          <td class="py-2 pr-4 font-mono text-xs">{{ r.kind }}</td>
+          <td class="py-2 pr-4 font-mono text-xs text-slate-500">{{ r.started_at[:16].replace("T"," ") }}</td>
+          <td class="py-2 pr-4 font-mono text-xs {% if r.status == 'ok' %}text-emerald-700{% elif r.status == 'running' %}text-slate-500{% else %}text-red-700{% endif %}">{{ r.status }}</td>
+          <td class="py-2 pr-4 text-right font-mono tabular-nums">{{ r.pages_fetched }}</td>
+          <td class="py-2 pr-4 text-right font-mono tabular-nums">{{ r.actors_seen }}</td>
+          <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">{{ r.api_calls }}</td>
+          <td class="py-2 pr-4 text-xs text-red-700">{{ (r.error or "")[:60] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% endblock %}

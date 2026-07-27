@@ -30,6 +30,10 @@
     <input type="checkbox" name="verified" value="true" {% if verified %}checked{% endif %}>
     <span class="text-sm text-slate-700">Verified only</span>
   </label>
+  <label class="flex items-center gap-2 pb-1.5">
+    <input type="checkbox" name="mutual" value="true" {% if mutual %}checked{% endif %}>
+    <span class="text-sm text-slate-700">Mutuals only</span>
+  </label>
   <button type="submit" class="mb-0.5 bg-slate-900 px-4 py-1.5 font-mono text-xs uppercase tracking-widest text-white hover:bg-red-800">
     Apply
   </button>
@@ -56,9 +60,9 @@
       {% for row in rows %}
       <tr class="border-b border-slate-100 hover:bg-slate-50">
         <td class="py-2 pr-4">
-          <a class="font-mono text-xs text-red-800 hover:underline"
-             href="https://bsky.app/profile/{{ row.handle }}" target="_blank" rel="noopener">{{ row.handle }}</a>
+          <a class="font-mono text-xs text-red-800 hover:underline" href="/followers/{{ row.did }}">{{ row.handle }}</a>
           {% if row.verified_status == 'valid' %}<span class="ml-1 text-sky-700" title="verified">✓</span>{% endif %}
+          {% if row.is_mutual %}<span class="ml-1 text-emerald-700" title="mutual">⇄</span>{% endif %}
           {% if row.is_private %}<span class="ml-1 text-slate-400" title="hidden when logged out">◍</span>{% endif %}
         </td>
         <td class="py-2 pr-4">{{ row.display_name or "" }}</td>

@@ -29,6 +29,12 @@ async def run_hydrate() -> dict:
     return await registry.run("hydrate", lambda: profiles.hydrate(limit=1000))
 
 
+async def run_follows() -> dict:
+    from sonde.sync import mutuals
+
+    return await registry.run("follows", mutuals.sync_follows)
+
+
 async def run_nightly() -> dict:
     """Daily rollup then snapshot, in that order so the backup includes it."""
     from sonde.sync import backup
@@ -57,6 +63,11 @@ def attach_scheduler(app: FastAPI) -> AsyncIOScheduler:
     scheduler.add_job(
         run_hydrate, "interval", hours=1,
         id="hydrate", max_instances=1, coalesce=True, misfire_grace_time=1800,
+    )
+    # My own follow list: mutual detection, and the affinity index's source pool.
+    scheduler.add_job(
+        run_follows, "interval", hours=24,
+        id="follows", max_instances=1, coalesce=True, misfire_grace_time=3600,
     )
     # Rollup + snapshot. follow_events cannot be re-fetched from Bluesky and
     # Docker volumes on ubuntuplex are not backed up, so this is the only thing

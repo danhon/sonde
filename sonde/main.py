@@ -61,6 +61,18 @@ async def _run_rescore() -> int:
         await store.close()
 
 
+async def _run_follows() -> int:
+    from sonde.db import store
+    from sonde.sync import mutuals
+
+    await store.connect()
+    try:
+        log.info("follows sync finished: %s", await mutuals.sync_follows())
+        return 0
+    finally:
+        await store.close()
+
+
 async def _run_backup() -> int:
     from sonde.db import store
     from sonde.sync import backup
@@ -82,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hydrate", action="store_true", help="hydrate stale profiles and exit")
     parser.add_argument("--rescore", action="store_true", help="recompute all scores and exit")
     parser.add_argument("--limit", type=int, default=None, help="cap actors hydrated")
+    parser.add_argument("--follows", action="store_true", help="sync my follow list and exit")
     parser.add_argument("--backup", action="store_true", help="write a snapshot and exit")
     parser.add_argument("--schedule", action="store_true", help="web UI plus scheduled sweeps")
     args = parser.parse_args(argv)
@@ -94,6 +107,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_run_hydrate(args.limit))
     if args.rescore:
         return asyncio.run(_run_rescore())
+    if args.follows:
+        return asyncio.run(_run_follows())
     if args.backup:
         return asyncio.run(_run_backup())
 

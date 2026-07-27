@@ -329,7 +329,7 @@ async def rescore_all() -> int:
 async def ranked_followers(
     limit: int = 50, offset: int = 0, *, order: str = "influence",
     verified_only: bool = False, min_followers: int | None = None,
-    query: str | None = None,
+    query: str | None = None, mutual_only: bool = False,
 ) -> list[dict]:
     order_sql = {
         "influence": "a.influence_score DESC NULLS LAST, a.followers_count DESC",
@@ -342,6 +342,8 @@ async def ranked_followers(
     params: list = []
     if verified_only:
         where.append("a.verified_status = 'valid'")
+    if mutual_only:
+        where.append("mf.did IS NOT NULL")
     if min_followers is not None:
         where.append("COALESCE(a.followers_count, 0) >= ?")
         params.append(min_followers)
@@ -356,8 +358,9 @@ async def ranked_followers(
 
     db = await _db()
     sql = (
-        "SELECT a.*, fs.first_seen_at, fs.list_rank FROM actors a "
-        "JOIN follower_state fs USING (did) "
+        "SELECT a.*, fs.first_seen_at, fs.list_rank, (mf.did IS NOT NULL) AS is_mutual "
+        "FROM actors a JOIN follower_state fs USING (did) "
+        "LEFT JOIN my_follows mf USING (did) "
         f"WHERE {' AND '.join(where)} ORDER BY {order_sql} LIMIT ? OFFSET ?"
     )
     async with db.execute(sql, (*params, limit, offset)) as cur:
@@ -513,12 +516,14 @@ async def counts() -> dict:
         "WHERE fs.is_current = 1 AND a.labels LIKE '%no-unauthenticated%'"
     )
     departed = await _scalar("SELECT COUNT(*) FROM follower_state WHERE is_current = 0")
+    mutuals = await mutual_count()
     reported = await get_meta("followers_reported")
     return {
         "tracked": tracked,
         "verified": verified,
         "private": private,
         "departed": departed,
+        "mutuals": mutuals,
         "reported": int(reported) if reported else None,
     }
 
@@ -594,6 +599,72 @@ async def verified_summary() -> dict:
         "institutional": sum(g["count"] for g in institutional),
         "issuer_count": len(groups),
     }
+
+
+async def replace_my_follows(dids: Sequence[str]) -> None:
+    """Rewrite the follow list. Rows that vanish mean I unfollowed someone."""
+    db = await _db()
+    now = utcnow()
+    await db.executemany(
+        "INSERT INTO my_follows (did, last_seen_at) VALUES (?,?) "
+        "ON CONFLICT (did) DO UPDATE SET last_seen_at = excluded.last_seen_at",
+        [(d, now) for d in dids],
+    )
+    await db.execute("DELETE FROM my_follows WHERE last_seen_at < ?", (now,))
+
+
+async def mutual_count() -> int:
+    return await _scalar(
+        "SELECT COUNT(*) FROM follower_state fs JOIN my_follows mf USING (did) "
+        "WHERE fs.is_current = 1"
+    )
+
+
+async def follower_detail(did: str) -> dict | None:
+    """Everything known about one person, for the detail page."""
+    db = await _db()
+    async with db.execute(
+        """SELECT a.*, fs.is_current, fs.first_seen_at, fs.last_seen_at,
+                  fs.backfilled, fs.list_rank, fs.lost_at, fs.missed_sweeps,
+                  (mf.did IS NOT NULL) AS is_mutual
+             FROM actors a
+             LEFT JOIN follower_state fs USING (did)
+             LEFT JOIN my_follows mf USING (did)
+            WHERE a.did = ?""",
+        (did,),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        return None
+    out = dict(row)
+    out["components"] = json.loads(out.get("score_components") or "{}").get("components", [])
+    out["verification_records"] = json.loads(out.get("verifications") or "[]")
+    out["labels_list"] = json.loads(out.get("labels") or "[]")
+    out["is_private"] = "!no-unauthenticated" in out["labels_list"]
+    out["events"] = await events_for(did)
+    return out
+
+
+async def export_rows() -> list[dict]:
+    """Flat rows for CSV. Honours the private-follower display policy."""
+    db = await _db()
+    where = "fs.is_current = 1"
+    if settings.respect_no_unauthenticated:
+        where += " AND COALESCE(a.labels,'') NOT LIKE '%no-unauthenticated%'"
+    async with db.execute(
+        f"""SELECT a.did, a.handle, a.display_name, a.followers_count, a.follows_count,
+                   a.posts_count, a.verified_status, a.trusted_verifier_status,
+                   a.influence_score, a.account_created_at,
+                   fs.first_seen_at, fs.list_rank,
+                   (mf.did IS NOT NULL) AS is_mutual,
+                   (COALESCE(a.labels,'') LIKE '%no-unauthenticated%') AS is_private
+              FROM actors a
+              JOIN follower_state fs USING (did)
+              LEFT JOIN my_follows mf USING (did)
+             WHERE {where}
+             ORDER BY a.influence_score DESC NULLS LAST"""
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
 
 
 async def record_daily_snapshot() -> dict:
@@ -677,8 +748,8 @@ async def dashboard_stats() -> dict:
     tiles = [
         ("Followers tracked", f"{c['tracked']:,}", gap_note),
         ("Verified", f"{c['verified']:,}", None),
-        ("Private", f"{c['private']:,}", "hidden when logged out"),
-        ("Departed", f"{c['departed']:,}", None),
+        ("Mutuals", f"{c['mutuals']:,}", "we follow each other"),
+        ("Departed", f"{c['departed']:,}", f"{c['private']:,} private"),
     ]
     needs_review = await get_meta("needs_review_count")
     return {

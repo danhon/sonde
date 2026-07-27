@@ -36,7 +36,7 @@
       <span class="w-10 shrink-0 font-mono text-xs tabular-nums text-slate-400">
         {{ (page - 1) * 50 + loop.index }}
       </span>
-      <span class="font-mono text-sm text-red-800">{{ row.handle }}</span>
+      <a class="font-mono text-sm text-red-800 hover:underline" href="/followers/{{ row.did }}">{{ row.handle }}</a>
       {% if row.display_name %}<span class="text-sm text-slate-700">{{ row.display_name }}</span>{% endif %}
       {% if row.verified_status == 'valid' %}
         <span class="rounded-sm bg-sky-50 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-sky-800">verified</span>
