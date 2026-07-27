@@ -91,6 +91,7 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         # Its own clock. Sharing external_fetched_at with the Wikidata join
         # meant the join always looked "fresh", so pageviews never ran.
         ("pageviews_fetched_at", "TEXT"),
+        ("link_signals", "TEXT"),      # JSON, derived from the bio — no calls
     ],
 }
 
@@ -1058,7 +1059,8 @@ async def follower_detail(did: str) -> dict | None:
     out["verification_records"] = json.loads(out.get("verifications") or "[]")
     # Parsed here too, not just in wikidata_matched(), or the detail page
     # renders the raw JSON string.
-    for key in ("wikidata_occupations", "wikidata_employers", "wikidata_positions"):
+    for key in ("wikidata_occupations", "wikidata_employers", "wikidata_positions",
+                "link_signals"):
         try:
             out[key] = json.loads(out.get(key) or "[]")
         except (ValueError, TypeError):
@@ -1333,6 +1335,30 @@ async def apply_wikidata(mapping: dict[str, dict]) -> int:
     )
     await db.commit()
     return len(updates)
+
+
+async def refresh_link_signals() -> dict:
+    """Derive signals from bio links. No network calls — the text is stored."""
+    from sonde.external.links import signals_for
+
+    db = await _db()
+    async with db.execute(
+        "SELECT a.did, a.handle, a.description FROM actors a "
+        "JOIN follower_state fs USING (did) WHERE fs.is_current = 1"
+    ) as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+
+    updates, kinds = [], {}
+    for row in rows:
+        signals = signals_for(row["description"], row["handle"])
+        updates.append((json.dumps(signals) if signals else None, row["did"]))
+        for signal in signals:
+            kinds[signal["kind"]] = kinds.get(signal["kind"], 0) + 1
+    await db.executemany("UPDATE actors SET link_signals = ? WHERE did = ?", updates)
+    await db.commit()
+    return {"scanned": len(rows),
+            "with_signals": sum(1 for u in updates if u[0]),
+            "by_kind": dict(sorted(kinds.items(), key=lambda kv: -kv[1]))}
 
 
 async def wikidata_qids_for_followers(mapping: dict[str, dict]) -> list[str]:

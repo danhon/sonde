@@ -570,7 +570,7 @@ Sub-steps for the scoring work are sequenced in
 | M5 | Mutuals, detail pages, settings, CSV | ✅ done | 2,170 mutuals |
 | M6 | Affinity index + institutional matching | ✅ done | 24.5% coverage; 56 institution matches |
 | M7 | External reputation — Wikidata + Wikipedia | ✅ done | 107 matched, 58 with pageviews. `public_profile` is live |
-| M7b | GDELT, self-declared homepages, LinkedIn | ⬜ planned | The remaining external sources |
+| M7b | Link signals from bios | ✅ done | GDELT and LinkedIn **dropped on evidence** — see below |
 | M8 | Affiliations table, notes/links, prose rationale | ⬜ planned | Needs M7 for org notability |
 | M9 | Auth, hiding, follow dates | ✅ done | Follow dates free via `viewer.followedBy` TIDs |
 | M10 | Recent posts | ✅ done | Top 500 + verified automatic; others on demand |
@@ -624,6 +624,27 @@ endpoint, so detail is requested only for the ~1% who are actually followers.
 107 matched, with occupation, employer and position; 58 have Wikipedia pageview
 counts. This activated `public_profile`, which had been contributing nothing
 because no data existed for it.
+
+**M7b** Signals derived from the links people put in their own bios — the most
+consented source available, and free, since the text is already stored. 1,248
+followers carry one: 60 newsletter platforms, 38 code hosts, 23 academic
+domains, 27 LinkedIn profiles, plus self-declared personal domains. Feeds M11
+grouping directly.
+
+**Two of the three planned components were dropped after measuring them**, which
+is recorded here rather than quietly abandoned:
+
+- *LinkedIn:* **zero** of the 564 accounts in the enrichment set have a LinkedIn
+  URL in their bio. The module was scoped to self-declared URLs only, so it
+  could never have fired. Building it would have been ceremony.
+- *GDELT:* returned **no data at all** for Naomi Klein and Jeff VanderMeer — the
+  two most notable people in the set — while Wikipedia pageviews handled both
+  (12,700 views for VanderMeer). An unreliable signal that duplicates a reliable
+  one is not worth the calls.
+- *Homepage fetching:* only 121 of 564 have any bio URL, and the commonest hosts
+  are aggregators (linktr.ee, 16) and shorteners rather than personal sites with
+  structured data. The **host itself** carries the signal, so it is read for
+  free instead of fetched.
 
 **M12** Daily digest at 14:00 `America/Los_Angeles`, pinned to a real timezone
 so it does not drift an hour twice a year with daylight saving — verified to
@@ -701,11 +722,6 @@ Depends on nothing except auth, which exists. Estimated ~500 calls on first run,
 then a few dozen a day incrementally.
 
 ### Still outstanding
-
-**M7b — Remaining external sources.** GDELT news volume (gated on a
-disambiguating token), self-declared homepage parsing, and the opt-in LinkedIn
-module. Lower value than the Wikidata join now that occupation and employer are
-already resolved for the people who have them.
 
 **M8 — Affiliations.** Wikidata employer and position data now exists for
 matched followers, which is the input this needed. The remaining work is
