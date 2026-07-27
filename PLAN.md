@@ -578,7 +578,7 @@ Sub-steps for the scoring work are sequenced in
 | M12 | Email digest | ✅ done | Daily 14:00 America/Los_Angeles; quiet days silent, broken days always send |
 | M15a | Institution slices | ✅ done | Sortable, kind-filtered, former separated |
 | M15b | Group discovery + review queue | ✅ done | 25 candidates proposed, none auto-created |
-| M15c | Follow-graph propagation | 🔨 in progress | Edges now stored; verifying against the real graph |
+| M15c | Follow-graph propagation | ✅ done | 194 proposals over 11,038 real edges; found Whittaker for privacy |
 | M14 | Relationship score — interaction-based ranking | ⬜ planned | Separate from influence; notifications are ~190x cheaper than per-post |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
@@ -690,6 +690,16 @@ Phrase extraction needed two fixes found by looking at the first output: bio
 URLs dominated the results ("Bsky Social", "App Profile", "Mastodon Social"),
 and bigrams spanned punctuation, inventing "rights human" from "digital rights,
 human dignity".
+
+**M15c** Propagation over the real follow graph — 11,038 edges from 187 sources.
+The naive form failed instructively: sources that follow many of a group's
+members proposed 329 memberships, with 25 people in five or more groups and one
+in all seven. Every index source comes from one person's follow graph, so the
+accounts following journalists also follow developers and academics. A source
+now has to follow a group *disproportionately* (lift against the baseline rate),
+and nobody is proposed for more than their two best-matching groups. 194
+proposals across 113 people, and it surfaces what rules cannot: Meredith
+Whittaker for privacy, which no bio rule caught.
 
 **M12** Daily digest at 14:00 `America/Los_Angeles`, pinned to a real timezone
 so it does not drift an hour twice a year with daylight saving — verified to

@@ -2092,17 +2092,26 @@ async def store_affinity_edges(edges: list[tuple[str, str]]) -> int:
     return len(edges)
 
 
-async def propagate_groups(min_seeds: int = 3, min_overlap: float = 0.30,
-                           min_shared: int = 2) -> dict:
+async def propagate_groups(min_seeds: int = 3, min_lift: float = 1.6,
+                           min_shared: int = 3, max_groups_per_person: int = 2,
+                           min_overlap: float = 0.25) -> dict:
     """T5 — guilt by association over the follow graph.
 
     Rules cannot find "civic tech" or "privacy activist": those are communities,
     not job titles, and they are legible in who follows whom long before they
-    appear in a bio. For each group with enough confident members, find
-    followers whose set of index sources overlaps heavily with the group's.
+    appear in a bio.
 
-    Everything produced here is a *proposal* — low confidence, its own tier, and
-    it never overrides stronger evidence.
+    The naive version — sources that follow many of a group's members — does not
+    work here, and the first real run showed why: every index source comes from
+    one person's follow graph, so the accounts following journalists also follow
+    developers and academics. It proposed 329 memberships with 25 people in five
+    or more groups and one in all seven, which is not classification, it is
+    "this account is well connected".
+
+    So a source only characterises a group if it follows that group
+    *disproportionately* — lift against the baseline rate across all
+    candidates. And a person is proposed for at most a couple of groups, best
+    overlap first, because being proposed for seven means nothing.
     """
     from sonde.groups import PROPAGATION
 
@@ -2127,53 +2136,73 @@ async def propagate_groups(min_seeds: int = 3, min_overlap: float = 0.30,
             entry = members.setdefault(row["slug"], (row["id"], set()))
             entry[1].add(row["did"])
 
-    candidates = await group_target_dids(top_n=settings.posts_top_n)
-    now = utcnow()
-    proposed = 0
-    by_group: dict[str, int] = {}
+    candidates = [d for d in await group_target_dids(top_n=settings.posts_top_n)
+                  if sources_of.get(d)]
+    if not candidates:
+        return {"proposed": 0, "skipped": "no candidates in the follow graph"}
+
+    # Baseline: how often each source follows anyone at all. A source following
+    # half the network characterises nothing.
+    baseline: dict[str, int] = {}
+    for did in candidates:
+        for source in sources_of[did]:
+            baseline[source] = baseline.get(source, 0) + 1
+    total = len(candidates)
+
+    # Best proposals per person, resolved after scoring every group.
+    proposals: dict[str, list[tuple[float, int, str, str]]] = {}
 
     for slug, (group_id, seed_dids) in members.items():
-        seeds = [sources_of.get(d, set()) for d in seed_dids]
-        seeds = [s for s in seeds if s]
+        seeds = [sources_of[d] for d in seed_dids if sources_of.get(d)]
         if len(seeds) < min_seeds:
             continue
-        # How often each source follows a member of this group.
-        seed_sources: dict[str, int] = {}
+        seed_counts: dict[str, int] = {}
         for source_set in seeds:
             for source in source_set:
-                seed_sources[source] = seed_sources.get(source, 0) + 1
-        # Sources that follow a meaningful share of the group characterise it.
-        signature = {s for s, n in seed_sources.items() if n / len(seeds) >= min_overlap}
+                seed_counts[source] = seed_counts.get(source, 0) + 1
+
+        signature = set()
+        for source, count in seed_counts.items():
+            in_group = count / len(seeds)
+            overall = baseline.get(source, 0) / total
+            if overall and in_group / overall >= min_lift and in_group >= min_overlap:
+                signature.add(source)
         if len(signature) < min_shared:
             continue
 
         for did in candidates:
             if did in seed_dids:
                 continue
-            mine = sources_of.get(did)
-            if not mine:
-                continue
-            shared = len(mine & signature)
+            shared = len(sources_of[did] & signature)
             if shared < min_shared:
                 continue
             overlap = shared / len(signature)
             if overlap < min_overlap:
                 continue
+            proposals.setdefault(did, []).append((overlap, group_id, slug, (
+                f"followed by {shared} of the {len(signature)} accounts that "
+                f"distinctively follow this group")))
+
+    now = utcnow()
+    proposed = 0
+    by_group: dict[str, int] = {}
+    for did, options in proposals.items():
+        options.sort(reverse=True)
+        for overlap, group_id, slug, evidence in options[:max_groups_per_person]:
             await db.execute(
                 """INSERT INTO group_members
                      (group_id, did, tier, confidence, evidence, created_at)
                    VALUES (?,?,?,?,?,?)
                    ON CONFLICT (group_id, did) DO NOTHING""",
                 (group_id, did, "propagation", round(PROPAGATION * overlap, 3),
-                 f"followed by {shared} of the {len(signature)} accounts that "
-                 f"characterise this group", now),
+                 evidence, now),
             )
             proposed += 1
             by_group[slug] = by_group.get(slug, 0) + 1
 
     await db.commit()
-    return {"proposed": proposed, "by_group": dict(
-        sorted(by_group.items(), key=lambda kv: -kv[1]))}
+    return {"proposed": proposed, "considered": len(proposals),
+            "by_group": dict(sorted(by_group.items(), key=lambda kv: -kv[1]))}
 
 
 async def affinity_source_count() -> int:

@@ -43,17 +43,38 @@ async def test_nothing_happens_without_a_follow_graph(db):
     assert "rebuild the affinity index" in result["skipped"]
 
 
-async def test_someone_the_group_sources_follow_is_proposed(db):
-    """Three journalists share sources; a fourth account they all follow is a
-    candidate even with nothing in its bio."""
+async def journalist_graph(extra_members: int = 6) -> None:
+    """A realistic graph: sources distinctive to the group, plus background
+    sources that follow everyone.
+
+    Lift needs that background to measure against — a source following the
+    whole network characterises nothing, which is exactly the failure the first
+    real run produced.
+    """
     for i in range(3):
         await follower(f"did:plc:j{i}", i, wikidata_occupations='["journalist"]')
-    await follower("did:plc:unknown", 9)          # no occupation, no bio signal
+    await follower("did:plc:unknown", 50)
+    for k in range(extra_members):
+        await follower(f"did:plc:other{k}", 60 + k)
     await store.classify_groups()
 
-    shared = [(f"did:plc:src{s}", f"did:plc:j{i}") for s in range(4) for i in range(3)]
-    shared += [(f"did:plc:src{s}", "did:plc:unknown") for s in range(4)]
-    await edges(shared)
+    pairs = []
+    everyone = [f"did:plc:j{i}" for i in range(3)] + ["did:plc:unknown"] + \
+               [f"did:plc:other{k}" for k in range(extra_members)]
+    # Background sources follow everybody, so they carry no lift.
+    for b in range(3):
+        pairs += [(f"did:plc:bg{b}", d) for d in everyone]
+    # Distinctive sources follow only the journalists and the unknown account.
+    for s in range(4):
+        pairs += [(f"did:plc:src{s}", f"did:plc:j{i}") for i in range(3)]
+        pairs.append((f"did:plc:src{s}", "did:plc:unknown"))
+    await edges(pairs)
+
+
+async def test_someone_the_group_sources_follow_is_proposed(db):
+    """Sources specific to the journalists also follow one unlabelled account,
+    which is the whole point: no occupation, no bio signal, still a candidate."""
+    await journalist_graph()
 
     result = await store.propagate_groups()
 
@@ -62,28 +83,48 @@ async def test_someone_the_group_sources_follow_is_proposed(db):
     assert "did:plc:unknown" in members
 
 
-async def test_a_proposal_is_marked_as_such(db):
+async def test_a_source_that_follows_everyone_characterises_nothing(db):
+    """The failure the first real run produced: 25 people in five or more
+    groups, because every source came from one person's follow graph."""
     for i in range(3):
         await follower(f"did:plc:j{i}", i, wikidata_occupations='["journalist"]')
-    await follower("did:plc:maybe", 9)
+    for k in range(6):
+        await follower(f"did:plc:other{k}", 60 + k)
     await store.classify_groups()
-    await edges([(f"did:plc:s{s}", f"did:plc:j{i}") for s in range(4) for i in range(3)]
-                + [(f"did:plc:s{s}", "did:plc:maybe") for s in range(4)])
+
+    everyone = [f"did:plc:j{i}" for i in range(3)] + [f"did:plc:other{k}" for k in range(6)]
+    await edges([(f"did:plc:bg{b}", d) for b in range(5) for d in everyone])
+
+    assert (await store.propagate_groups())["proposed"] == 0
+
+
+async def test_nobody_is_proposed_for_many_groups_at_once(db):
+    await journalist_graph()
+    await store.propagate_groups()
+
+    conn = await store._db()
+    async with conn.execute(
+        "SELECT did, COUNT(*) n FROM group_members WHERE tier = 'propagation' "
+        "GROUP BY did ORDER BY n DESC LIMIT 1"
+    ) as cur:
+        row = await cur.fetchone()
+    if row:
+        assert row["n"] <= 2, "being proposed for seven groups means nothing"
+
+
+async def test_a_proposal_is_marked_as_such(db):
+    await journalist_graph()
     await store.propagate_groups()
 
     row = next(m for m in await store.group_members("journalists")
-               if m["did"] == "did:plc:maybe")
+               if m["did"] == "did:plc:unknown")
     assert row["tier"] == "propagation"
     assert row["confidence"] < 0.6, "guilt by association is weak evidence"
-    assert "characterise this group" in row["evidence"]
+    assert "distinctively follow" in row["evidence"]
 
 
 async def test_propagation_never_overrides_stronger_evidence(db):
-    for i in range(3):
-        await follower(f"did:plc:j{i}", i, wikidata_occupations='["journalist"]')
-    await store.classify_groups()
-    await edges([(f"did:plc:s{s}", f"did:plc:j{i}") for s in range(4) for i in range(3)])
-
+    await journalist_graph()
     await store.propagate_groups()
 
     row = next(m for m in await store.group_members("journalists")
@@ -101,14 +142,14 @@ async def test_a_group_with_too_few_seeds_does_not_propagate(db):
 
 
 async def test_a_weak_overlap_is_not_enough(db):
-    for i in range(3):
-        await follower(f"did:plc:j{i}", i, wikidata_occupations='["journalist"]')
-    await follower("did:plc:stranger", 9)
-    await store.classify_groups()
-    # The group shares four sources; the stranger shares one of them.
-    pairs = [(f"did:plc:s{s}", f"did:plc:j{i}") for s in range(4) for i in range(3)]
-    pairs.append(("did:plc:s0", "did:plc:stranger"))
-    await edges(pairs)
+    await journalist_graph()
+    await follower("did:plc:stranger", 99)
+    # The stranger shares one distinctive source out of four.
+    conn = await store._db()
+    await conn.execute(
+        "INSERT INTO affinity_edges (source_did, did) VALUES (?,?)",
+        ("did:plc:src0", "did:plc:stranger"))
+    await store.commit()
 
     await store.propagate_groups()
 
