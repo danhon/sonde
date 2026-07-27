@@ -51,8 +51,39 @@ async def connect(path: str | None = None) -> aiosqlite.Connection:
     _conn.row_factory = aiosqlite.Row
     _db_path = target
     await _conn.executescript(SCHEMA.read_text())
+    await _migrate(_conn)
     await _conn.commit()
     return _conn
+
+
+# Columns added after the first release. `CREATE TABLE IF NOT EXISTS` is a no-op
+# on an existing table, so new columns have to be added explicitly or an upgraded
+# deploy fails on the first query against a live database.
+MIGRATIONS: dict[str, list[tuple[str, str]]] = {
+    "actors": [
+        ("institution_id", "INTEGER"),
+        ("institution_name", "TEXT"),
+        ("institution_score", "REAL"),
+        ("institution_confidence", "REAL"),
+        ("institution_method", "TEXT"),
+        ("institution_role", "TEXT"),
+        ("verified_affinity", "INTEGER"),
+        ("wikidata_id", "TEXT"),
+        ("wikidata_sitelinks", "INTEGER"),
+        ("wikipedia_title", "TEXT"),
+        ("wikipedia_views_30d", "INTEGER"),
+        ("external_fetched_at", "TEXT"),
+    ],
+}
+
+
+async def _migrate(conn: aiosqlite.Connection) -> None:
+    for table, columns in MIGRATIONS.items():
+        async with conn.execute(f"PRAGMA table_info({table})") as cur:
+            existing = {r[1] for r in await cur.fetchall()}
+        for name, decl in columns:
+            if name not in existing:
+                await conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
 async def close() -> None:
@@ -122,6 +153,11 @@ async def get_handle(did: str) -> str | None:
     async with db.execute("SELECT handle FROM actors WHERE did = ?", (did,)) as cur:
         row = await cur.fetchone()
     return row["handle"] if row else None
+
+
+async def subject_did() -> str | None:
+    """Our own DID, cached from the reported-count refresh."""
+    return await get_meta("subject_did")
 
 
 async def known_dids() -> set[str]:
@@ -200,12 +236,14 @@ async def stale_actor_dids(limit: int | None = None) -> list[str]:
     sql = """
         SELECT a.did
           FROM actors a
-          JOIN follower_state fs USING (did)
-         WHERE fs.is_current = 1
+          LEFT JOIN follower_state fs USING (did)
+          LEFT JOIN my_follows mf USING (did)
+         WHERE (fs.is_current = 1 OR mf.did IS NOT NULL)
            AND a.unservable_since IS NULL
            AND (a.profile_fetched_at IS NULL
                 OR julianday('now') - julianday(a.profile_fetched_at) >= ?)
          ORDER BY (a.profile_fetched_at IS NOT NULL),
+                  (fs.did IS NULL),                      -- followers before follows
                   COALESCE(fs.list_rank, 2147483647) ASC,
                   fs.first_seen_at DESC
     """
@@ -285,6 +323,9 @@ async def active_score_components() -> set[str]:
         "selectivity": "followers_count IS NOT NULL AND follows_count IS NOT NULL",
         "liveness": "last_post_at IS NOT NULL OR posts_count IS NOT NULL",
         "affinity": "affinity_sampled IS NOT NULL OR affinity_exact IS NOT NULL",
+        "institution": "institution_score IS NOT NULL",
+        "verified_affinity": "verified_affinity IS NOT NULL",
+        "public_profile": "wikidata_sitelinks IS NOT NULL OR wikipedia_views_30d IS NOT NULL",
     }
     for key, predicate in probes.items():
         async with db.execute(f"SELECT COUNT(*) FROM actors WHERE {predicate}") as cur:
@@ -307,17 +348,45 @@ async def _rescore_did(did: str, active: set[str] | None = None) -> None:
     )
 
 
+async def affinity_scale() -> float | None:
+    """99th-percentile weighted overlap — the self-calibrating affinity ceiling."""
+    db = await _db()
+    async with db.execute(
+        "SELECT COUNT(*) FROM actors WHERE affinity_sampled IS NOT NULL AND affinity_sampled > 0"
+    ) as cur:
+        n = int((await cur.fetchone())[0] or 0)
+    if n < 20:
+        return None
+    async with db.execute(
+        "SELECT affinity_sampled FROM actors WHERE affinity_sampled > 0 "
+        "ORDER BY affinity_sampled DESC LIMIT 1 OFFSET ?", (max(n // 100, 1),)
+    ) as cur:
+        row = await cur.fetchone()
+    return float(row[0]) if row else None
+
+
 async def rescore_all() -> int:
     from sonde import scoring
 
     db = await _db()
     active = await active_score_components()
+    scale = await affinity_scale()
+    # The subject account can appear in its own follower list and in other
+    # people's follow lists; it must not rank among its own followers.
     async with db.execute(
-        "SELECT a.* FROM actors a JOIN follower_state fs USING (did) WHERE fs.is_current = 1"
+        "SELECT a.* FROM actors a JOIN follower_state fs USING (did) "
+        "WHERE fs.is_current = 1 AND a.handle IS NOT ? AND a.did IS NOT ?",
+        (settings.actor, await get_meta("subject_did")),
     ) as cur:
         rows = [dict(r) for r in await cur.fetchall()]
+    await db.execute(
+        "UPDATE actors SET influence_score = NULL, score_components = NULL "
+        "WHERE handle = ? OR did = ?",
+        (settings.actor, await get_meta("subject_did")),
+    )
     updates = []
     for row in rows:
+        row["affinity_scale"] = scale
         score = scoring.score_actor(row, active=active)
         updates.append((score.normalised, score.as_json(), row["did"]))
     await db.executemany(
@@ -338,8 +407,8 @@ async def ranked_followers(
         "handle": "a.handle ASC",
     }.get(order, "a.influence_score DESC NULLS LAST")
 
-    where = ["fs.is_current = 1"]
-    params: list = []
+    where = ["fs.is_current = 1", "a.handle IS NOT ?"]
+    params: list = [settings.actor]
     if verified_only:
         where.append("a.verified_status = 'valid'")
     if mutual_only:
@@ -665,6 +734,217 @@ async def export_rows() -> list[dict]:
              ORDER BY a.influence_score DESC NULLS LAST"""
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]
+
+
+# ------------------------------------------------------- M6 institutions
+
+async def seed_institutions() -> int:
+    """Insert the starter list. Existing rows are left alone — they're editable."""
+    from sonde.institutions import SEED_INSTITUTIONS
+
+    db = await _db()
+    added = 0
+    for inst in SEED_INSTITUTIONS:
+        cur = await db.execute(
+            """INSERT INTO institutions (name, weight, domains, aliases, discovered_at)
+               VALUES (?,?,?,?,?) ON CONFLICT (name) DO NOTHING""",
+            (inst["name"], inst["weight"], json.dumps(inst["domains"]),
+             json.dumps(inst["aliases"]), utcnow()),
+        )
+        added += cur.rowcount or 0
+    await db.commit()
+    return added
+
+
+async def discover_institutions_from_issuers() -> list[str]:
+    """Every verification issuer seen in a sweep is an institution candidate.
+
+    This is what makes the table grow itself as Bluesky's verifier programme
+    expands, rather than needing someone to maintain a list by hand.
+    """
+    db = await _db()
+    async with db.execute(
+        "SELECT verifications FROM actors WHERE verifications IS NOT NULL "
+        "AND verifications != '[]'"
+    ) as cur:
+        rows = await cur.fetchall()
+
+    seen: dict[str, str] = {}
+    for row in rows:
+        for rec in json.loads(row["verifications"] or "[]"):
+            handle = (rec.get("issuerHandle") or "").lower()
+            if handle and handle != "bsky.app":
+                seen[handle] = rec.get("issuerDisplayName") or handle
+
+    added = []
+    for handle, display in seen.items():
+        async with db.execute(
+            "SELECT id FROM institutions WHERE domains LIKE ?", (f'%"{handle}"%',)
+        ) as cur:
+            if await cur.fetchone():
+                continue
+        cur = await db.execute(
+            """INSERT INTO institutions (name, weight, domains, aliases, discovered_at, notes)
+               VALUES (?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING""",
+            (display, 0.9, json.dumps([handle]), json.dumps([display]), utcnow(),
+             "auto-discovered from a verification issuer"),
+        )
+        if cur.rowcount:
+            added.append(display)
+    await db.commit()
+    return added
+
+
+async def all_institutions() -> list[dict]:
+    db = await _db()
+    async with db.execute("SELECT * FROM institutions ORDER BY name") as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+    for r in rows:
+        r["domains"] = json.loads(r["domains"] or "[]")
+        r["aliases"] = json.loads(r["aliases"] or "[]")
+    return rows
+
+
+async def roster_map() -> dict[str, set[int]]:
+    """did -> institution ids that have verified them."""
+    db = await _db()
+    async with db.execute("SELECT institution_id, did FROM institution_roster") as cur:
+        out: dict[str, set[int]] = {}
+        for r in await cur.fetchall():
+            out.setdefault(r["did"], set()).add(r["institution_id"])
+    return out
+
+
+async def save_roster(institution_id: int, records: list[dict]) -> int:
+    db = await _db()
+    await db.executemany(
+        """INSERT INTO institution_roster (institution_id, did, handle, created_at)
+           VALUES (?,?,?,?) ON CONFLICT (institution_id, did) DO UPDATE SET
+             handle = excluded.handle""",
+        [(institution_id, r["did"], r.get("handle"), r.get("createdAt")) for r in records],
+    )
+    await db.execute(
+        "UPDATE institutions SET roster_fetched_at = ? WHERE id = ?",
+        (utcnow(), institution_id),
+    )
+    await db.commit()
+    return len(records)
+
+
+async def apply_institution_matches() -> dict:
+    """Match every current follower against the institution table."""
+    from sonde.institutions import match_actor
+
+    db = await _db()
+    institutions = await all_institutions()
+    rosters = await roster_map()
+
+    async with db.execute(
+        "SELECT a.did, a.handle, a.description, a.verified_status, a.verifications "
+        "FROM actors a JOIN follower_state fs USING (did) WHERE fs.is_current = 1"
+    ) as cur:
+        actors = [dict(r) for r in await cur.fetchall()]
+
+    updates, by_method = [], {}
+    for actor in actors:
+        actor["verification_records"] = json.loads(actor.get("verifications") or "[]")
+        match = match_actor(actor, institutions, roster_ids=rosters.get(actor["did"], set()))
+        if match is None:
+            updates.append((None, None, None, None, None, None, actor["did"]))
+            continue
+        by_method[match.method] = by_method.get(match.method, 0) + 1
+        updates.append((
+            match.institution_id, match.name, round(match.score, 4),
+            match.confidence, match.method, match.role, actor["did"],
+        ))
+
+    await db.executemany(
+        """UPDATE actors SET institution_id = ?, institution_name = ?,
+              institution_score = ?, institution_confidence = ?,
+              institution_method = ?, institution_role = ?
+            WHERE did = ?""",
+        updates,
+    )
+    await db.commit()
+    matched = sum(by_method.values())
+    return {"matched": matched, "scanned": len(actors), "by_method": by_method}
+
+
+async def institution_summary() -> list[dict]:
+    db = await _db()
+    async with db.execute(
+        """SELECT institution_name AS name, COUNT(*) AS n,
+                  AVG(institution_score) AS avg_score,
+                  GROUP_CONCAT(DISTINCT institution_method) AS methods
+             FROM actors a JOIN follower_state fs USING (did)
+            WHERE fs.is_current = 1 AND institution_name IS NOT NULL
+            GROUP BY institution_name ORDER BY n DESC"""
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+# ---------------------------------------------------------- M6 affinity
+
+async def choose_affinity_sources(
+    min_follows: int, max_follows: int, cap: int
+) -> list[dict]:
+    """Pick index sources from a BAND of follow-list sizes.
+
+    Not "the most selective accounts" — a pilot showed that rule selects
+    accounts following 0–15 people, which cover 0.8% of followers because they
+    endorse almost nobody. Selectivity belongs on the hit weight instead.
+    Cheapest-first within the band keeps the call budget down.
+    """
+    db = await _db()
+    async with db.execute(
+        """SELECT a.did, a.handle, a.follows_count, a.verified_status
+             FROM my_follows mf JOIN actors a USING (did)
+            WHERE a.follows_count BETWEEN ? AND ?
+            ORDER BY a.follows_count ASC
+            LIMIT ?""",
+        (min_follows, max_follows, cap),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def record_affinity_source(
+    did: str, handle: str | None, follows_count: int | None,
+    weight: float, is_verified: bool, pages: int,
+) -> None:
+    db = await _db()
+    await db.execute(
+        """INSERT INTO affinity_sources
+             (did, handle, follows_count, weight, is_verified, pages_fetched, fetched_at)
+           VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT (did) DO UPDATE SET
+             follows_count = excluded.follows_count, weight = excluded.weight,
+             is_verified = excluded.is_verified, pages_fetched = excluded.pages_fetched,
+             fetched_at = excluded.fetched_at""",
+        (did, handle, follows_count, weight, int(is_verified), pages, utcnow()),
+    )
+
+
+async def store_affinity(scores: dict[str, float], verified_hits: dict[str, int]) -> int:
+    """Write the index results. Zero is a real value — it means 'measured, none'."""
+    db = await _db()
+    await db.execute(
+        "UPDATE actors SET affinity_sampled = 0, verified_affinity = 0 "
+        "WHERE did IN (SELECT did FROM follower_state WHERE is_current = 1)"
+    )
+    await db.executemany(
+        "UPDATE actors SET affinity_sampled = ? WHERE did = ?",
+        [(round(v, 2), d) for d, v in scores.items()],
+    )
+    await db.executemany(
+        "UPDATE actors SET verified_affinity = ? WHERE did = ?",
+        [(v, d) for d, v in verified_hits.items()],
+    )
+    await db.commit()
+    return len(scores)
+
+
+async def affinity_source_count() -> int:
+    return await _scalar("SELECT COUNT(*) FROM affinity_sources")
 
 
 async def record_daily_snapshot() -> dict:

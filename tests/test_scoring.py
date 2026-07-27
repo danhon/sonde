@@ -320,3 +320,17 @@ def test_the_farm_can_score_higher_on_liveness():
         score_actor(columnist, verified_source_total=147, now_iso=now).normalised
         > score_actor(farm, verified_source_total=147, now_iso=now).normalised + 35
     )
+
+
+def test_affinity_scale_is_calibrated_not_constant():
+    """Weighted overlap grows with the source count, so a fixed ceiling would
+    silently rescale everyone whenever the index size changed."""
+    small = score_actor({"affinity_sampled": 10, "affinity_scale": 20})
+    large = score_actor({"affinity_sampled": 10, "affinity_scale": 100})
+    assert component(small, "affinity").value == pytest.approx(0.5)
+    assert component(large, "affinity").value == pytest.approx(0.1)
+
+
+def test_affinity_falls_back_to_the_constant_without_a_scale():
+    c = component(score_actor({"affinity_sampled": 20}), "affinity")
+    assert c.value == pytest.approx(20 / scoring.AFFINITY_SAMPLED_FULL)

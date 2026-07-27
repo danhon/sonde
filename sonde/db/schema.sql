@@ -23,6 +23,13 @@ CREATE TABLE IF NOT EXISTS actors (
     last_post_at            TEXT,
     profile_fetched_at      TEXT,
     unservable_since        TEXT,     -- requested from getProfiles, not returned
+    institution_id          INTEGER,  -- best-evidence match, M6
+    institution_name        TEXT,
+    institution_score       REAL,
+    institution_confidence  REAL,
+    institution_method      TEXT,
+    institution_role        TEXT,
+    verified_affinity       INTEGER,
     enriched_at             TEXT,
     influence_score         REAL,
     score_components        TEXT,     -- JSON
@@ -101,4 +108,43 @@ CREATE INDEX IF NOT EXISTS idx_runs_started ON sync_runs (started_at DESC);
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
+);
+
+-- ---------------------------------------------------------------- M6
+
+-- Institutions are editorial: what a masthead is worth is the user's call.
+-- Seeded from SEED_INSTITUTIONS plus every verification issuer seen in a sweep.
+CREATE TABLE IF NOT EXISTS institutions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL UNIQUE,
+    weight        REAL NOT NULL DEFAULT 1.0,
+    verifier_did  TEXT,
+    domains       TEXT,     -- JSON array
+    aliases       TEXT,     -- JSON array
+    discovered_at TEXT,
+    roster_fetched_at TEXT,
+    notes         TEXT
+);
+
+-- Who an institution has verified — from listRecords against the verifier's repo.
+CREATE TABLE IF NOT EXISTS institution_roster (
+    institution_id INTEGER NOT NULL REFERENCES institutions (id) ON DELETE CASCADE,
+    did            TEXT NOT NULL,
+    handle         TEXT,
+    created_at     TEXT,
+    PRIMARY KEY (institution_id, did)
+);
+
+CREATE INDEX IF NOT EXISTS idx_roster_did ON institution_roster (did);
+
+-- The accounts whose follow lists seed the affinity index. Kept so the sample
+-- is reproducible and its drift visible.
+CREATE TABLE IF NOT EXISTS affinity_sources (
+    did           TEXT PRIMARY KEY,
+    handle        TEXT,
+    follows_count INTEGER,
+    weight        REAL,      -- selectivity weight applied to each of its hits
+    is_verified   INTEGER NOT NULL DEFAULT 0,
+    pages_fetched INTEGER,
+    fetched_at    TEXT
 );

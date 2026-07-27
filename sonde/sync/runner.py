@@ -167,6 +167,8 @@ async def full_sweep(client: BlueskyClient | None = None) -> dict:
             me = await get_profile(client, settings.actor)
             if me.get("followersCount") is not None:
                 await store.set_meta("followers_reported", str(me["followersCount"]))
+            if me.get("did"):
+                await store.set_meta("subject_did", me["did"])
         except Exception:
             log.warning("could not refresh reported follower count", exc_info=True)
 

@@ -7,15 +7,14 @@ ones are **influential** — with a score it can explain.
 
 → **[PLAN.md](PLAN.md)** — architecture, schema, milestones, open questions
 
-> **Status: M0–M4 built and verified against the live API.** All three goals are
-> answered: verification, influence, and change over time. Still to come —
-> M5 (mutuals, per-follower detail pages, CSV export), M6 (affinity index and
-> institutional reputation), M7 (external reputation). See
-> [Milestones](PLAN.md#milestones).
+> **Status: M0–M6 built and verified against the live API.** All three goals are
+> answered, plus mutuals, detail pages, the affinity index and institutional
+> matching. Still to come — M7 (external reputation: Wikidata, Wikipedia, GDELT)
+> and M8 (digest, list writing, RSS). See [Milestones](PLAN.md#milestones).
 >
-> 119 unit tests pass. Live evals against `@danhon.com` reproduce every measured
-> number: 115 pages, 10,042 followers, 147 verified across 7 issuers, mean page
-> yield 87.3, newest-first ordering confirmed.
+> 195 unit tests pass. Live evals against `@danhon.com` reproduce every measured
+> number: 115 pages, 10,042 followers, 147 verified across 7 issuers, 2,170
+> mutuals, mean page yield 87.3, newest-first ordering confirmed.
 
 ## What it does
 
@@ -171,6 +170,7 @@ uv run python -m evals.live_sweep               # full sweep vs measured baselin
 uv run python -m evals.live_sweep --head        # head sweep cost
 uv run python -m evals.verified_check           # issuer distribution
 uv run python -m evals.score_check --limit 1500 # hydrate, then inspect the ranking
+uv run python -m evals.affinity_check           # affinity + institution signal
 ```
 
 The baselines are the 2026-07-26 measurements. A failure means either the API

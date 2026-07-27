@@ -73,6 +73,39 @@ async def _run_follows() -> int:
         await store.close()
 
 
+async def _run_institutions() -> int:
+    """6a — zero API calls; it re-reads what the sweep already stored."""
+    from sonde.db import store
+    from sonde.sync import profiles
+
+    await store.connect()
+    try:
+        seeded = await store.seed_institutions()
+        found = await store.discover_institutions_from_issuers()
+        result = await store.apply_institution_matches()
+        await profiles.rescore()
+        log.info("seeded %d, discovered %s, matched %s", seeded, found, result)
+        return 0
+    finally:
+        await store.close()
+
+
+async def _run_simple(kind: str, limit: int | None) -> int:
+    from sonde.db import store
+    from sonde.sync import affinity
+
+    await store.connect()
+    try:
+        if kind == "rosters":
+            result = await affinity.fetch_rosters()
+        else:
+            result = await affinity.build_index(cap=limit)
+        log.info("%s finished: %s", kind, result)
+        return 0 if result["status"] == "ok" else 1
+    finally:
+        await store.close()
+
+
 async def _run_backup() -> int:
     from sonde.db import store
     from sonde.sync import backup
@@ -95,6 +128,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rescore", action="store_true", help="recompute all scores and exit")
     parser.add_argument("--limit", type=int, default=None, help="cap actors hydrated")
     parser.add_argument("--follows", action="store_true", help="sync my follow list and exit")
+    parser.add_argument("--institutions", action="store_true",
+                        help="seed, discover and match institutions (no API calls)")
+    parser.add_argument("--rosters", action="store_true", help="fetch institution rosters")
+    parser.add_argument("--affinity", action="store_true", help="build the affinity index")
     parser.add_argument("--backup", action="store_true", help="write a snapshot and exit")
     parser.add_argument("--schedule", action="store_true", help="web UI plus scheduled sweeps")
     args = parser.parse_args(argv)
@@ -109,6 +146,12 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_run_rescore())
     if args.follows:
         return asyncio.run(_run_follows())
+    if args.institutions:
+        return asyncio.run(_run_institutions())
+    if args.rosters:
+        return asyncio.run(_run_simple("rosters", args.limit))
+    if args.affinity:
+        return asyncio.run(_run_simple("affinity", args.limit))
     if args.backup:
         return asyncio.run(_run_backup())
 

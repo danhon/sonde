@@ -35,6 +35,22 @@ async def run_follows() -> dict:
     return await registry.run("follows", mutuals.sync_follows)
 
 
+async def run_affinity() -> dict:
+    """Monthly: rosters, the affinity index, then institution rematching."""
+    from sonde.sync import affinity, profiles
+
+    async def job() -> dict:
+        await store.seed_institutions()
+        await store.discover_institutions_from_issuers()
+        rosters = await affinity.fetch_rosters()
+        index = await affinity.build_index()
+        matches = await store.apply_institution_matches()
+        await profiles.rescore()
+        return {"rosters": rosters, "index": index, "institutions": matches}
+
+    return await registry.run("affinity", job)
+
+
 async def run_nightly() -> dict:
     """Daily rollup then snapshot, in that order so the backup includes it."""
     from sonde.sync import backup
@@ -68,6 +84,12 @@ def attach_scheduler(app: FastAPI) -> AsyncIOScheduler:
     scheduler.add_job(
         run_follows, "interval", hours=24,
         id="follows", max_instances=1, coalesce=True, misfire_grace_time=3600,
+    )
+    # Affinity index + rosters. Expensive (~4,300 calls) but monthly, and it is
+    # the signal that answers "influential in MY network" rather than in general.
+    scheduler.add_job(
+        run_affinity, "cron", day=2, hour=4, minute=5,
+        id="affinity", max_instances=1, coalesce=True, misfire_grace_time=21600,
     )
     # Rollup + snapshot. follow_events cannot be re-fetched from Bluesky and
     # Docker volumes on ubuntuplex are not backed up, so this is the only thing

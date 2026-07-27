@@ -43,7 +43,10 @@ SELECTIVITY_FLOOR = 500
 REACH_LOG_CEILING = 5.0
 SELECTIVITY_LOG_CEILING = 2.0
 
-AFFINITY_SAMPLED_FULL = 40    # index hits that count as maximum affinity
+# Weighted overlap counting as maximum affinity. Hits are weighted by how
+# selective their source is, so this is not a raw count. Calibrated against the
+# real index at 6d — see evals/affinity_check.py.
+AFFINITY_SAMPLED_FULL = 40
 AFFINITY_EXACT_FULL = 250     # knownFollowers count that counts as maximum
 LIVENESS_HALF_LIFE_DAYS = 30.0
 
@@ -151,16 +154,20 @@ def _verification(verified_status: str | None, trusted: str | None) -> Component
                      "not verified")
 
 
-def _affinity(sampled: int | None, exact: int | None) -> Component:
+def _affinity(sampled: int | None, exact: int | None,
+              scale: float | None = None) -> Component:
     """Exact where tier 3b has run, sampled index otherwise — labelled either way."""
     if exact is not None:
         value = clamp(exact / AFFINITY_EXACT_FULL)
         return Component("affinity", value, WEIGHTS["affinity"], "knownFollowers (exact)",
                          f"{exact:,} accounts you follow also follow them")
     if sampled is not None:
-        value = clamp(sampled / AFFINITY_SAMPLED_FULL)
+        # Scale is the observed 99th percentile, not a constant: weighted overlap
+        # is proportional to how many sources the index used, so a fixed ceiling
+        # would silently rescale every score whenever the source count changed.
+        value = clamp(sampled / max(scale or AFFINITY_SAMPLED_FULL, 1))
         return Component("affinity", value, WEIGHTS["affinity"], "sampled index",
-                         f"{sampled:,} of the most selective accounts you follow")
+                         f"weighted overlap {sampled:g} with the accounts you follow")
     return Component("affinity", 0.0, WEIGHTS["affinity"], "index not built",
                      available=False)
 
@@ -169,6 +176,8 @@ def _verified_affinity(hits: int | None, source_total: int | None) -> Component:
     if hits is None:
         return Component("verified_affinity", 0.0, WEIGHTS["verified_affinity"],
                          "index not built", available=False)
+    # A follower reaching a fifth of the verified sources is treated as maximal;
+    # in the real data the top account reaches well under that.
     denominator = max(source_total or 147, 1)
     value = clamp(hits / max(denominator * 0.2, 1))
     return Component(
@@ -262,7 +271,8 @@ def score_actor(row: dict, *, verified_source_total: int | None = None,
             row.get("institution_score"), row.get("institution_name"),
             row.get("institution_confidence"), row.get("institution_method"),
         ),
-        _affinity(row.get("affinity_sampled"), row.get("affinity_exact")),
+        _affinity(row.get("affinity_sampled"), row.get("affinity_exact"),
+                  row.get("affinity_scale")),
         _verified_affinity(row.get("verified_affinity"), verified_source_total),
         _public_profile(row.get("wikidata_sitelinks"), row.get("wikipedia_views_30d")),
         _selectivity(row.get("followers_count"), row.get("follows_count")),

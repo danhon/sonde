@@ -84,9 +84,21 @@ class BlueskyClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def xrpc(self, method: str, params: dict[str, Any] | None = None) -> dict:
+    async def plc(self, did: str) -> dict:
+        """Resolve a DID document. Verification records live in the verifier's
+        own repo, so we need their PDS endpoint before we can list them."""
+        await self.limiter.acquire()
+        self.calls += 1
+        resp = await self._client.get(f"https://plc.directory/{did}")
+        resp.raise_for_status()
+        return resp.json()
+
+    async def xrpc(
+        self, method: str, params: dict[str, Any] | None = None,
+        *, base_url: str | None = None,
+    ) -> dict:
         """GET an XRPC method, retrying on 429 and transient 5xx."""
-        url = f"{self.base_url}/xrpc/{method}"
+        url = f"{(base_url or self.base_url).rstrip('/')}/xrpc/{method}"
         attempt = 0
         while True:
             await self.limiter.acquire()

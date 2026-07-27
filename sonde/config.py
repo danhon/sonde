@@ -59,6 +59,14 @@ class Settings:
     full_sweep_hours: int = field(default_factory=lambda: _int("FULL_SWEEP_HOURS", 6))
     profile_ttl_days: int = field(default_factory=lambda: _int("PROFILE_TTL_DAYS", 7))
 
+    # Affinity index. Sources come from a BAND of follow-list sizes: below the
+    # floor a source endorses almost nobody (a pilot measured 0.8% coverage from
+    # 200 such sources), above the ceiling the endorsement is diluted and the
+    # list is expensive. Measured cost is ~7.2 calls per source.
+    affinity_min_follows: int = field(default_factory=lambda: _int("AFFINITY_MIN_FOLLOWS", 150))
+    affinity_max_follows: int = field(default_factory=lambda: _int("AFFINITY_MAX_FOLLOWS", 2000))
+    affinity_max_sources: int = field(default_factory=lambda: _int("AFFINITY_MAX_SOURCES", 600))
+
     # Safety rails on departure detection
     departure_confirm_sweeps: int = field(
         default_factory=lambda: _int("DEPARTURE_CONFIRM_SWEEPS", 2)
