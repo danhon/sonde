@@ -574,8 +574,9 @@ Sub-steps for the scoring work are sequenced in
 | M8 | Affiliations table, kinds, notes/links | ✅ done | 103 affiliations for 60 people; prose rationale still to come |
 | M9 | Auth, hiding, follow dates | ✅ done | Follow dates free via `viewer.followedBy` TIDs |
 | M10 | Recent posts | ✅ done | Top 500 + verified automatic; others on demand |
-| M11 | Groups | ✅ done | 215 people, 325 memberships across 12 groups. T5 propagation still to come |
+| M11 | Groups | ✅ done | 215 people, 325 memberships, sortable. T5 propagation moved to M15c |
 | M12 | Email digest | ✅ done | Daily 14:00 America/Los_Angeles; quiet days silent, broken days always send |
+| M15 | Group discovery + institution slices | ⬜ planned | All free; organisations are already de facto groups |
 | M14 | Relationship score — interaction-based ranking | ⬜ planned | Separate from influence; notifications are ~190x cheaper than per-post |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
@@ -748,6 +749,88 @@ recalibrate against a hand-checked sample of people I know I talk to.
 
 Depends on nothing except auth, which exists. Estimated ~500 calls on first run,
 then a few dozen a day incrementally.
+
+### M15 — Discovering groups, and slicing by institution (planned)
+
+Requested 2026-07-27. Two related asks: find groups nobody thought to name, and
+slice the enrichment set by where people work. They are related because **an
+organisation with several people in it already is a group** — it just has not
+been called one.
+
+Measured against the real enrichment set before planning, so these are counts
+rather than guesses.
+
+#### 15a — Institution slices
+
+Organisations with two or more current affiliations in the top 500 plus verified:
+
+| Wired | NYT | Washington Post | buttondown.com | The Verge | FT | EFF | Bloomberg |
+|---|---|---|---|---|---|---|---|
+| 6 | 5 | 4 | 3 | 2 | 2 | 2 | 2 |
+
+An `/institutions` view listing every organisation with its people, sortable on
+the same shared macros the follower and group tables now use, filterable by
+organisation kind (news / tech / nonprofit / academic / government). Each row
+already carries the affiliation kind, so "who leads things at the EFF" and "who
+merely used to work at Google" stay distinguishable.
+
+**Former affiliations are shown but separated.** They are genuinely interesting —
+"used to be at Google" is worth knowing — and they must never be counted as
+current, which is the bug M11 shipped with and had to fix.
+
+This costs nothing: `affiliations` and `organisations` already hold it.
+
+#### 15b — Group discovery
+
+The twelve groups were written by hand, which means the interesting ones are
+whatever nobody thought of. Three discovery mechanisms, all free, all producing
+**candidates for review rather than groups asserted into existence**:
+
+**Uncovered Wikidata occupations.** Occupations held by two or more people that
+no group claims. Measured right now:
+
+| blogger | orator | entrepreneur | video game developer | wikipedian | technologist | literary critic | podcaster |
+|---|---|---|---|---|---|---|---|
+| 9 | 3 | 2 | 2 | 2 | 2 | 2 | 2 |
+
+"Bloggers" at nine and "podcasters" are obvious groups nobody wrote down.
+
+**Uncovered link kinds.** `organisation` (22), `supported` (3), `video`,
+`writing` — signals already extracted with no group to land in.
+
+**Organisation clusters.** Any organisation crossing a threshold becomes a
+proposed group automatically, which is what makes 15a and 15b the same feature.
+
+**Bio and post phrases.** Bigrams and trigrams common across the enrichment set
+but absent from every existing group definition, ranked by how concentrated they
+are — a phrase in 8 bios out of 560 is a community; one in 300 is filler.
+
+Each candidate is presented with its count and the people it would cover, and
+becomes a real group only when accepted. **Nothing is auto-created**: a group
+that nobody wanted is worse than a missing one, because it makes every other
+count untrustworthy.
+
+#### 15c — T5 follow-graph propagation
+
+Still the outstanding item from M11, and it belongs here. Rules cannot find
+"civic tech" (currently 1 member) or "privacy activist" (9, all from bio text),
+because those are communities rather than job titles. The affinity index already
+records which of ~600 sampled accounts follow each follower; two people with
+similar source-sets are similar people. Seeding each group from its confident
+members and propagating outward would fill exactly the groups that rules cannot
+reach — and it is also how genuinely unnamed communities would surface, by
+clustering first and labelling afterwards.
+
+#### Sequencing
+
+| Step | Work | Cost |
+|---|---|---|
+| 15a | `/institutions` view, sortable, kind filter, former separated | none |
+| 15b | Candidate discovery from occupations, link kinds, org clusters, phrases | none |
+| 15c | Follow-graph propagation and unsupervised clusters | none |
+| 15d | Review queue for candidates; accepted ones become real groups | none |
+
+No new API calls anywhere in this milestone.
 
 ### Still outstanding
 

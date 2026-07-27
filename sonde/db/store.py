@@ -1464,17 +1464,32 @@ async def group_summary() -> list[dict]:
         return [dict(r) for r in await cur.fetchall()]
 
 
-async def group_members(slug: str, limit: int = 200) -> list[dict]:
+# Sortable columns for member tables. Whitelisted so a hand-edited query
+# string cannot reach the ORDER BY.
+MEMBER_SORTABLE = {
+    "influence": "a.influence_score",
+    "followers": "a.followers_count",
+    "handle": "a.handle",
+    "name": "a.display_name",
+    "confidence": "m.confidence",
+    "tier": "m.tier",
+}
+
+
+async def group_members(slug: str, limit: int = 200, *, order: str = "influence",
+                        direction: str = "desc") -> list[dict]:
+    column = MEMBER_SORTABLE.get(order, MEMBER_SORTABLE["influence"])
+    arrow = "ASC" if direction == "asc" else "DESC"
     db = await _db()
     async with db.execute(
-        """SELECT a.did, a.handle, a.display_name, a.followers_count,
-                  a.influence_score, a.verified_status,
-                  m.tier, m.confidence, m.evidence, m.confirmed
-             FROM group_members m
-             JOIN groups g ON g.id = m.group_id
-             JOIN actors a USING (did)
-            WHERE g.slug = ? AND COALESCE(m.confirmed, 1) = 1
-            ORDER BY a.influence_score DESC NULLS LAST LIMIT ?""",
+        f"""SELECT a.did, a.handle, a.display_name, a.followers_count,
+                   a.influence_score, a.verified_status,
+                   m.tier, m.confidence, m.evidence, m.confirmed
+              FROM group_members m
+              JOIN groups g ON g.id = m.group_id
+              JOIN actors a USING (did)
+             WHERE g.slug = ? AND COALESCE(m.confirmed, 1) = 1
+             ORDER BY {column} {arrow} NULLS LAST, a.handle ASC LIMIT ?""",
         (slug, limit),
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]

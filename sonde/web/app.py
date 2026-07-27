@@ -151,15 +151,20 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/groups", response_class=HTMLResponse)
-    async def groups_index(request: Request, slug: str | None = None) -> HTMLResponse:
+    async def groups_index(
+        request: Request, slug: str | None = None,
+        order: str = "influence", direction: str = "desc",
+    ) -> HTMLResponse:
         from sonde.db import store
 
+        direction = "asc" if direction == "asc" else "desc"
         return TEMPLATES.TemplateResponse(
             request=request, name="groups.html",
             context={
                 "summary": await store.group_summary(),
-                "slug": slug,
-                "members": await store.group_members(slug) if slug else [],
+                "slug": slug, "order": order, "direction": direction,
+                "members": await store.group_members(
+                    slug, order=order, direction=direction) if slug else [],
                 "settings": settings,
             },
         )

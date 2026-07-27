@@ -1,0 +1,32 @@
+{#- Shared sorting macros. Extracted from followers.html so every table sorts
+    the same way and carries the same filters — the /groups table was built
+    without them and could not sort at all. -#}
+
+{%- macro qs(base, overrides={}) -%}
+  {%- set params = {} -%}
+  {%- for key, value in base.items() -%}{%- set _ = params.update({key: value}) -%}{%- endfor -%}
+  {%- set _ = params.update(overrides) -%}
+  {%- set parts = [] -%}
+  {%- for key, value in params.items() -%}
+    {%- if value not in (None, '', False) -%}
+      {%- set _ = parts.append(key ~ '=' ~ (value | string | urlencode)) -%}
+    {%- endif -%}
+  {%- endfor -%}
+  ?{{ parts | join('&') }}
+{%- endmacro -%}
+
+{%- macro th(base, key, label, align='left') -%}
+  {%- set active = (base.get('order') == key) -%}
+  {%- set flip = 'asc' if (active and base.get('direction', 'desc') == 'desc') else 'desc' -%}
+  <th class="py-2 pr-4 text-{{ align }} font-mono text-[10px] uppercase tracking-widest
+             {% if active %}text-red-800{% else %}text-slate-500{% endif %}">
+    <a href="{{ qs(base, {'order': key, 'direction': flip, 'page': 1}) }}"
+       class="inline-flex items-center gap-1 hover:text-red-800"
+       {% if active %}aria-sort="{{ 'ascending' if base.get('direction') == 'asc' else 'descending' }}"{% endif %}>
+      {{ label }}
+      <span aria-hidden="true" class="{% if not active %}opacity-0{% endif %}">
+        {{ '↑' if base.get('direction') == 'asc' else '↓' }}
+      </span>
+    </a>
+  </th>
+{%- endmacro -%}

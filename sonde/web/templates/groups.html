@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% from "_sort.html" import qs, th %}
+{% set base = {'slug': slug, 'order': order, 'direction': direction} %}
 {% block title %}Groups — sonde{% endblock %}
 {% block content %}
 
@@ -17,7 +19,7 @@
 
 <div class="mt-6 flex flex-wrap gap-2">
   {% for g in summary %}
-  <a href="/groups?slug={{ g.slug }}"
+  <a href="{{ qs(base, {'slug': g.slug, 'page': 1}) }}"
      class="border px-3 py-1.5 font-mono text-xs
             {% if g.slug == slug %}border-red-800 bg-red-50 text-red-800{% else %}border-slate-300 bg-white hover:border-red-800 hover:text-red-800{% endif %}">
     {{ g.name }} <span class="tabular-nums text-slate-400">{{ g.members }}</span>
@@ -29,11 +31,13 @@
 <div class="mt-8 overflow-x-auto">
   <table class="w-full text-sm">
     <thead>
-      <tr class="border-b border-slate-300 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
-        <th class="py-2 pr-4">Handle</th><th class="py-2 pr-4">Name</th>
-        <th class="py-2 pr-4 text-right">Followers</th>
-        <th class="py-2 pr-4 text-right">Score</th>
-        <th class="py-2 pr-4">Why</th><th class="py-2 pr-4"></th>
+      <tr class="border-b border-slate-300 text-left">
+        {{ th(base, 'handle', 'Handle') }}
+        {{ th(base, 'name', 'Name') }}
+        {{ th(base, 'followers', 'Followers', 'right') }}
+        {{ th(base, 'influence', 'Score', 'right') }}
+        {{ th(base, 'tier', 'Why') }}
+        <th class="py-2 pr-4"></th>
       </tr>
     </thead>
     <tbody>
