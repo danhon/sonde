@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_sort.html" import who %}
 {% block title %}Changes — sonde{% endblock %}
 {% block content %}
 
@@ -61,11 +62,7 @@
           {% if e.reason and e.reason != 'unknown' %}<span class="text-xs text-slate-400">/{{ e.reason }}</span>{% endif %}
         </td>
         <td class="py-2 pr-4">
-          <a class="font-mono text-xs text-red-800 hover:underline"
-             href="/followers/{{ e.did }}">{{ e.handle or e.did }}</a>
-          <a class="ml-1 text-slate-400 hover:text-red-800" title="on Bluesky"
-             href="https://bsky.app/profile/{{ e.handle }}" target="_blank" rel="noopener">↗</a>
-          {% if e.verified_status == 'valid' %}<span class="ml-1 text-sky-700" title="verified">✓</span>{% endif %}
+          {{ who(e) }}
         </td>
         <td class="py-2 pr-4">{{ e.display_name or "" }}</td>
         <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">

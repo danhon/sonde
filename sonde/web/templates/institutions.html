@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_sort.html" import qs, th %}
+{% from "_sort.html" import qs, th, who %}
 {% set base = {'name': name, 'kind': kind, 'order': order, 'direction': direction} %}
 {% block title %}Institutions — sonde{% endblock %}
 {% block content %}
@@ -83,8 +83,7 @@
         {% for r in rows %}
         <tr class="border-b border-slate-100">
           <td class="py-2 pr-4">
-            <a class="font-mono text-xs text-red-800 hover:underline" href="/followers/{{ r.did }}">{{ r.handle }}</a>
-            {% if r.verified_status == 'valid' %}<span class="ml-1 text-sky-700" title="verified">✓</span>{% endif %}
+            {{ who(r) }}
           </td>
           <td class="py-2 pr-4">{{ r.display_name or "" }}</td>
           <td class="py-2 pr-4 font-mono text-[10px] uppercase tracking-wider text-slate-500">{{ r.kind.replace('_',' ') }}{% if r.role %} · {{ r.role }}{% endif %}</td>

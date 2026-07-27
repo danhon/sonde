@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_sort.html" import qs, th %}
+{% from "_sort.html" import qs, th, who %}
 {% set base = {'slug': slug, 'order': order, 'direction': direction} %}
 {% block title %}Groups — sonde{% endblock %}
 {% block content %}
@@ -44,8 +44,7 @@
       {% for m in members %}
       <tr class="border-b border-slate-100 hover:bg-slate-50">
         <td class="py-2 pr-4">
-          <a class="font-mono text-xs text-red-800 hover:underline" href="/followers/{{ m.did }}">{{ m.handle }}</a>
-          {% if m.verified_status == 'valid' %}<span class="ml-1 text-sky-700" title="verified">✓</span>{% endif %}
+          {{ who(m) }}
         </td>
         <td class="py-2 pr-4">{{ m.display_name or "" }}</td>
         <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-600">

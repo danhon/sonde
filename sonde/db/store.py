@@ -363,7 +363,8 @@ async def lists_matching(did: str) -> list[dict]:
 async def ignored_followers() -> list[dict]:
     db = await _db()
     async with db.execute(
-        "SELECT a.did, a.handle, a.display_name, a.followers_count, a.influence_score, "
+        "SELECT a.did, a.handle, a.display_name, a.avatar_url, "
+        "a.followers_count, a.influence_score, "
         "fs.ignored_at FROM actors a JOIN follower_state fs USING (did) "
         "WHERE fs.ignored_at IS NOT NULL ORDER BY fs.ignored_at DESC"
     ) as cur:
@@ -1406,8 +1407,8 @@ async def organisation_members(name: str) -> dict:
     """Everyone affiliated with one organisation, current and former apart."""
     db = await _db()
     async with db.execute(
-        """SELECT act.did, act.handle, act.display_name, act.followers_count,
-                  act.influence_score, act.verified_status,
+        """SELECT act.did, act.handle, act.display_name, act.avatar_url,
+                  act.followers_count, act.influence_score, act.verified_status,
                   a.kind, a.role, a.method, a.confidence, a.note, a.source_url
              FROM affiliations a JOIN actors act USING (did)
             WHERE a.org_name = ? AND COALESCE(a.confirmed, 1) = 1
@@ -1564,8 +1565,8 @@ async def group_members(slug: str, limit: int = 200, *, order: str = "influence"
     arrow = "ASC" if direction == "asc" else "DESC"
     db = await _db()
     async with db.execute(
-        f"""SELECT a.did, a.handle, a.display_name, a.followers_count,
-                   a.influence_score, a.verified_status,
+        f"""SELECT a.did, a.handle, a.display_name, a.avatar_url,
+                   a.followers_count, a.influence_score, a.verified_status,
                    m.tier, m.confidence, m.evidence, m.confirmed
               FROM group_members m
               JOIN groups g ON g.id = m.group_id
@@ -1957,7 +1958,8 @@ async def growth_series(days: int = 90) -> list[dict]:
 async def recent_changes(limit: int = 100, event: str | None = None) -> list[dict]:
     db = await _db()
     sql = (
-        "SELECT e.*, a.handle, a.display_name, a.followers_count, a.verified_status "
+        "SELECT e.*, a.handle, a.display_name, a.avatar_url, "
+        "a.followers_count, a.verified_status "
         "FROM follow_events e LEFT JOIN actors a USING (did) "
     )
     params: list = []

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_sort.html" import who %}
 {% block title %}Followers — sonde{% endblock %}
 
 {#- Build a query string carrying the current filters, so sorting and paging
@@ -92,10 +93,7 @@
       {% for row in rows %}
       <tr class="border-b border-slate-100 hover:bg-slate-50">
         <td class="py-2 pr-4">
-          <a class="font-mono text-xs text-red-800 hover:underline" href="/followers/{{ row.did }}">{{ row.handle }}</a>
-          {% if row.verified_status == 'valid' %}<span class="ml-1 text-sky-700" title="verified">✓</span>{% endif %}
-          {% if row.is_mutual %}<span class="ml-1 text-emerald-700" title="mutual">⇄</span>{% endif %}
-          {% if row.is_private %}<span class="ml-1 text-slate-400" title="hidden when logged out">◍</span>{% endif %}
+          {{ who(row) }}
         </td>
         <td class="py-2 pr-4">{{ row.display_name or "" }}</td>
         <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-600">

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_sort.html" import who %}
 {% block title %}Hidden — sonde{% endblock %}
 {% block content %}
 
@@ -82,7 +83,7 @@
         {% for r in rows %}
         <tr class="border-b border-slate-100">
           <td class="py-2 pr-4">
-            <a class="font-mono text-xs text-red-800 hover:underline" href="/followers/{{ r.did }}">{{ r.handle }}</a>
+            {{ who(r) }}
           </td>
           <td class="py-2 pr-4">{{ r.display_name or "" }}</td>
           <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">
