@@ -17,7 +17,7 @@ import argparse
 import asyncio
 import json
 import sys
-import tempfile
+
 import time
 from pathlib import Path
 
@@ -75,8 +75,13 @@ class Check:
 
 async def main(head_only: bool) -> int:
     check = Check()
-    tmp = Path(tempfile.mkdtemp(prefix="sonde-eval-")) / "eval.db"
-    store.set_db_path(str(tmp))
+    # A stable path so downstream evals (verified_check) can reuse the sweep
+    # rather than paying 115 calls again.
+    db_path = Path("evals/eval.db")
+    db_path.parent.mkdir(exist_ok=True)
+    if not head_only and db_path.exists():
+        db_path.unlink()  # a full eval always starts from a clean backfill
+    store.set_db_path(str(db_path))
     await store.connect()
 
     client = BlueskyClient()

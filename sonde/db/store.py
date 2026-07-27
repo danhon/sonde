@@ -315,6 +315,79 @@ async def counts() -> dict:
     }
 
 
+async def verified_by_issuer() -> list[dict]:
+    """Verified followers grouped by who vouched for them.
+
+    Measured 2026-07-26: 147 verified, of which only 14 (10%) were verified by
+    an institution — the other 134 by Bluesky itself, which says nothing about
+    where someone works. That distribution is why the Institution component of
+    the score can't lean on this alone.
+    """
+    db = await _db()
+    async with db.execute(
+        """SELECT a.did, a.handle, a.display_name, a.avatar_url, a.description,
+                  a.verifications, a.trusted_verifier_status, a.followers_count
+             FROM actors a JOIN follower_state fs USING (did)
+            WHERE fs.is_current = 1 AND a.verified_status = 'valid'
+            ORDER BY COALESCE(a.followers_count, 0) DESC, a.handle"""
+    ) as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+
+    groups: dict[str, dict] = {}
+    for row in rows:
+        records = json.loads(row["verifications"] or "[]")
+        row["records"] = records
+        if not records:
+            # verifiedStatus is valid but no trusted-verifier record is exposed.
+            key, label = "unknown", "Issuer not disclosed"
+            groups.setdefault(key, {"issuer": label, "is_bluesky": False, "followers": []})
+            groups[key]["followers"].append(row)
+            continue
+        for rec in records:
+            key = rec.get("issuerHandle") or rec.get("issuer") or "unknown"
+            grp = groups.setdefault(
+                key,
+                {
+                    "issuer": key,
+                    "issuer_name": rec.get("issuerDisplayName"),
+                    "is_bluesky": key == "bsky.app",
+                    "followers": [],
+                },
+            )
+            grp["followers"].append({**row, "issued_at": rec.get("createdAt")})
+
+    out = sorted(groups.values(), key=lambda g: (g.get("is_bluesky", False), -len(g["followers"])))
+    for g in out:
+        g["count"] = len(g["followers"])
+    return out
+
+
+async def verified_summary() -> dict:
+    groups = await verified_by_issuer()
+    institutional = [g for g in groups if not g.get("is_bluesky") and g["issuer"] != "unknown"]
+    total = await _scalar(
+        "SELECT COUNT(*) FROM follower_state fs JOIN actors a USING (did) "
+        "WHERE fs.is_current = 1 AND a.verified_status = 'valid'"
+    )
+    trusted = await _scalar(
+        "SELECT COUNT(*) FROM follower_state fs JOIN actors a USING (did) "
+        "WHERE fs.is_current = 1 AND a.trusted_verifier_status = 'valid'"
+    )
+    # A record exists but fails validation — not the same as unverified.
+    invalid = await _scalar(
+        "SELECT COUNT(*) FROM follower_state fs JOIN actors a USING (did) "
+        "WHERE fs.is_current = 1 AND a.verified_status = 'invalid'"
+    )
+    return {
+        "groups": groups,
+        "total": total,
+        "trusted_verifiers": trusted,
+        "invalid": invalid,
+        "institutional": sum(g["count"] for g in institutional),
+        "issuer_count": len(groups),
+    }
+
+
 async def dashboard_stats() -> dict:
     c = await counts()
     runs = await recent_runs()

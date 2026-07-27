@@ -50,6 +50,17 @@ def create_app() -> FastAPI:
             request=request, name="index.html", context={"stats": stats, "settings": settings}
         )
 
+    @app.get("/verified", response_class=HTMLResponse)
+    async def verified(request: Request) -> HTMLResponse:
+        from sonde.db import store
+
+        summary = await store.verified_summary()
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="verified.html",
+            context={"v": summary, "settings": settings},
+        )
+
     return app
 
 
