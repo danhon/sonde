@@ -385,6 +385,123 @@ exercise.
 
 ---
 
+## M8 — Affiliation research, notes, and a prose rationale
+
+Requested 2026-07-27, with three examples that between them break the current
+model:
+
+| Example | What matters | Why the current model misses it |
+|---|---|---|
+| Meredith Whittaker | **President of Signal** | Signal is not a news outlet, and "President of" is leadership, not employment |
+| Anne Helen Petersen | writes an influential **newsletter** | The influential thing is hers; there is no employer to match |
+| Christopher Mims | writes for the **Wall Street Journal** | Straightforward employment — and the WSJ is not even in the seed list |
+
+The Institution component was built from a journalism-shaped dataset (all seven
+verification issuers discovered in the follower set are news outlets). It
+handles "employed by a masthead" and nothing else.
+
+### What has to change
+
+**1. Affiliations become a table, not a column.** A person can have several, of
+different kinds, and the current single `institution_*` column set cannot hold
+"President of Signal" and "contributing editor at X" at once.
+
+```
+affiliations
+  id, did, org_id, role, kind, confidence, method,
+  note, url, source_url, first_seen_at, confirmed_at, confirmed_by
+```
+
+`kind` distinguishes what the relationship *is*, because they are not
+interchangeable: `employment`, `leadership`, `founder`, `own_publication`,
+`board`, `academic`, `former`. Leading an organisation carries more weight than
+working at one; running your own influential newsletter is a different claim
+again, and one no employer lookup will ever find.
+
+**2. Organisations stop being news outlets.** The table gains a `kind`
+(`news`, `tech`, `nonprofit`, `academic`, `government`, `publisher`,
+`newsletter`) and stops being seeded only from verification issuers. Signal,
+the WSJ and Substack all need to exist as organisations before anyone can be
+affiliated with them.
+
+**3. Discovery, in cost order.** Every step is cheap before it is clever:
+
+- **Bio parsing** (free, no calls). Patterns over text already stored:
+  `<role> of/at <Org>`, `<Org> <role>`, `writes <Publication>`, plus the
+  existing past/product/consumption rejections from M6a. Extracts *candidate*
+  org names rather than matching a fixed list.
+- **Self-declared links** (~1 call each). The URL in the bio is the strongest
+  consented signal available — Petersen's newsletter is in her own bio. Parse
+  JSON-LD `schema.org/Person` for `jobTitle`/`worksFor`, and `og:site_name`
+  for the publication's own name.
+- **Wikidata resolution** (1 bulk query/month, already built in M7 design).
+  Resolve candidate org names to Q-items to get `P31` (what kind of thing it
+  is) and sitelink count as a notability weight — so Signal scores as a
+  notable organisation without anyone hand-adding it. Also `P108` (employer)
+  and `P39` (position held) for the person, which corroborates the bio claim.
+- **Nothing else.** No LinkedIn, no scraping outside these.
+
+**4. Weights come from notability, not a hand-kept list.** An organisation's
+weight defaults to a function of its Wikidata sitelink count, overridable in
+`/settings`. This is what stops the score being "how many news outlets did the
+author think of".
+
+### Notes and links per follower
+
+Each affiliation row carries a short `note` (what the relationship is), a `url`
+(the organisation or the publication), and a `source_url` (where the claim came
+from — the bio, their homepage, or a Wikidata Q-item). The detail page shows
+them as a list with provenance, so every claim is traceable to something.
+
+Rows are editable and confirmable. `confirmed_by` = `auto` or `user`; a
+user-confirmed affiliation is never overwritten by a later automatic pass, and
+gets full confidence. This is the escape hatch for everything inference gets
+wrong, and it is needed precisely because bios are self-reported prose.
+
+### The prose rationale
+
+A one-paragraph explanation on each follower, generated from the components
+that actually moved the score:
+
+> **Meredith Whittaker** ranks 4th of 10,042. President of Signal
+> (nonprofit, 13 Wikipedia language editions) — from her bio, corroborated by
+> Wikidata. 150,735 followers while following 1,037, a 145× ratio. 12 of the
+> 147 verified accounts in your network follow her. Verified by Bluesky.
+
+Rules, so it stays honest rather than becoming filler:
+
+- Assembled from stored component values — **no model, no invention**. Every
+  clause maps to a number already in `score_components`.
+- Only components that contributed are mentioned; nothing padded.
+- Says which measurement it used, so "lifetime average" never masquerades as
+  recency, and a sampled affinity figure is never presented as an exact one.
+- Regenerated on rescore, not stored prose that silently goes stale.
+
+### Sequencing
+
+| Step | Work | Cost |
+|---|---|---|
+| **8a** | `affiliations` + `organisations` tables, migration off the `institution_*` columns | None |
+| **8b** | Bio parsing for role/org/kind; reuse M6a's false-positive filters | None |
+| **8c** | Prose rationale from stored components | None |
+| **8d** | Self-declared link parsing, robots-respecting | ~10/day |
+| **8e** | Wikidata org resolution and notability weights | ~5/month |
+| **8f** | Editable and confirmable affiliations in the UI | None |
+| **8g** | Recalibrate; the three named examples are the acceptance test | None |
+
+8a–8c cost nothing and cover the WSJ and newsletter cases. 8e is what makes
+Signal work without hand-maintenance.
+
+### Scope limit, stated plainly
+
+Bios are self-reported and often out of date. Affiliation will be wrong
+sometimes — someone who left a job in 2023 and never edited their bio still
+reads as current, and there is no exit signal anywhere in the data. That is why
+every row is editable, why `source_url` is mandatory, and why leadership claims
+that survive Wikidata corroboration are scored above bare bio text.
+
+---
+
 ## What this deliberately does not do
 
 - **No global verified-follower count.** 7,418 calls for one large account. The

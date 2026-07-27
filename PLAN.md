@@ -699,6 +699,49 @@ API calls beyond one head sweep per restart.
 
 ---
 
+## Follow dates — answered
+
+*"Is there any way of recording when a follower started following me?"* Yes, and
+it costs nothing extra — but only with the app password.
+
+**What was verified on 2026-07-27**
+
+| Claim | Status |
+|---|---|
+| Unauthenticated `getFollowers` carries viewer state | **No** — no `viewer` key at all |
+| Follow records are public in each follower's own repo | **Yes** — `app.bsky.graph.follow` with `subject` and `createdAt` |
+| The rkey is a TID encoding write time | **Yes** — decoded three real rkeys to within 0.15s of their `createdAt` |
+| `profileView.viewer.followedBy` exists in the lexicon | **Yes** — an `at-uri`, and `getFollowers` returns `profileView` |
+
+**The mechanism.** Authenticated, the follower sweep already returns
+`viewer.followedBy` for every follower: the AT-URI of *their* follow of me. The
+rkey in that URI is a TID, and a TID decodes locally to a timestamp. So exact
+follow dates arrive with the **existing 115-call sweep** — no extra requests,
+just arithmetic on a string we already have.
+
+**Why the TID beats the record's own `createdAt`.** `createdAt` is written by
+whatever client made the follow and can be wrong or backdated. The TID is
+stamped by the PDS at write time. Store both; prefer the TID for ordering.
+
+**Why not do it unauthenticated.** Follow records are public, but `listRecords`
+pages through *all* of an account's follows with no filter by subject. Finding
+one follower's follow of me could take dozens of calls, times 10,042 followers.
+Not viable.
+
+**Until then**, `list_rank` already recovers relative arrival order for the
+whole backfilled cohort, and `first_seen_at` records when sonde noticed — which
+is not the same thing and is labelled as such on the detail page.
+
+**Caveat worth stating:** this recovers the date of the follow record that
+exists *now*. Someone who unfollowed and refollowed carries the later date, and
+the earlier one is unrecoverable. `follow_events` remains the only record of
+that history, which is another reason it is the one table that matters.
+
+Implementation sits in **M8** alongside the affiliation work, since both turn on
+enabling the app password.
+
+---
+
 ## Testing
 
 `pytest` + `pytest-asyncio`, matching the buywanderbot layout. Priority goes to
