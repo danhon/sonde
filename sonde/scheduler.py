@@ -72,6 +72,18 @@ async def run_relevance() -> dict:
     return await registry.run("relevance", relevance.enrich)
 
 
+async def run_external() -> dict:
+    """Wikidata bulk join, then pageviews for whatever it matched."""
+    from sonde.external import wikidata, wikipedia
+
+    async def job() -> dict:
+        mapping = await wikidata.refresh()
+        views = await wikipedia.refresh()
+        return {"wikidata": mapping, "pageviews": views}
+
+    return await registry.run("external", job)
+
+
 async def run_digest() -> dict:
     from sonde.notify import digest
 
@@ -169,6 +181,12 @@ def attach_scheduler(app: FastAPI) -> AsyncIOScheduler:
     scheduler.add_job(
         run_affinity, "cron", day=2, hour=4, minute=5,
         id="affinity", max_instances=1, coalesce=True, misfire_grace_time=21600,
+    )
+    # External reputation. The Wikidata join is one query; pageviews are ~15
+    # calls a day for the ~1% of followers it matches.
+    scheduler.add_job(
+        run_external, "cron", day=4, hour=5, minute=10,
+        id="external", max_instances=1, coalesce=True, misfire_grace_time=21600,
     )
     # Daily digest, pinned to a real timezone rather than a UTC hour — a UTC
     # cron would drift by an hour twice a year with daylight saving.

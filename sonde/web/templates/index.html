@@ -47,8 +47,7 @@
       {% for row in stats.top %}
       <li class="flex items-baseline gap-3 text-sm">
         <span class="w-5 shrink-0 text-right font-mono text-xs text-slate-400">{{ loop.index }}</span>
-        <a class="font-mono text-xs text-red-800 hover:underline" href="https://bsky.app/profile/{{ row.handle }}"
-           target="_blank" rel="noopener">{{ row.handle }}</a>
+        <a class="font-mono text-xs text-red-800 hover:underline" href="/followers/{{ row.did }}">{{ row.handle }}</a>
         <span class="truncate text-slate-600">{{ row.display_name or "" }}</span>
         <span class="ml-auto font-mono text-xs tabular-nums">{{ row.influence_score if row.influence_score is not none else "—" }}</span>
       </li>
@@ -71,8 +70,7 @@
         {% set colour = {'followed':'text-emerald-700','departed':'text-red-700',
                          'returned':'text-sky-700','handle_changed':'text-slate-500'} %}
         <span class="w-20 shrink-0 font-mono text-[10px] uppercase tracking-wider {{ colour.get(e.event,'text-slate-500') }}">{{ e.event }}</span>
-        <a class="truncate font-mono text-xs text-red-800 hover:underline" href="https://bsky.app/profile/{{ e.handle }}"
-           target="_blank" rel="noopener">{{ e.handle or e.did }}</a>
+        <a class="truncate font-mono text-xs text-red-800 hover:underline" href="/followers/{{ e.did }}">{{ e.handle or e.did }}</a>
         <span class="ml-auto shrink-0 font-mono text-[10px] text-slate-400">{{ e.detected_at[:10] }}</span>
       </li>
       {% endfor %}

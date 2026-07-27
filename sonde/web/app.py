@@ -227,7 +227,13 @@ def create_app() -> FastAPI:
         """Manual trigger. Single-flight: a second request attaches to the run."""
         from fastapi import HTTPException
 
+        from sonde.external import wikidata, wikipedia
         from sonde.notify import digest
+
+        async def external_job() -> dict:
+            return {"wikidata": await wikidata.refresh(),
+                    "pageviews": await wikipedia.refresh()}
+
         from sonde.sync import (
             backup, moderation, mutuals, posts, profiles, relevance, runner,
         )
@@ -239,6 +245,7 @@ def create_app() -> FastAPI:
             "posts": posts.fetch_posts,
             "relevance": relevance.enrich,
             "digest": lambda: digest.run_digest(force=True),
+            "external": external_job,
             "moderation": moderation.sync_lists,
             "follows": mutuals.sync_follows,
             "rescore": profiles.rescore,

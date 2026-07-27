@@ -82,7 +82,9 @@
         <tr class="border-b border-slate-100">
           <td class="py-2 pr-4">
             <a class="font-mono text-xs text-red-800 hover:underline"
-               href="https://bsky.app/profile/{{ f.handle }}" target="_blank" rel="noopener">{{ f.handle }}</a>
+               href="/followers/{{ f.did }}">{{ f.handle }}</a>
+            <a class="ml-1 text-slate-400 hover:text-red-800" title="on Bluesky"
+               href="https://bsky.app/profile/{{ f.handle }}" target="_blank" rel="noopener">↗</a>
           </td>
           <td class="py-2 pr-4">{{ f.display_name or "" }}</td>
           <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-600">

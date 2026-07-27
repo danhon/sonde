@@ -152,6 +152,47 @@
   {% endif %}
 </section>
 
+{% if p.wikidata_id %}
+<section class="mt-8">
+  <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+    Public profile
+  </h2>
+  <dl class="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
+    <div>
+      <dt class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Wikidata</dt>
+      <dd><a class="font-mono text-xs text-red-800 hover:underline" target="_blank" rel="noopener"
+             href="https://www.wikidata.org/wiki/{{ p.wikidata_id }}">{{ p.wikidata_id }} ↗</a></dd>
+    </div>
+    <div>
+      <dt class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Wikipedia editions</dt>
+      <dd class="font-mono text-xs tabular-nums">{{ p.wikidata_sitelinks or 0 }}</dd>
+    </div>
+    {% if p.wikipedia_views_30d %}
+    <div>
+      <dt class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Views, 30 days</dt>
+      <dd><a class="font-mono text-xs text-red-800 hover:underline" target="_blank" rel="noopener"
+             href="https://en.wikipedia.org/wiki/{{ p.wikipedia_title | replace(' ', '_') }}">{{ "{:,}".format(p.wikipedia_views_30d) }} ↗</a></dd>
+    </div>
+    {% endif %}
+  </dl>
+  {% for label, values in [('Occupation', p.wikidata_occupations),
+                           ('Employer', p.wikidata_employers),
+                           ('Position', p.wikidata_positions)] %}
+    {% if values %}
+    <p class="mt-2 text-sm">
+      <span class="font-mono text-[10px] uppercase tracking-widest text-slate-500">{{ label }}</span>
+      <span class="ml-2 text-slate-700">{{ values | join(", ") }}</span>
+    </p>
+    {% endif %}
+  {% endfor %}
+  <p class="mt-2 text-xs text-slate-500">
+    From Wikidata, joined on their Bluesky handle — an exact match, never a name
+    guess. Language-edition count is the notability measure: editorially reviewed
+    and hard to game.
+  </p>
+</section>
+{% endif %}
+
 {% if p.moderation_lists %}
 <section class="mt-8">
   <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-amber-700">

@@ -569,7 +569,8 @@ Sub-steps for the scoring work are sequenced in
 | M4 | Change over time, snapshots | ✅ done | **Goal 3.** On-box snapshots only, by choice |
 | M5 | Mutuals, detail pages, settings, CSV | ✅ done | 2,170 mutuals |
 | M6 | Affinity index + institutional matching | ✅ done | 24.5% coverage; 56 institution matches |
-| M7 | **External reputation** — Wikidata, Wikipedia, GDELT, homepages | 🔨 **in progress** | Measured, not built. `public_profile` (12 pts) is dormant until this lands |
+| M7 | External reputation — Wikidata + Wikipedia | ✅ done | 107 matched, 58 with pageviews. `public_profile` is live |
+| M7b | GDELT, self-declared homepages, LinkedIn | ⬜ planned | The remaining external sources |
 | M8 | Affiliations table, notes/links, prose rationale | ⬜ planned | Needs M7 for org notability |
 | M9 | Auth, hiding, follow dates | ✅ done | Follow dates free via `viewer.followedBy` TIDs |
 | M10 | Recent posts | ✅ done | Top 500 + verified automatic; others on demand |
@@ -614,6 +615,15 @@ lists, and exact follow dates decoded from `viewer.followedBy` TIDs.
 **M10** Three recent posts for the top 500 by influence plus every verified
 follower; everyone else on demand from their page. Retires the lifetime-average
 liveness proxy for accounts covered.
+
+**M7** Wikidata joined in bulk on property `P12361` (Bluesky handle) — the
+whole mapping in one query, then a local join, so there is no per-follower cost.
+Split into two queries after the combined form returned a 504: three OPTIONAL
+joins with GROUP_CONCAT over 10,536 entities is too much for the public
+endpoint, so detail is requested only for the ~1% who are actually followers.
+107 matched, with occupation, employer and position; 58 have Wikipedia pageview
+counts. This activated `public_profile`, which had been contributing nothing
+because no data existed for it.
 
 **M12** Daily digest at 14:00 `America/Los_Angeles`, pinned to a real timezone
 so it does not drift an hour twice a year with daylight saving — verified to
@@ -692,16 +702,15 @@ then a few dozen a day incrementally.
 
 ### Still outstanding
 
-**M7 — External reputation.** The measurements are done and recorded in
-[SCORING.md](SCORING.md#public-profile--reputation-from-outside-bluesky):
-Wikidata property `P12361` yields all 10,563 Bluesky↔Wikidata pairs in one
-5.8-second query, of which 107 (1.07%) are followers here. Wikipedia pageviews
-and GDELT both work keyless. Nothing is implemented, so the `public_profile`
-component has no data and is excluded from scoring — 12 of 100 points currently
-dormant. This is also what the Signal case needs: resolving organisations by
-notability rather than hand-maintaining a list.
+**M7b — Remaining external sources.** GDELT news volume (gated on a
+disambiguating token), self-declared homepage parsing, and the opt-in LinkedIn
+module. Lower value than the Wikidata join now that occupation and employer are
+already resolved for the people who have them.
 
-**M8 — Affiliations.** Depends on M7 for organisation notability.
+**M8 — Affiliations.** Wikidata employer and position data now exists for
+matched followers, which is the input this needed. The remaining work is
+resolving *organisations* by notability so "President of Signal" scores without
+anyone hand-adding Signal.
 
 **M11 — Groups.** Depends on M10 post text (done) and benefits from M7.
 

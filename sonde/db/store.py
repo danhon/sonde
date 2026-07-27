@@ -88,6 +88,9 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("wikidata_occupations", "TEXT"),
         ("wikidata_employers", "TEXT"),
         ("wikidata_positions", "TEXT"),
+        # Its own clock. Sharing external_fetched_at with the Wikidata join
+        # meant the join always looked "fresh", so pageviews never ran.
+        ("pageviews_fetched_at", "TEXT"),
     ],
 }
 
@@ -1053,6 +1056,13 @@ async def follower_detail(did: str) -> dict | None:
     out = dict(row)
     out["components"] = json.loads(out.get("score_components") or "{}").get("components", [])
     out["verification_records"] = json.loads(out.get("verifications") or "[]")
+    # Parsed here too, not just in wikidata_matched(), or the detail page
+    # renders the raw JSON string.
+    for key in ("wikidata_occupations", "wikidata_employers", "wikidata_positions"):
+        try:
+            out[key] = json.loads(out.get(key) or "[]")
+        except (ValueError, TypeError):
+            out[key] = []
     out["labels_list"] = json.loads(out.get("labels") or "[]")
     out["is_private"] = "!no-unauthenticated" in out["labels_list"]
     out["events"] = await events_for(did)
@@ -1325,6 +1335,20 @@ async def apply_wikidata(mapping: dict[str, dict]) -> int:
     return len(updates)
 
 
+async def wikidata_qids_for_followers(mapping: dict[str, dict]) -> list[str]:
+    """QIDs of entities that are actually followers — the ~1% worth detail on."""
+    db = await _db()
+    async with db.execute(
+        "SELECT a.handle FROM actors a JOIN follower_state fs USING (did) "
+        "WHERE fs.is_current = 1 AND a.handle IS NOT NULL"
+    ) as cur:
+        handles = {(r["handle"] or "").lower() for r in await cur.fetchall()}
+    return sorted({
+        entity["qid"] for handle, entity in mapping.items()
+        if handle in handles and entity.get("qid")
+    })
+
+
 async def wikidata_matched() -> list[dict]:
     db = await _db()
     async with db.execute(
@@ -1355,8 +1379,9 @@ async def pageview_targets(limit: int = 200) -> list[dict]:
              JOIN follower_state fs USING (did)
             WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
               AND a.wikipedia_title IS NOT NULL
-              AND (a.external_fetched_at IS NULL
-                   OR julianday('now') - julianday(a.external_fetched_at) >= 7)
+              AND a.wikidata_sitelinks > 0
+              AND (a.pageviews_fetched_at IS NULL
+                   OR julianday('now') - julianday(a.pageviews_fetched_at) >= 7)
             ORDER BY a.wikidata_sitelinks DESC LIMIT ?""",
         (limit,),
     ) as cur:
@@ -1366,7 +1391,7 @@ async def pageview_targets(limit: int = 200) -> list[dict]:
 async def record_pageviews(did: str, views: int | None) -> None:
     db = await _db()
     await db.execute(
-        "UPDATE actors SET wikipedia_views_30d = ?, external_fetched_at = ? WHERE did = ?",
+        "UPDATE actors SET wikipedia_views_30d = ?, pageviews_fetched_at = ? WHERE did = ?",
         (views, utcnow(), did),
     )
 

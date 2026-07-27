@@ -36,7 +36,8 @@
         ('moderation','Sync moderation lists','~1,000 calls'),
         ('rescore','Rescore','no API calls'),
         ('backup','Backup now','no API calls'),
-        ('digest','Send digest now','forces a send')] %}
+        ('digest','Send digest now','forces a send'),
+        ('external','External reputation','1 query + ~100 calls')] %}
     <form method="post" action="/settings/sync/{{ kind }}">
       <button type="submit" title="{{ note }}"
               class="border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs hover:border-red-800 hover:text-red-800
