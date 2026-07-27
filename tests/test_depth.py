@@ -325,3 +325,20 @@ async def test_every_manual_trigger_resolves(client, kind, monkeypatch):
     assert r.status_code == 303, kind
     assert spawned and spawned[0][0] == kind
     assert callable(spawned[0][1])
+
+
+async def test_two_follow_syncs_in_the_same_millisecond_still_detect_unfollows():
+    """Found by a test that passed alone and failed in the suite.
+
+    replace_my_follows deleted rows with `last_seen_at < now`. Two syncs inside
+    one millisecond share a timestamp, so the strict comparison left stale rows
+    and the unfollow went undetected.
+    """
+    await add_follower(actor("did:plc:x"), 0)
+    await store.replace_my_follows(["did:plc:x"])
+    assert await store.mutual_count() == 1
+
+    # No delay: both writes land on the same millisecond.
+    await store.replace_my_follows(["did:plc:someone-else"])
+
+    assert await store.mutual_count() == 0

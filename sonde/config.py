@@ -75,6 +75,11 @@ class Settings:
     posts_per_run: int = field(default_factory=lambda: _int("POSTS_PER_RUN", 800))
     posts_ttl_hours: int = field(default_factory=lambda: _int("POSTS_TTL_HOURS", 20))
 
+    # Interaction capture. listNotifications is ~190x cheaper than walking my
+    # own posts, so the cap is generous; incremental runs stop early anyway.
+    interaction_max_pages: int = field(
+        default_factory=lambda: _int("INTERACTION_MAX_PAGES", 250))
+
     # Exact relevance (getKnownFollowers) — auth only, 1+ calls per actor.
     relevance_top_n: int = field(default_factory=lambda: _int("RELEVANCE_TOP_N", 1000))
 

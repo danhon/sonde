@@ -292,3 +292,24 @@ CREATE TABLE IF NOT EXISTS affinity_edges (
 );
 
 CREATE INDEX IF NOT EXISTS idx_edges_did ON affinity_edges (did);
+
+-- ---------------------------------------------------------------- M14
+
+-- Interactions, append-only. The notification API's retention window is finite
+-- and undocumented, so sonde accumulates its own history: the score gets better
+-- the longer it runs. Same reasoning that makes follow_events irreplaceable.
+CREATE TABLE IF NOT EXISTS interactions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    did        TEXT NOT NULL,      -- the other person
+    direction  TEXT NOT NULL,      -- inbound / outbound
+    kind       TEXT NOT NULL,      -- like / repost / reply / quote / mention
+    uri        TEXT,               -- the interacting record
+    subject    TEXT,               -- the post it concerns
+    thread     TEXT,               -- root of the thread, for conversation detection
+    occurred_at TEXT NOT NULL,
+    UNIQUE (did, direction, kind, uri)
+);
+
+CREATE INDEX IF NOT EXISTS idx_int_did  ON interactions (did, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_int_time ON interactions (occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_int_thread ON interactions (thread);

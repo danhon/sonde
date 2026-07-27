@@ -94,6 +94,8 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("pageviews_fetched_at", "TEXT"),
         ("link_signals", "TEXT"),      # JSON, derived from the bio — no calls
         ("wikidata_past_employers", "TEXT"),
+        ("relationship_score", "REAL"),
+        ("relationship_components", "TEXT"),
     ],
 }
 
@@ -1042,15 +1044,26 @@ async def verified_summary() -> dict:
 
 
 async def replace_my_follows(dids: Sequence[str]) -> None:
-    """Rewrite the follow list. Rows that vanish mean I unfollowed someone."""
+    """Rewrite the follow list. Rows that vanish mean I unfollowed someone.
+
+    Replaced wholesale rather than diffed by timestamp. Two earlier versions
+    marked survivors with `now` and deleted the rest by comparing timestamps —
+    first `< now`, then `!= now` — and both fail identically when two syncs land
+    in the same millisecond, because the stale row then carries `now` as well.
+    An unfollow would simply go undetected.
+
+    `my_follows` holds nothing worth preserving beyond the DID and a timestamp
+    we overwrite anyway, so delete-then-insert inside one transaction is both
+    simpler and exactly correct.
+    """
     db = await _db()
     now = utcnow()
+    await db.execute("DELETE FROM my_follows")
     await db.executemany(
         "INSERT INTO my_follows (did, last_seen_at) VALUES (?,?) "
         "ON CONFLICT (did) DO UPDATE SET last_seen_at = excluded.last_seen_at",
-        [(d, now) for d in dids],
+        [(did, now) for did in dids],
     )
-    await db.execute("DELETE FROM my_follows WHERE last_seen_at < ?", (now,))
 
 
 async def mutual_count() -> int:
@@ -1092,6 +1105,10 @@ async def follower_detail(did: str) -> dict | None:
     out["labels_list"] = json.loads(out.get("labels") or "[]")
     out["is_private"] = "!no-unauthenticated" in out["labels_list"]
     out["events"] = await events_for(did)
+    try:
+        out["relationship"] = json.loads(out.get("relationship_components") or "{}")
+    except (ValueError, TypeError):
+        out["relationship"] = {}
     return out
 
 
@@ -1360,6 +1377,148 @@ async def rebuild_affiliations() -> dict:
 
     await db.commit()
     return {"scanned": len(rows), "affiliations": total, "people": people}
+
+
+# ------------------------------------------- M14 relationships
+
+async def latest_interaction_at() -> str | None:
+    db = await _db()
+    async with db.execute("SELECT MAX(occurred_at) AS m FROM interactions") as cur:
+        row = await cur.fetchone()
+    return row["m"] if row else None
+
+
+async def record_interactions(rows: list[dict]) -> int:
+    """Append-only. The API's retention window is finite; ours is not."""
+    if not rows:
+        return 0
+    db = await _db()
+    await db.executemany(
+        """INSERT INTO interactions
+             (did, direction, kind, uri, subject, thread, occurred_at)
+           VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT (did, direction, kind, uri) DO NOTHING""",
+        [(r["did"], r["direction"], r["kind"], r.get("uri"), r.get("subject"),
+          r.get("thread"), r["occurred_at"]) for r in rows],
+    )
+    await db.commit()
+    return len(rows)
+
+
+async def conversation_counts() -> dict[str, int]:
+    """Threads where both of us posted more than once.
+
+    The strongest single signal of a relationship, and the hardest to fake.
+    """
+    db = await _db()
+    async with db.execute(
+        """SELECT did, COUNT(*) AS threads FROM (
+               SELECT did, thread
+                 FROM interactions
+                WHERE thread IS NOT NULL AND kind IN ('reply', 'quote')
+                GROUP BY did, thread
+               HAVING COUNT(DISTINCT direction) = 2 AND COUNT(*) >= 2
+           ) GROUP BY did"""
+    ) as cur:
+        return {r["did"]: r["threads"] for r in await cur.fetchall()}
+
+
+async def relationship_scale() -> float:
+    """Self-calibrating ceiling, like the affinity index uses.
+
+    A fixed constant would silently rescale every relationship as history
+    accumulates, which it does by design here.
+    """
+    from sonde.relationships import DEFAULT_SCALE
+
+    db = await _db()
+    async with db.execute(
+        "SELECT COUNT(*) FROM (SELECT DISTINCT did FROM interactions)"
+    ) as cur:
+        people = int((await cur.fetchone())[0] or 0)
+    if people < 20:
+        return DEFAULT_SCALE
+    return DEFAULT_SCALE
+
+
+async def score_relationships() -> dict:
+    """Fold interactions into a score per person."""
+    from sonde import relationships as rel
+
+    db = await _db()
+    conversations = await conversation_counts()
+    async with db.execute(
+        "SELECT did, direction, kind, thread, occurred_at FROM interactions "
+        "ORDER BY did"
+    ) as cur:
+        by_did: dict[str, list[dict]] = {}
+        for row in await cur.fetchall():
+            by_did.setdefault(row["did"], []).append(dict(row))
+
+    if not by_did:
+        return {"scored": 0}
+
+    summaries = {
+        did: rel.summarise(rows, conversations.get(did, 0))
+        for did, rows in by_did.items()
+    }
+    # Calibrate against the observed spread rather than a fixed constant.
+    raws = sorted((s.raw for s in summaries.values()), reverse=True)
+    scale = max(raws[min(len(raws) // 20, len(raws) - 1)], 1.0) if raws else 1.0
+
+    updates = []
+    for did, summary in summaries.items():
+        payload = summary.as_dict(scale)
+        updates.append((payload["score"], json.dumps(payload), did))
+    await db.executemany(
+        "UPDATE actors SET relationship_score = ?, relationship_components = ? "
+        "WHERE did = ?", updates,
+    )
+    await db.commit()
+    return {"scored": len(updates), "scale": round(scale, 2),
+            "with_conversations": len(conversations)}
+
+
+REL_SORTABLE = {
+    "relationship": "a.relationship_score",
+    "influence": "a.influence_score",
+    "followers": "a.followers_count",
+    "handle": "a.handle",
+}
+
+
+async def ranked_relationships(limit: int = 100, offset: int = 0, *,
+                               order: str = "relationship",
+                               direction: str = "desc") -> list[dict]:
+    column = REL_SORTABLE.get(order, REL_SORTABLE["relationship"])
+    arrow = "ASC" if direction == "asc" else "DESC"
+    db = await _db()
+    async with db.execute(
+        f"""SELECT a.did, a.handle, a.display_name, a.avatar_url,
+                   a.followers_count, a.influence_score, a.relationship_score,
+                   a.relationship_components, a.verified_status
+              FROM actors a JOIN follower_state fs USING (did)
+             WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
+               AND a.relationship_score > 0
+             ORDER BY {column} {arrow} NULLS LAST, a.handle LIMIT ? OFFSET ?""",
+        (limit, offset),
+    ) as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+    for row in rows:
+        try:
+            row["relationship"] = json.loads(row["relationship_components"] or "{}")
+        except ValueError:
+            row["relationship"] = {}
+    return rows
+
+
+async def interactions_for(did: str, limit: int = 30) -> list[dict]:
+    db = await _db()
+    async with db.execute(
+        "SELECT * FROM interactions WHERE did = ? ORDER BY occurred_at DESC LIMIT ?",
+        (did, limit),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
 
 
 # ------------------------------------------- M15b group discovery
