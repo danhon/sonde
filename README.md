@@ -7,8 +7,15 @@ ones are **influential** — with a score it can explain.
 
 → **[PLAN.md](PLAN.md)** — architecture, schema, milestones, open questions
 
-> **Status: not built yet.** This README describes the app as designed. Nothing
-> below Configuration works until M0/M1 land — see [Milestones](PLAN.md#milestones).
+> **Status: M0–M4 built and verified against the live API.** All three goals are
+> answered: verification, influence, and change over time. Still to come —
+> M5 (mutuals, per-follower detail pages, CSV export), M6 (affinity index and
+> institutional reputation), M7 (external reputation). See
+> [Milestones](PLAN.md#milestones).
+>
+> 119 unit tests pass. Live evals against `@danhon.com` reproduce every measured
+> number: 115 pages, 10,042 followers, 147 verified across 7 issuers, mean page
+> yield 87.3, newest-first ordering confirmed.
 
 ## What it does
 
@@ -56,8 +63,9 @@ Authelia 2FA at `sonde.sgc.rayandhon.com`.
 | `/influential` | Leaderboard — **by reach** or **by relevance to you** — each row decomposed |
 | `/verified` | The 147, grouped by issuing verifier |
 | `/changes` | Arrival/departure timeline |
-| `/settings` | Manual sync, job progress, rate-limit headroom, DB stats, scoring weights, backup status, CSV export |
 | `/healthz` | Unauthenticated liveness probe |
+
+`/followers/{did}` and `/settings` arrive in M5.
 
 ## How the influence score works
 
@@ -139,15 +147,34 @@ TZ=America/Los_Angeles
 ## Running
 
 ```bash
-# Web UI only — sync manually from /settings
-uv run sonde
-
-# Single full sync and exit
-uv run sonde --once
-
-# Web UI + scheduled syncs (production mode)
-uv run sonde --schedule
+uv run sonde                  # web UI only
+uv run sonde --once           # one full sweep (115 calls, ~38s) and exit
+uv run sonde --head           # one head sweep (1–2 calls) and exit
+uv run sonde --hydrate        # fill in follower counts; --limit N to cap
+uv run sonde --rescore        # recompute every influence score
+uv run sonde --backup         # daily rollup + snapshot
+uv run sonde --schedule       # web UI + scheduler (production mode)
 ```
+
+A cold start needs `--once` before anything else: the head sweep deliberately
+no-ops without a baseline, since with nothing known every page looks new and it
+would walk all 115 pages every 15 minutes.
+
+## Evals
+
+Unit tests prove the logic is self-consistent; the evals prove it agrees with
+Bluesky. They make real API calls, so they're deliberately outside `pytest`.
+
+```bash
+uv run pytest                                   # 119 unit tests
+uv run python -m evals.live_sweep               # full sweep vs measured baseline
+uv run python -m evals.live_sweep --head        # head sweep cost
+uv run python -m evals.verified_check           # issuer distribution
+uv run python -m evals.score_check --limit 1500 # hydrate, then inspect the ranking
+```
+
+The baselines are the 2026-07-26 measurements. A failure means either the API
+changed or sonde did — both worth knowing.
 
 ## Local development
 
