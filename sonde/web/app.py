@@ -157,6 +157,7 @@ def create_app() -> FastAPI:
             context={
                 "rows": await store.ignored_followers(),
                 "lists": await store.moderation_lists(),
+                "dismissals": await store.dismissal_log(),
                 "settings": settings,
             },
         )
@@ -201,6 +202,7 @@ def create_app() -> FastAPI:
                 "last_backup": await backup.last_backup(),
                 "auth": authenticator.status(),
                 "lists": await store.moderation_lists(),
+                "dismissals": await store.dismissal_log(),
                 "needs_review": await store.get_meta("needs_review_count"),
                 "running": registry.running(),
                 "settings": settings,
@@ -327,8 +329,27 @@ def create_app() -> FastAPI:
         return TEMPLATES.TemplateResponse(
             request=request,
             name="verified.html",
-            context={"v": summary, "settings": settings},
+            context={
+                "v": summary,
+                "notices": await store.active_notices(),
+                "settings": settings,
+            },
         )
+
+    @app.post("/notices/{kind}/{signature}/dismiss")
+    async def dismiss_notice(kind: str, signature: str, back: str = "/verified"):
+        from sonde.db import store
+
+        await store.dismiss_notice(kind, signature)
+        return RedirectResponse(back if back.startswith("/") else "/verified",
+                                status_code=303)
+
+    @app.post("/notices/{dismissal_id}/restore")
+    async def restore_notice(dismissal_id: int) -> RedirectResponse:
+        from sonde.db import store
+
+        await store.restore_notice(dismissal_id)
+        return RedirectResponse("/settings", status_code=303)
 
     return app
 

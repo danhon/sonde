@@ -22,12 +22,29 @@
   </div>
 </div>
 
-{% if v.invalid %}
-<p class="mt-6 border-l-4 border-amber-600 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-  <strong>{{ v.invalid }}</strong> follower(s) carry a verification record that fails
-  validation. That is not the same as being unverified, so they are listed apart.
-</p>
-{% endif %}
+{% for n in notices %}
+<div class="mt-6 border-l-4 border-amber-600 bg-amber-50 px-4 py-3">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <p class="text-sm font-semibold text-amber-900">{{ n.summary }}</p>
+    <form method="post" action="/notices/{{ n.kind }}/{{ n.signature }}/dismiss?back=/verified" class="ml-auto">
+      <button type="submit" class="font-mono text-xs uppercase tracking-widest text-amber-800 hover:underline">
+        dismiss
+      </button>
+    </form>
+  </div>
+  <p class="mt-1 max-w-2xl text-sm text-amber-800">{{ n.detail }}</p>
+  {% if n.subjects %}
+  <ul class="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+    {% for s in n.subjects %}
+    <li><a class="font-mono text-xs text-amber-900 hover:underline" href="/followers/{{ s.did }}">{{ s.handle }}</a></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <p class="mt-2 font-mono text-[10px] uppercase tracking-widest text-amber-700">
+    dismissal is logged on settings · the warning returns if these accounts change
+  </p>
+</div>
+{% endfor %}
 
 {% if not v.groups %}
 <div class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center">

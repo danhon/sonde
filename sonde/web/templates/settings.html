@@ -152,6 +152,52 @@
 
 <section class="mt-10">
   <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+    Dismissed warnings
+  </h2>
+  {% if not dismissals %}
+  <p class="mt-3 text-sm text-slate-500">Nothing dismissed.</p>
+  {% else %}
+  <p class="mt-3 max-w-2xl text-xs text-slate-500">
+    Dismissing hides a warning; it does not make it untrue. Each entry records what
+    the warning covered at the time, and a warning reappears on its own if the
+    accounts it concerns change — so dismissing "2 accounts" never silences a
+    later "5".
+  </p>
+  <div class="overflow-x-auto">
+    <table class="mt-3 w-full text-sm">
+      <thead>
+        <tr class="border-b border-slate-200 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
+          <th class="py-2 pr-4">When</th><th class="py-2 pr-4">Warning</th>
+          <th class="py-2 pr-4">Covered</th><th class="py-2 pr-4"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in dismissals %}
+        <tr class="border-b border-slate-100">
+          <td class="py-2 pr-4 font-mono text-xs text-slate-500">{{ d.dismissed_at[:16].replace("T"," ") }}</td>
+          <td class="py-2 pr-4">{{ d.summary }}
+            <span class="ml-1 font-mono text-[10px] uppercase tracking-wider text-slate-400">{{ d.kind }}</span>
+          </td>
+          <td class="py-2 pr-4">
+            {%- for s in d.subjects %}
+            <a class="font-mono text-xs text-red-800 hover:underline" href="/followers/{{ s.did }}">{{ s.handle }}</a>{% if not loop.last %}, {% endif %}
+            {%- endfor %}
+          </td>
+          <td class="py-2 pr-4 text-right">
+            <form method="post" action="/notices/{{ d.id }}/restore">
+              <button type="submit" class="font-mono text-xs text-red-800 hover:underline">un-dismiss</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+<section class="mt-10">
+  <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
     Recent runs
   </h2>
   <div class="overflow-x-auto">
