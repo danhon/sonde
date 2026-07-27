@@ -1,5 +1,38 @@
 {% extends "base.html" %}
 {% block title %}Followers — sonde{% endblock %}
+
+{#- Build a query string carrying the current filters, so sorting and paging
+    never silently drop them. -#}
+{% macro qs(overrides={}) -%}
+  {%- set params = {'order': order, 'direction': direction, 'page': page} -%}
+  {%- set _ = params.update(filters) -%}
+  {%- set _ = params.update(overrides) -%}
+  {%- set parts = [] -%}
+  {%- for key, value in params.items() -%}
+    {%- if value not in (None, '', False) -%}
+      {%- set _ = parts.append(key ~ '=' ~ (value | string | urlencode)) -%}
+    {%- endif -%}
+  {%- endfor -%}
+  ?{{ parts | join('&') }}
+{%- endmacro %}
+
+{#- A sortable column header. Clicking the active column flips direction. -#}
+{% macro th(key, label, align='left') -%}
+  {%- set active = (order == key) -%}
+  {%- set flip = 'asc' if (active and direction == 'desc') else 'desc' -%}
+  <th class="py-2 pr-4 text-{{ align }} font-mono text-[10px] uppercase tracking-widest
+             {% if active %}text-red-800{% else %}text-slate-500{% endif %}">
+    <a href="{{ qs({'order': key, 'direction': flip, 'page': 1}) }}"
+       class="inline-flex items-center gap-1 hover:text-red-800"
+       {% if active %}aria-sort="{{ 'ascending' if direction == 'asc' else 'descending' }}"{% endif %}>
+      {{ label }}
+      <span aria-hidden="true" class="{% if not active %}opacity-0{% endif %}">
+        {{ '↑' if direction == 'asc' else '↓' }}
+      </span>
+    </a>
+  </th>
+{%- endmacro %}
+
 {% block content %}
 
 <div class="flex flex-wrap items-baseline gap-4 border-b border-slate-300 pb-3">
@@ -8,6 +41,10 @@
 </div>
 
 <form method="get" class="mt-4 flex flex-wrap items-end gap-3">
+  {# Sorting is done by the column headers; carry it through the form so
+     applying a filter doesn't reset the sort. #}
+  <input type="hidden" name="order" value="{{ order }}">
+  <input type="hidden" name="direction" value="{{ direction }}">
   <label class="flex flex-col gap-1">
     <span class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Search</span>
     <input type="search" name="q" value="{{ q }}" placeholder="handle, name, or bio"
@@ -15,16 +52,8 @@
   </label>
   <label class="flex flex-col gap-1">
     <span class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Min followers</span>
-    <input type="number" name="min_followers" value="{{ min_followers or '' }}" min="0"
-           class="w-32 border border-slate-300 px-2 py-1 text-sm focus:border-red-800 focus:outline-none">
-  </label>
-  <label class="flex flex-col gap-1">
-    <span class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Sort</span>
-    <select name="order" class="border border-slate-300 px-2 py-1 text-sm focus:border-red-800 focus:outline-none">
-      {% for value, label in [('influence','Influence'), ('followers','Followers'), ('recent','Most recent'), ('handle','Handle')] %}
-      <option value="{{ value }}" {% if order == value %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
-    </select>
+    <input type="number" name="min_followers" value="{{ min_followers if min_followers is not none else '' }}"
+           min="0" class="w-32 border border-slate-300 px-2 py-1 text-sm focus:border-red-800 focus:outline-none">
   </label>
   <label class="flex items-center gap-2 pb-1.5">
     <input type="checkbox" name="verified" value="true" {% if verified %}checked{% endif %}>
@@ -37,23 +66,26 @@
   <button type="submit" class="mb-0.5 bg-slate-900 px-4 py-1.5 font-mono text-xs uppercase tracking-widest text-white hover:bg-red-800">
     Apply
   </button>
+  {% if q or verified or mutual or min_followers is not none %}
+  <a href="/followers" class="mb-1.5 font-mono text-xs text-slate-500 hover:text-red-800">clear</a>
+  {% endif %}
 </form>
 
 {% if not rows %}
 <p class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center text-sm text-slate-600">
-  {% if q or verified or min_followers %}No followers match those filters.{% else %}No followers yet — run a sweep.{% endif %}
+  {% if q or verified or mutual or min_followers is not none %}No followers match those filters.{% else %}No followers yet — run a sweep.{% endif %}
 </p>
 {% else %}
 <div class="mt-6 overflow-x-auto">
   <table class="w-full text-sm">
     <thead>
-      <tr class="border-b border-slate-300 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
-        <th class="py-2 pr-4">Handle</th>
-        <th class="py-2 pr-4">Name</th>
-        <th class="py-2 pr-4 text-right">Followers</th>
-        <th class="py-2 pr-4 text-right">Follows</th>
-        <th class="py-2 pr-4 text-right">Score</th>
-        <th class="py-2 pr-4">Since</th>
+      <tr class="border-b border-slate-300 text-left">
+        {{ th('handle', 'Handle') }}
+        {{ th('name', 'Name') }}
+        {{ th('followers', 'Followers', 'right') }}
+        {{ th('follows', 'Follows', 'right') }}
+        {{ th('influence', 'Score', 'right') }}
+        {{ th('since', 'Since') }}
       </tr>
     </thead>
     <tbody>
@@ -82,10 +114,10 @@
   </table>
 </div>
 
-<div class="mt-6 flex gap-4 font-mono text-xs">
-  {% if page > 1 %}<a class="text-red-800 hover:underline" href="?page={{ page - 1 }}&order={{ order }}&q={{ q }}">← previous</a>{% endif %}
+<div class="mt-6 flex items-baseline gap-4 font-mono text-xs">
+  {% if page > 1 %}<a class="text-red-800 hover:underline" href="{{ qs({'page': page - 1}) }}">← previous</a>{% endif %}
   <span class="text-slate-400">page {{ page }}</span>
-  {% if rows|length == 100 %}<a class="text-red-800 hover:underline" href="?page={{ page + 1 }}&order={{ order }}&q={{ q }}">next →</a>{% endif %}
+  {% if rows|length == 100 %}<a class="text-red-800 hover:underline" href="{{ qs({'page': page + 1}) }}">next →</a>{% endif %}
 </div>
 {% endif %}
 

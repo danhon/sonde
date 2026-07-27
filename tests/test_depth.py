@@ -202,3 +202,102 @@ async def test_known_job_redirects_to_settings(client):
     r = client.post("/settings/sync/rescore", follow_redirects=False)
     assert r.status_code == 303
     assert r.headers["location"] == "/settings"
+
+
+# ------------------------------------------ /followers sorting (reported bug)
+
+async def test_a_blank_min_followers_does_not_break_the_page(client):
+    """The reported bug. An HTML form submits every field it contains, so
+    leaving "Min followers" empty sends `min_followers=`. Typed as int that is
+    a 422 and no table renders — which is why sorting looked broken."""
+    await add_follower(actor("did:plc:s1"), 0)
+    r = client.get("/followers?order=handle&direction=asc&q=&min_followers=")
+    assert r.status_code == 200
+    assert "s1.bsky.social" in r.text
+
+
+async def test_junk_in_a_numeric_filter_degrades_to_no_filter(client):
+    await add_follower(actor("did:plc:s2"), 0)
+    r = client.get("/followers?min_followers=abc&page=xyz")
+    assert r.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "column", ["handle", "name", "followers", "follows", "influence", "since"]
+)
+async def test_every_column_sorts_both_ways(client, column):
+    for i, did in enumerate(("did:plc:aaa", "did:plc:bbb", "did:plc:ccc")):
+        await store.upsert_actor(actor(did))
+        await store.mark_seen(did, i)
+        db = await store._db()
+        await db.execute(
+            "UPDATE actors SET followers_count = ?, follows_count = ?, "
+            "influence_score = ?, display_name = ? WHERE did = ?",
+            ((i + 1) * 100, (i + 1) * 10, (i + 1) * 5.0, f"Name {i}", did),
+        )
+        # A sweep writes every row in the same millisecond, so first_seen_at
+        # ties unless set apart deliberately.
+        await db.execute(
+            "UPDATE follower_state SET first_seen_at = ? WHERE did = ?",
+            (f"2026-07-{20 + i:02d}T00:00:00.000+00:00", did),
+        )
+
+    asc = client.get(f"/followers?order={column}&direction=asc")
+    desc = client.get(f"/followers?order={column}&direction=desc")
+    assert asc.status_code == desc.status_code == 200
+
+    def order_of(html):
+        import re
+        return re.findall(r'/followers/(did:plc:\w+)"', html)
+
+    assert order_of(asc.text) == list(reversed(order_of(desc.text))), column
+
+
+async def test_an_unknown_sort_column_falls_back_safely(client):
+    """A hand-edited query string must not reach the ORDER BY clause."""
+    await add_follower(actor("did:plc:s3"), 0)
+    r = client.get("/followers?order=%3B+DROP+TABLE+actors%3B--")
+    assert r.status_code == 200
+    assert await store.counts() is not None
+
+
+async def test_sort_links_carry_the_active_filters(client):
+    """Re-sorting a filtered view silently dropped the filters."""
+    await add_follower(verified("did:plc:s4"), 0)
+    db = await store._db()
+    await db.execute(
+        "UPDATE actors SET followers_count = 5000 WHERE did = 'did:plc:s4'"
+    )
+    html = client.get("/followers?verified=true&min_followers=100&q=s4").text
+    assert "s4.bsky.social" in html, "fixture must survive its own filters"
+    link = [l for l in html.split('href="') if l.startswith("?order=followers")][0]
+    assert "verified=True" in link
+    assert "min_followers=100" in link
+    assert "q=s4" in link
+
+
+async def test_paging_carries_the_active_sort(client):
+    for i in range(101):
+        did = f"did:plc:p{i}"
+        await store.upsert_actor(actor(did))
+        await store.mark_seen(did, i)
+    html = client.get("/followers?order=handle&direction=asc").text
+    link = [l for l in html.split('href="') if "page=2" in l][0]
+    assert "order=handle" in link
+    assert "direction=asc" in link
+
+
+async def test_applying_a_filter_preserves_the_chosen_sort(client):
+    await add_follower(actor("did:plc:s5"), 0)
+    html = client.get("/followers?order=followers&direction=asc").text
+    assert '<input type="hidden" name="order" value="followers">' in html
+    assert '<input type="hidden" name="direction" value="asc">' in html
+
+
+async def test_most_recent_sorts_newest_first(client):
+    """list_rank ascending IS newest-first, so 'recent desc' has to invert."""
+    for i, did in enumerate(("did:plc:new", "did:plc:mid", "did:plc:old")):
+        await store.upsert_actor(actor(did))
+        await store.mark_seen(did, i)   # rank 0 = most recent follower
+    rows = await store.ranked_followers(order="recent", direction="desc")
+    assert rows[0]["did"] == "did:plc:new"

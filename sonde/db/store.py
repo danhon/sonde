@@ -395,17 +395,32 @@ async def rescore_all() -> int:
     return len(updates)
 
 
+# Sortable columns, mapped to SQL. Anything not listed falls back to influence,
+# so a hand-edited query string cannot inject into the ORDER BY.
+SORTABLE = {
+    "influence": "a.influence_score",
+    "followers": "a.followers_count",
+    "follows": "a.follows_count",
+    "handle": "a.handle",
+    "name": "a.display_name",
+    "recent": "fs.list_rank",
+    "since": "fs.first_seen_at",
+}
+
+
 async def ranked_followers(
     limit: int = 50, offset: int = 0, *, order: str = "influence",
-    verified_only: bool = False, min_followers: int | None = None,
-    query: str | None = None, mutual_only: bool = False,
+    direction: str = "desc", verified_only: bool = False,
+    min_followers: int | None = None, query: str | None = None,
+    mutual_only: bool = False,
 ) -> list[dict]:
-    order_sql = {
-        "influence": "a.influence_score DESC NULLS LAST, a.followers_count DESC",
-        "followers": "a.followers_count DESC NULLS LAST",
-        "recent": "fs.first_seen_at DESC",
-        "handle": "a.handle ASC",
-    }.get(order, "a.influence_score DESC NULLS LAST")
+    column = SORTABLE.get(order, SORTABLE["influence"])
+    # list_rank ascending IS most-recent-first, so "recent desc" has to invert.
+    if order == "recent":
+        direction = "asc" if direction == "desc" else "desc"
+    arrow = "ASC" if direction == "asc" else "DESC"
+    # NULLS LAST keeps un-hydrated rows out of the way whichever way we sort.
+    order_sql = f"{column} {arrow} NULLS LAST, a.handle ASC"
 
     where = ["fs.is_current = 1", "a.handle IS NOT ?"]
     params: list = [settings.actor]

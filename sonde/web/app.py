@@ -20,6 +20,20 @@ from sonde.jobs import registry
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
+
+def _as_int(value: str | int | None) -> int | None:
+    """Coerce a query-string value, treating blank and junk as absent.
+
+    HTML forms submit empty fields as "", which strict int parsing rejects with
+    a 422 — taking the whole page down rather than the one filter.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
 STARTED_AT = time.time()
 
 
@@ -199,19 +213,22 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/influential", response_class=HTMLResponse)
-    async def influential(request: Request, page: int = 1, order: str = "influence") -> HTMLResponse:
+    async def influential(
+        request: Request, page: str | None = None, order: str = "influence"
+    ) -> HTMLResponse:
         from sonde.db import store
         from sonde.scoring import WEIGHTS
 
         per_page = 50
+        page = max(_as_int(page) or 1, 1)
         rows = await store.ranked_followers(
-            limit=per_page, offset=(max(page, 1) - 1) * per_page, order=order
+            limit=per_page, offset=(page - 1) * per_page, order=order
         )
         return TEMPLATES.TemplateResponse(
             request=request,
             name="influential.html",
             context={
-                "rows": rows, "page": max(page, 1), "order": order,
+                "rows": rows, "page": page, "order": order,
                 "weights": WEIGHTS, "progress": await store.hydration_progress(),
                 "settings": settings,
             },
@@ -219,24 +236,42 @@ def create_app() -> FastAPI:
 
     @app.get("/followers", response_class=HTMLResponse)
     async def followers(
-        request: Request, page: int = 1, order: str = "influence",
-        q: str | None = None, verified: bool = False, mutual: bool = False,
-        min_followers: int | None = None,
+        request: Request, page: str | None = None, order: str = "influence",
+        direction: str = "desc", q: str | None = None,
+        verified: bool = False, mutual: bool = False,
+        min_followers: str | None = None,
     ) -> HTMLResponse:
+        """Numeric filters arrive as strings on purpose.
+
+        An HTML form submits every field it contains, so leaving "Min
+        followers" blank sends `min_followers=`. Typed as `int | None` that is
+        a 422 and the page never renders — which is why sorting appeared
+        broken: the form never returned a table at all.
+        """
         from sonde.db import store
 
         per_page = 100
+        page_num = max(_as_int(page) or 1, 1)
+        floor = _as_int(min_followers)
+        direction = "asc" if direction == "asc" else "desc"
+
         rows = await store.ranked_followers(
-            limit=per_page, offset=(max(page, 1) - 1) * per_page, order=order,
-            verified_only=verified, mutual_only=mutual,
-            min_followers=min_followers, query=q,
+            limit=per_page, offset=(page_num - 1) * per_page, order=order,
+            direction=direction, verified_only=verified, mutual_only=mutual,
+            min_followers=floor, query=q,
         )
+        # Every link on the page has to carry the current filters, or
+        # paginating or re-sorting silently drops them.
+        filters = {"q": q or "", "verified": verified, "mutual": mutual,
+                   "min_followers": floor if floor is not None else ""}
         return TEMPLATES.TemplateResponse(
             request=request,
             name="followers.html",
             context={
-                "rows": rows, "page": max(page, 1), "order": order, "q": q or "",
-                "verified": verified, "mutual": mutual, "min_followers": min_followers,
+                "rows": rows, "page": page_num, "order": order,
+                "direction": direction, "filters": filters,
+                "q": q or "", "verified": verified, "mutual": mutual,
+                "min_followers": floor,
                 "counts": await store.counts(), "settings": settings,
             },
         )
