@@ -20,5 +20,6 @@ sonde-backups/
 !.env.example
 
 tests/
+sonde/Makefile
 .DS_Store
 .clearance-rendered-preview-*

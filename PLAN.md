@@ -556,146 +556,83 @@ first thing anyone sees after M0 is an app with nothing in it.
 
 ## Milestones
 
-Each ends at something deployable and useful on its own.
+**Status is maintained here as work lands — not reconstructed afterwards.**
+Sub-steps for the scoring work are sequenced in
+[SCORING.md](SCORING.md#build-order).
 
-**M0 — Scaffold.** ✅ `Dockerfile`, `compose.yml` (both routers, backup bind mount,
+| # | Milestone | Status | Notes |
+|---|---|---|---|
+| M0 | Scaffold — Docker, Traefik, health router | ✅ done | Two routers; `/healthz` unguarded |
+| M1 | Sync core — head + full sweeps, integrity rules | ✅ done | Cursor-only pagination; 5 integrity rules |
+| M2 | Verified followers by issuer | ✅ done | **Goal 1.** 147 verified, 7 issuers |
+| M3 | Influence scoring + hydration | ✅ done | **Goal 2.** Explainable, decomposed per row |
+| M4 | Change over time, snapshots | ✅ done | **Goal 3.** On-box snapshots only, by choice |
+| M5 | Mutuals, detail pages, settings, CSV | ✅ done | 2,170 mutuals |
+| M6 | Affinity index + institutional matching | ✅ done | 24.5% coverage; 56 institution matches |
+| M7 | **External reputation** — Wikidata, Wikipedia, GDELT, homepages | ⬜ **next** | Measured, not built. `public_profile` (12 pts) is dormant until this lands |
+| M8 | Affiliations table, notes/links, prose rationale | ⬜ planned | Needs M7 for org notability |
+| M9 | Auth, hiding, follow dates | ✅ done | Follow dates free via `viewer.followedBy` TIDs |
+| M10 | Recent posts | ✅ done | Top 500 + verified automatic; others on demand |
+| M11 | Groups | ⬜ planned | T1–T6 tiers incl. label propagation |
+| M12 | Email digest | 🔨 in progress | Daily, 14:00 America/Los_Angeles |
+| M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
+
+### Detail on what is done
+
+**M0** `Dockerfile`, `compose.yml` (both routers, backup bind mount,
 `mem_limit: 512m`), `Makefile`, `.env.example`, `pyproject.toml`, `CLAUDE.md`,
-`/healthz`. Deploy it empty; confirm `sonde.sgc.rayandhon.com` 302s to Authelia
-while `/healthz` returns 200. Do this *first* — routing gotchas are cheaper
-against a hello-world.
+`/healthz`. Two house gotchas handled up front: hatchling `include` patterns for
+`**/*.sql` and `**/*.html`, and `.gitignore` with `.env*` plus `!.env.example`.
 
-Two house gotchas to get right at the start, both already documented in
-[troubleshooting](../reverse-proxy/docs-site/docs/troubleshooting.md):
-`[tool.hatch.build.targets.wheel] include` must list `**/*.sql` and `**/*.html`
-or the schema and templates won't be in the image; and `.gitignore` needs
-`.env*` followed by `!.env.example`.
+**M1** Rate-limited client, cursor-only pagination, head + full sweeps,
+`actors` / `follower_state` / `sync_runs` / `follow_events`, the integrity
+rules, single-flight lock, backfill marking, scheduler, manual trigger.
 
-**M1 — Sync core.** ✅ Rate-limited client, cursor-only pagination, head + full
-sweeps, `actors` / `follower_state` / `sync_runs` / `follow_events`, the
-integrity rules, single-flight lock, backfill marking, scheduler, manual trigger.
-Ends with ~10,041 rows and a bare list route.
+**M2** `/verified` grouped by issuer. Zero extra API calls — M1 already stored
+it. 147 verified, 14 institutional, 0 trusted verifiers.
 
-**M2 — Verified.** ✅ `/verified` with issuer grouping. Zero extra API calls — M1
-already stored it. Expect 147. **Answers goal 1.**
+**M3** Tier-1 hydration with TTL and DID-keyed mapping, `scoring.py`, rescore
+job, `/influential` with per-row breakdown. Components with no data corpus-wide
+are excluded from every denominator equally, so scores stay comparable.
 
-**M3 — Influence.** ✅ Tier-1 hydration with TTL and DID-keyed mapping,
-`scoring.py`, rescore job, `/influential` with per-row breakdown, sortable
-`/followers`. Components with no data corpus-wide are excluded from every
-denominator equally, so early scores are out of 41 rather than 100 and stay
-comparable. **Answers goal 2.**
+**M4** `daily_snapshots`, `/changes`, growth chart, `needs_review` banner with
+its override, nightly `VACUUM INTO` to the bind mount (on-box only — see §9).
 
-**M4 — Change over time, and the backup.** ✅ `daily_snapshots`, `/changes`,
-dashboard growth chart, `needs_review` banner with its override, nightly `VACUUM
-INTO` to the bind mount (on-box only — see §9).
-**Answers goal 3.** Don't let the backup slip past this milestone — every day
-after M1 is history that can't be reconstructed.
+**M5** Tier-2 mutuals, `/followers/{did}`, sortable/filterable table, `/settings`,
+CSV export.
 
-**M5 — Depth.** Tier-2 mutuals, `/followers/{did}`, search and filters, CSV export.
+**M6** Institution matching (attested / domain / roster / claimed, with
+past-employment, product and consumption rejection), issuer auto-discovery,
+rosters via `listRecords`, the affinity index over band-selected sources, and
+the verified-affinity index.
 
-**M6 — Affinity and institutional reputation.** The scoring work that needs only
-atproto data:
+**M9** Session auth degrading to public paths, `ignored_at` hiding with
+`ignore_locked` so human decisions outrank automation, skywatch.blue moderation
+lists, and exact follow dates decoded from `viewer.followedBy` TIDs.
 
-- **6a** — institution matching from data already stored (attested, domain,
-  claimed, role seniority). Zero new API calls, largest single improvement.
-- **6b** — institution rosters via `listRecords`, monthly.
-- **6c** — the affinity index over 600 band sources, the verified-affinity
-  index, and tier-3c liveness via `getAuthorFeed`.
-- **6d** — recalibration against real output; a verified institutional columnist
-  ranking near the top is the acceptance test.
+**M10** Three recent posts for the top 500 by influence plus every verified
+follower; everyone else on demand from their page. Retires the lifetime-average
+liveness proxy for accounts covered.
 
-**M7 — External reputation.** Everything outside atproto, sequenced in
-[SCORING.md](SCORING.md#build-order) as 7a–7e: the Wikidata bulk join,
-Wikipedia pageviews, GDELT, self-declared homepages, and the opt-in LinkedIn
-module that ships disabled.
+### Still outstanding
 
-**M8 — Optional extras.** Independent, none required:
-- Email digest of notable arrivals via Fastmail SMTP (buywanderbot pattern) —
-  worth more now that arrivals surface within 15 minutes
-- Write the top N to a real Bluesky list (`ENABLE_LIST_WRITE`, off by default)
-- RSS feed of notable arrivals
-- Test whether authenticated reads are metered per-DID rather than per-IP; if so,
-  routing the authenticated tier through the session relieves contention with
-  BlueBirdNET and atproto-labeler outright
+**M7 — External reputation.** The measurements are done and recorded in
+[SCORING.md](SCORING.md#public-profile--reputation-from-outside-bluesky):
+Wikidata property `P12361` yields all 10,563 Bluesky↔Wikidata pairs in one
+5.8-second query, of which 107 (1.07%) are followers here. Wikipedia pageviews
+and GDELT both work keyless. Nothing is implemented, so the `public_profile`
+component has no data and is excluded from scoring — 12 of 100 points currently
+dormant. This is also what the Signal case needs: resolving organisations by
+notability rather than hand-maintaining a list.
 
----
+**M8 — Affiliations.** Depends on M7 for organisation notability.
 
-## M7.5 — Show what the app is doing
+**M11 — Groups.** Depends on M10 post text (done) and benefits from M7.
 
-Reported from production 2026-07-27: *"there is no progress indicator so I can't
-tell if it's working properly or if it's running anything in the background."*
-
-The complaint is a feature gap, but probing production and reproducing locally
-turned up four genuine bugs behind it. Every item below was reproduced, not
-inferred.
-
-### What is actually wrong
-
-**1. Orphaned `running` rows never resolve.** A restart mid-job leaves
-`sync_runs.status = 'running'` with `ended_at = NULL` forever — nothing
-reconciles them. Production restarted 6 minutes before this was written, so it
-very likely has one now. No data risk (only a *complete* sweep computes
-departures, so an interrupted one is inert), but the UI shows a job that will
-never finish.
-
-**2. The dashboard renders `running` as a failure.** `index.html` styles status
-as `ok ? green : red`, so an in-flight job is indistinguishable from a crash.
-`settings.html` got this right; the dashboard did not.
-
-**3. Two sources of truth that disagree.** Live state lives in the in-memory
-`JobRegistry`; durable state lives in `sync_runs`. After a restart the registry
-is empty while the table still says `running`, so `/settings` shows nothing
-running next to a table row claiming otherwise.
-
-**4. `asyncio.create_task` without keeping a reference.** In `trigger_sync` the
-task can be garbage-collected mid-execution, and any exception it raises is
-swallowed. A manual trigger can silently do nothing.
-
-**5. No progress, no schedule, no refresh.** `Job.detail` exists and is never
-written. Nothing reports how far through a sweep is, when the next run is due,
-or that anything is scheduled at all — and the page is static, so catching a
-40-second sweep means reloading at the right second. After a deploy the app sits
-apparently dead for 15 minutes before the first head sweep fires.
-
-### Design
-
-**Progress belongs to the job, liveness belongs to the page.**
-
-- `JobRegistry` gains `(current, total, unit)` progress plus elapsed time.
-  Sweeps report pages, hydration reports batches, affinity reports sources.
-  Head sweeps are too short to bother.
-- Progress is **throttled into `sync_runs`** as it goes, so an interrupted job
-  leaves a record of how far it reached rather than a blank.
-- `GET /api/status` returns running jobs with progress, next scheduled run
-  times, and last-sync age. Small, JSON, no follower data.
-- A **status strip in the nav bar on every page**, not just `/settings` — the
-  complaint was that you cannot tell *from anywhere* whether it is working.
-- Polling **adapts**: 3s while a job runs, 15s when idle. A static page cannot
-  show a 40-second sweep; a 2s poll when nothing is happening is waste.
-- The poll must survive an **expired Authelia session** — the fetch will get a
-  redirect to the login page rather than JSON. Detect it, stop polling, and say
-  the session expired instead of rendering nothing or garbage.
-
-### Improvements over the first draft
-
-The first pass had the indicator only on `/settings`, a fixed 2-second poll, and
-no persistence. Revised after arguing with it:
-
-| First draft | Problem | Revised |
-|---|---|---|
-| Indicator on `/settings` | The user asked how to tell it is working *at all* — the dashboard is where you look | Nav strip on every page |
-| Fixed 2s poll | Wasteful when idle, which is almost always | 3s running / 15s idle |
-| Progress in memory only | An interrupted job leaves no trace of how far it got | Throttled writes to `sync_runs` |
-| Mark orphans `failed` | They did not fail, they were interrupted — and conflating the two makes real failures harder to spot | New `interrupted` status |
-| Nothing on startup | 15 minutes of apparent silence after every deploy | Immediate head sweep (1–2 calls) |
-| `/healthz` unchanged | The watchdog cannot see a stalled scheduler | Add job count, scheduler state, last-sync age |
-
-Elapsed time is shown alongside progress, so a job that hangs on a network stall
-is visible as such rather than looking like slow progress.
-
-### Scope
-
-`/healthz` stays free of follower data — job kinds, counts and ages only. No new
-API calls beyond one head sweep per restart.
+**M13 — Extras.** Writing the top N to a real Bluesky list (`ENABLE_LIST_WRITE`,
+off by default), an RSS feed of notable arrivals, and testing whether
+authenticated reads are metered per-DID rather than per-IP — which, if true,
+would relieve contention with BlueBirdNET and atproto-labeler outright.
 
 ---
 
