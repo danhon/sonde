@@ -576,7 +576,8 @@ Sub-steps for the scoring work are sequenced in
 | M10 | Recent posts | ✅ done | Top 500 + verified automatic; others on demand |
 | M11 | Groups | ✅ done | 215 people, 325 memberships, sortable. T5 propagation moved to M15c |
 | M12 | Email digest | ✅ done | Daily 14:00 America/Los_Angeles; quiet days silent, broken days always send |
-| M15 | Group discovery + institution slices | ⬜ planned | All free; organisations are already de facto groups |
+| M15a | Institution slices | ✅ done | Sortable, kind-filtered, former separated |
+| M15b–d | Group discovery, propagation, review | ⬜ planned | All free |
 | M14 | Relationship score — interaction-based ranking | ⬜ planned | Separate from influence; notifications are ~190x cheaper than per-post |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 

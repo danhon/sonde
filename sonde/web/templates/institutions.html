@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% from "_sort.html" import qs, th %}
+{% set base = {'name': name, 'kind': kind, 'order': order, 'direction': direction} %}
+{% block title %}Institutions — sonde{% endblock %}
+{% block content %}
+
+<div class="flex flex-wrap items-baseline gap-4 border-b border-slate-300 pb-3">
+  <h1 class="font-mono text-xs font-semibold uppercase tracking-widest text-red-800">Institutions</h1>
+  <span class="text-xs text-slate-500">
+    the top {{ settings.posts_top_n }} by influence plus every verified follower, by organisation
+  </span>
+</div>
+
+{% if kinds %}
+<div class="mt-4 flex flex-wrap gap-2 font-mono text-[10px] uppercase tracking-widest">
+  <a href="{{ qs(base, {'kind': None, 'name': None}) }}"
+     class="{% if not kind %}text-red-800 underline{% else %}text-slate-500 hover:text-red-800{% endif %}">all kinds</a>
+  {% for k in kinds %}
+  <a href="{{ qs(base, {'kind': k, 'name': None}) }}"
+     class="{% if kind == k %}text-red-800 underline{% else %}text-slate-500 hover:text-red-800{% endif %}">{{ k }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if not orgs %}
+<p class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center text-sm text-slate-600">
+  No organisations yet — run <strong>Rebuild affiliations</strong> from settings.
+</p>
+{% else %}
+<div class="mt-6 overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-slate-300 text-left">
+        {{ th(base, 'name', 'Organisation') }}
+        {{ th(base, 'kind', 'Kind') }}
+        {{ th(base, 'members', 'People', 'right') }}
+        {{ th(base, 'notability', 'Wikipedia editions', 'right') }}
+        {{ th(base, 'weight', 'Weight', 'right') }}
+      </tr>
+    </thead>
+    <tbody>
+      {% for o in orgs %}
+      <tr class="border-b border-slate-100 hover:bg-slate-50 {% if o.name == name %}bg-red-50{% endif %}">
+        <td class="py-2 pr-4">
+          <a class="text-red-800 hover:underline" href="{{ qs(base, {'name': o.name}) }}">{{ o.name }}</a>
+        </td>
+        <td class="py-2 pr-4 font-mono text-xs text-slate-500">{{ o.kind or "—" }}</td>
+        <td class="py-2 pr-4 text-right font-mono tabular-nums">
+          {{ o.members }}{% if o.former %}<span class="text-slate-400"> +{{ o.former }} former</span>{% endif %}
+        </td>
+        <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">{{ o.sitelinks if o.sitelinks is not none else "—" }}</td>
+        <td class="py-2 pr-4 text-right font-mono tabular-nums">
+          {{ "%.2f"|format(o.weight) }}{% if o.weight_locked %}<span class="text-emerald-700" title="set by you">*</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if detail %}
+<section class="mt-10">
+  <h2 class="flex flex-wrap items-baseline gap-3 border-b border-slate-300 pb-2">
+    <span class="font-mono text-sm font-semibold tracking-tight text-red-800">{{ detail.organisation.name }}</span>
+    {% if detail.organisation.kind %}<span class="font-mono text-xs text-slate-500">{{ detail.organisation.kind }}</span>{% endif %}
+    <form method="post" action="/institutions/{{ detail.organisation.name | urlencode }}/weight" class="ml-auto flex items-center gap-2">
+      <label class="font-mono text-[10px] uppercase tracking-widest text-slate-500">weight</label>
+      <input type="number" name="weight" step="0.05" min="0" max="1"
+             value="{{ '%.2f'|format(detail.organisation.weight or 0.7) }}"
+             class="w-20 border border-slate-300 px-2 py-1 text-sm focus:border-red-800 focus:outline-none">
+      <button type="submit" class="font-mono text-xs text-red-800 hover:underline">set</button>
+    </form>
+  </h2>
+
+  {% for label, rows in [('Current', detail.current), ('Formerly', detail.former)] %}
+    {% if rows %}
+    <h3 class="mt-4 font-mono text-[10px] uppercase tracking-widest {% if label == 'Formerly' %}text-slate-400{% else %}text-slate-500{% endif %}">
+      {{ label }} ({{ rows|length }})
+    </h3>
+    <table class="mt-2 w-full text-sm {% if label == 'Formerly' %}opacity-60{% endif %}">
+      <tbody>
+        {% for r in rows %}
+        <tr class="border-b border-slate-100">
+          <td class="py-2 pr-4">
+            <a class="font-mono text-xs text-red-800 hover:underline" href="/followers/{{ r.did }}">{{ r.handle }}</a>
+            {% if r.verified_status == 'valid' %}<span class="ml-1 text-sky-700" title="verified">✓</span>{% endif %}
+          </td>
+          <td class="py-2 pr-4">{{ r.display_name or "" }}</td>
+          <td class="py-2 pr-4 font-mono text-[10px] uppercase tracking-wider text-slate-500">{{ r.kind.replace('_',' ') }}{% if r.role %} · {{ r.role }}{% endif %}</td>
+          <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">
+            {% if r.followers_count is not none %}{{ "{:,}".format(r.followers_count) }}{% else %}—{% endif %}
+          </td>
+          <td class="py-2 pr-4 text-right font-mono tabular-nums">{{ r.influence_score if r.influence_score is not none else "—" }}</td>
+          <td class="py-2 pr-4 font-mono text-[10px] text-slate-400">{{ r.method }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  {% endfor %}
+</section>
+{% endif %}
+
+{% endblock %}

@@ -1360,6 +1360,88 @@ async def rebuild_affiliations() -> dict:
     return {"scanned": len(rows), "affiliations": total, "people": people}
 
 
+# ------------------------------------------------- M15a institutions
+
+ORG_SORTABLE = {
+    "members": "members", "name": "o.name", "weight": "o.weight",
+    "notability": "o.sitelinks", "kind": "o.kind",
+}
+
+
+async def organisation_summary(*, order: str = "members", direction: str = "desc",
+                               kind: str | None = None,
+                               min_members: int = 1) -> list[dict]:
+    """Organisations with people in the enrichment set.
+
+    An organisation with several people in it is already a group; this just
+    names it. Former affiliations are counted separately rather than folded in —
+    "used to be at Google" is worth knowing and must never read as current.
+    """
+    column = ORG_SORTABLE.get(order, ORG_SORTABLE["members"])
+    arrow = "ASC" if direction == "asc" else "DESC"
+    where = ["1 = 1"]
+    params: list = []
+    if kind:
+        where.append("o.kind IS ?")
+        params.append(kind)
+
+    db = await _db()
+    async with db.execute(
+        f"""SELECT o.id, o.name, o.kind, o.weight, o.sitelinks, o.url,
+                   o.weight_locked,
+                   COUNT(DISTINCT CASE WHEN a.kind != 'former' THEN a.did END) AS members,
+                   COUNT(DISTINCT CASE WHEN a.kind = 'former' THEN a.did END) AS former
+              FROM organisations o
+              JOIN affiliations a ON a.org_id = o.id
+             WHERE {' AND '.join(where)} AND COALESCE(a.confirmed, 1) = 1
+             GROUP BY o.id
+            HAVING members + former >= ?
+             ORDER BY {column} {arrow} NULLS LAST, o.name ASC""",
+        (*params, min_members),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def organisation_members(name: str) -> dict:
+    """Everyone affiliated with one organisation, current and former apart."""
+    db = await _db()
+    async with db.execute(
+        """SELECT act.did, act.handle, act.display_name, act.followers_count,
+                  act.influence_score, act.verified_status,
+                  a.kind, a.role, a.method, a.confidence, a.note, a.source_url
+             FROM affiliations a JOIN actors act USING (did)
+            WHERE a.org_name = ? AND COALESCE(a.confirmed, 1) = 1
+            ORDER BY (a.kind = 'former'), act.influence_score DESC NULLS LAST""",
+        (name,),
+    ) as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+    async with db.execute("SELECT * FROM organisations WHERE name = ?", (name,)) as cur:
+        org = await cur.fetchone()
+    return {
+        "organisation": dict(org) if org else {"name": name},
+        "current": [r for r in rows if r["kind"] != "former"],
+        "former": [r for r in rows if r["kind"] == "former"],
+    }
+
+
+async def organisation_kinds() -> list[str]:
+    db = await _db()
+    async with db.execute(
+        "SELECT DISTINCT kind FROM organisations WHERE kind IS NOT NULL ORDER BY kind"
+    ) as cur:
+        return [r["kind"] for r in await cur.fetchall()]
+
+
+async def set_organisation_weight(name: str, weight: float) -> None:
+    """A human-set weight is locked; automation must not move it."""
+    db = await _db()
+    await db.execute(
+        "UPDATE organisations SET weight = ?, weight_locked = 1 WHERE name = ?",
+        (max(0.0, min(1.0, weight)), name),
+    )
+    await db.commit()
+
+
 # ----------------------------------------------------------- M11 groups
 
 async def seed_groups() -> int:

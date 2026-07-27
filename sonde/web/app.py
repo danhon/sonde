@@ -150,6 +150,33 @@ def create_app() -> FastAPI:
             headers={"Content-Disposition": 'attachment; filename="sonde-followers.csv"'},
         )
 
+    @app.get("/institutions", response_class=HTMLResponse)
+    async def institutions(
+        request: Request, name: str | None = None, kind: str | None = None,
+        order: str = "members", direction: str = "desc",
+    ) -> HTMLResponse:
+        from sonde.db import store
+
+        direction = "asc" if direction == "asc" else "desc"
+        return TEMPLATES.TemplateResponse(
+            request=request, name="institutions.html",
+            context={
+                "orgs": await store.organisation_summary(
+                    order=order, direction=direction, kind=kind),
+                "kinds": await store.organisation_kinds(),
+                "detail": await store.organisation_members(name) if name else None,
+                "name": name, "kind": kind, "order": order, "direction": direction,
+                "settings": settings,
+            },
+        )
+
+    @app.post("/institutions/{name}/weight")
+    async def set_org_weight(name: str, weight: float = 0.7) -> RedirectResponse:
+        from sonde.db import store
+
+        await store.set_organisation_weight(name, weight)
+        return RedirectResponse(f"/institutions?name={name}", status_code=303)
+
     @app.get("/groups", response_class=HTMLResponse)
     async def groups_index(
         request: Request, slug: str | None = None,
