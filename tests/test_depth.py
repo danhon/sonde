@@ -308,8 +308,20 @@ async def test_most_recent_sorts_newest_first(client):
     ["head", "full", "hydrate", "follows", "rescore", "backup",
      "posts", "relevance", "digest", "external", "affiliations", "moderation"],
 )
-async def test_every_manual_trigger_resolves(client, kind):
-    """A missing import in the handler makes the button 500, and only the two
-    kinds that happened to be tested would have caught it."""
+async def test_every_manual_trigger_resolves(client, kind, monkeypatch):
+    """A missing import in the handler makes the button 500, and the two kinds
+    that happened to be covered would not have caught it.
+
+    spawn is stubbed: the point is that the handler builds the job without
+    raising, not that the job runs — several of these make real API calls.
+    """
+    from sonde.jobs import registry
+
+    spawned = []
+    monkeypatch.setattr(registry, "spawn", lambda k, fn: spawned.append((k, fn)))
+
     r = client.post(f"/settings/sync/{kind}", follow_redirects=False)
+
     assert r.status_code == 303, kind
+    assert spawned and spawned[0][0] == kind
+    assert callable(spawned[0][1])
