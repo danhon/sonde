@@ -21,44 +21,60 @@
 
 <section>
   <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
-    Run a job
+    Run
   </h2>
   {% if running %}
-  <p class="mt-3 font-mono text-xs text-slate-500">running: {{ running | join(", ") }}</p>
+  <p class="mt-3 font-mono text-xs text-red-800">running: {{ running | join(", ") }}</p>
   {% endif %}
-  <div class="mt-3 flex flex-wrap gap-2">
-    {% for kind, label, note in [
-        ('head','Head sweep','1–2 calls'),
-        ('full','Full sweep','115 calls, ~38s'),
-        ('hydrate','Hydrate profiles','up to 40 calls'),
-        ('follows','Sync my follows','46 calls'),
-        ('posts','Fetch posts','up to 2,500 calls'),
-        ('moderation','Sync moderation lists','~1,000 calls'),
-        ('rescore','Rescore','no API calls'),
-        ('backup','Backup now','no API calls'),
-        ('digest','Send digest now','forces a send'),
-        ('external','External reputation','1 query + ~100 calls'),
-        ('affiliations','Rebuild affiliations','no API calls'),
-        ('groups','Reclassify groups','no API calls'),
-        ('discover','Find new groups','no API calls'),
-        ('propagate','Propagate groups','no API calls'),
-        ('interactions','Sync interactions','~500 calls'),
-        ('rescore-relationships','Rescore relationships','no API calls')] %}
-    <form method="post" action="/settings/sync/{{ kind }}">
-      <button type="submit" title="{{ note }}"
-              class="border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs hover:border-red-800 hover:text-red-800
-                     {% if kind in running %}opacity-40{% endif %}">
-        {{ label }} <span class="text-slate-400">{{ note }}</span>
-      </button>
-    </form>
+
+  <p class="mt-3 max-w-2xl text-xs text-slate-500">
+    These run top to bottom: each batch builds on the one above it. Steps inside
+    a batch run in order and stop at the first failure. Jobs run in parallel, not
+    a queue, but share one rate limiter — so starting several is safe and makes
+    each of them slower.
+  </p>
+
+  <div class="mt-4 space-y-px bg-slate-300">
+    {% for b in batches %}
+    <div class="flex flex-wrap items-baseline gap-x-4 gap-y-2 bg-white px-4 py-3">
+      <form method="post" action="/settings/batch/{{ b.key }}" class="shrink-0">
+        <button type="submit"
+                class="w-48 border border-slate-900 bg-slate-900 px-3 py-1.5 text-left font-mono text-xs uppercase tracking-widest text-white hover:bg-red-800 hover:border-red-800
+                       {% if b.key in running %}opacity-40{% endif %}">
+          {{ b.label }}
+        </button>
+      </form>
+      <span class="font-mono text-[10px] uppercase tracking-widest text-slate-400">{{ b.cost }}</span>
+      <p class="w-full text-xs text-slate-600 sm:w-auto sm:flex-1">{{ b.why }}</p>
+      <span class="w-full font-mono text-[10px] text-slate-400">{{ b.steps | join(" → ") }}</span>
+    </div>
     {% endfor %}
   </div>
-  <p class="mt-2 max-w-2xl text-xs text-slate-500">
-    Several jobs can be started at once and they run in parallel, not in a
-    queue — but they share one rate limiter, so the API budget is respected
-    however many are going. Each is slower as a result. Triggering a job that is
-    already running attaches to it rather than starting a second copy.
-  </p>
+
+  <details class="mt-4">
+    <summary class="cursor-pointer font-mono text-xs uppercase tracking-widest text-slate-500 hover:text-red-800">
+      Individual jobs
+    </summary>
+    <p class="mt-3 max-w-2xl text-xs text-slate-500">
+      Everything a batch runs, plus the four that sit outside one: the head sweep
+      (the scheduler runs it every {{ settings.head_sweep_minutes }} minutes), the
+      affinity index (slow, and monthly is enough), exact relevance, and forcing
+      a digest.
+    </p>
+    <div class="mt-3 flex flex-wrap gap-2">
+      {% for j in jobs %}
+      <form method="post" action="/settings/sync/{{ j.key }}">
+        <button type="submit" title="{{ j.note }}"
+                class="border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs hover:border-red-800 hover:text-red-800
+                       {% if j.key in running %}opacity-40{% endif %}">
+          {{ j.label }}
+          <span class="text-slate-400">{{ j.cost }}</span>
+          {%- if j.key not in in_a_batch %}<span class="text-red-800"> ·</span>{% endif %}
+        </button>
+      </form>
+      {% endfor %}
+    </div>
+  </details>
 </section>
 
 <div class="mt-10 grid gap-10 lg:grid-cols-2">

@@ -301,6 +301,7 @@ def create_app() -> FastAPI:
     @app.get("/settings", response_class=HTMLResponse)
     async def settings_page(request: Request) -> HTMLResponse:
         from sonde.db import store
+        from sonde import joblist
         from sonde.scoring import WEIGHTS
         from sonde.sync import backup
 
@@ -318,52 +319,91 @@ def create_app() -> FastAPI:
                 "dismissals": await store.dismissal_log(),
                 "needs_review": await store.get_meta("needs_review_count"),
                 "running": registry.running(),
+                "jobs": joblist.JOBS, "batches": joblist.BATCHES,
+                "in_a_batch": joblist.IN_A_BATCH,
                 "settings": settings,
             },
         )
+
+    def _job_map() -> dict:
+        """Every runnable job. Imports are local to keep app import cheap."""
+        override = globals().get("_JOB_MAP_OVERRIDE")
+        if override is not None:
+            return override()
+
+        from sonde.db import store
+        from sonde.external import wikidata, wikipedia
+        from sonde.notify import digest
+        from sonde.sync import (
+            affinity, backup, interactions, moderation, mutuals, posts,
+            profiles, relevance, runner,
+        )
+
+        async def external_job() -> dict:
+            return {"wikidata": await wikidata.refresh(),
+                    "pageviews": await wikipedia.refresh()}
+
+        return {
+            "head": runner.head_sweep,
+            "full": runner.full_sweep,
+            "hydrate": lambda: profiles.hydrate(limit=1000),
+            "follows": mutuals.sync_follows,
+            "posts": posts.fetch_posts,
+            "external": external_job,
+            "affiliations": store.rebuild_affiliations,
+            "relevance": relevance.enrich,
+            "groups": store.classify_groups,
+            "discover": store.discover_group_candidates,
+            "propagate": store.propagate_groups,
+            "affinity": affinity.build_index,
+            "interactions": interactions.sync,
+            "rescore-relationships": store.score_relationships,
+            "moderation": moderation.sync_lists,
+            "rescore": profiles.rescore,
+            "backup": backup.snapshot,
+            "digest": lambda: digest.run_digest(force=True),
+        }
 
     @app.post("/settings/sync/{kind}")
     async def trigger_sync(kind: str) -> RedirectResponse:
         """Manual trigger. Single-flight: a second request attaches to the run."""
         from fastapi import HTTPException
 
-        from sonde.db import store
-        from sonde.external import wikidata, wikipedia
-        from sonde.notify import digest
-
-        async def external_job() -> dict:
-            return {"wikidata": await wikidata.refresh(),
-                    "pageviews": await wikipedia.refresh()}
-
-        from sonde.sync import (
-            backup, interactions, moderation, mutuals, posts, profiles,
-            relevance, runner,
-        )
-
-        jobs = {
-            "head": runner.head_sweep,
-            "full": runner.full_sweep,
-            "hydrate": lambda: profiles.hydrate(limit=1000),
-            "posts": posts.fetch_posts,
-            "relevance": relevance.enrich,
-            "digest": lambda: digest.run_digest(force=True),
-            "external": external_job,
-            "affiliations": store.rebuild_affiliations,
-            "groups": store.classify_groups,
-            "discover": store.discover_group_candidates,
-            "propagate": store.propagate_groups,
-            "interactions": interactions.sync,
-            "rescore-relationships": store.score_relationships,
-            "moderation": moderation.sync_lists,
-            "follows": mutuals.sync_follows,
-            "rescore": profiles.rescore,
-            "backup": backup.snapshot,
-        }
+        jobs = _job_map()
         if kind not in jobs:
             raise HTTPException(status_code=404, detail="unknown job")
         # spawn() keeps a strong reference; bare create_task lets the event
         # loop drop the task mid-flight and swallow its exception.
         registry.spawn(kind, jobs[kind])
+        return RedirectResponse("/settings", status_code=303)
+
+    @app.post("/settings/batch/{key}")
+    async def trigger_batch(key: str) -> RedirectResponse:
+        """Run a batch's steps in order, stopping at the first failure.
+
+        The ordering is real — enrichment needs hydrated profiles, grouping
+        needs enrichment — and it used to live only in release notes.
+        """
+        from fastapi import HTTPException
+
+        from sonde.joblist import BATCH_BY_KEY
+
+        batch = BATCH_BY_KEY.get(key)
+        if batch is None:
+            raise HTTPException(status_code=404, detail="unknown batch")
+        jobs = _job_map()
+
+        async def run_steps() -> dict:
+            results: dict = {}
+            for position, step in enumerate(batch.steps, 1):
+                registry.progress(key, position, len(batch.steps), "steps", step)
+                results[step] = await jobs[step]()
+                if isinstance(results[step], dict) and \
+                        results[step].get("status") == "failed":
+                    return {"status": "failed", "stopped_at": step, **results}
+            return {"status": "ok", **results}
+
+        registry.spawn(key, run_steps)
         return RedirectResponse("/settings", status_code=303)
 
     @app.post("/settings/accept-departures")

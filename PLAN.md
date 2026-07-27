@@ -580,6 +580,7 @@ Sub-steps for the scoring work are sequenced in
 | M15b | Group discovery + review queue | ✅ done | 25 candidates proposed, none auto-created |
 | M15c | Follow-graph propagation | ✅ done | 194 proposals over 11,038 real edges; found Whittaker for privacy |
 | M14 | Relationship score | ✅ done | Separate from influence; notifications ~190x cheaper than per-post |
+| M16 | Job batches on /settings | ✅ done | Five ordered batches; individual jobs collapsed |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
 ### Detail on what is done
@@ -713,6 +714,15 @@ Weighted by what an interaction costs the giver, not by volume: a reply is worth
 ten likes, a thread we both posted in more than once carries a bonus, everything
 decays, reciprocity multiplies rather than adds, and interacting across many
 separate days beats one argument.
+
+**M16** The settings page had grown to sixteen buttons, several of which only
+work in sequence — enrichment needs hydrated profiles, grouping needs
+enrichment, propagation needs a fresh affinity index. That ordering lived in my
+head and in release notes, which is the wrong place for it. Five batches now
+encode it (refresh followers → enrich profiles → rebuild groups, plus
+relationships and housekeeping), running their steps in order and stopping at
+the first failure. Individual jobs stay behind a disclosure for the four that
+sit outside a batch and for when you want exactly one thing.
 
 **M12** Daily digest at 14:00 `America/Los_Angeles`, pinned to a real timezone
 so it does not drift an hour twice a year with daylight saving — verified to

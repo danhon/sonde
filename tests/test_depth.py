@@ -175,7 +175,8 @@ async def test_settings_route_renders(client):
     r = client.get("/settings")
     assert r.status_code == 200
     assert "Scoring weights" in r.text
-    assert "Run a job" in r.text
+    assert "Refresh followers" in r.text, "batches lead the page"
+    assert "Individual jobs" in r.text, "individual jobs stay available"
 
 
 async def test_settings_shows_the_permanent_gap(client):
@@ -342,3 +343,72 @@ async def test_two_follow_syncs_in_the_same_millisecond_still_detect_unfollows()
     await store.replace_my_follows(["did:plc:someone-else"])
 
     assert await store.mutual_count() == 0
+
+
+# ------------------------------------------------- job batches (M16)
+
+def test_every_batch_step_is_a_real_job():
+    from sonde.joblist import BATCHES, BY_KEY
+
+    for batch in BATCHES:
+        for step in batch.steps:
+            assert step in BY_KEY, f"{batch.key} references unknown job {step}"
+
+
+def test_batches_cover_the_jobs_that_have_an_order():
+    """Enrichment needs hydrated profiles; grouping needs enrichment. That
+    ordering used to live only in release notes."""
+    from sonde.joblist import BATCH_BY_KEY
+
+    assert BATCH_BY_KEY["enrich"].steps.index("posts") < \
+           BATCH_BY_KEY["enrich"].steps.index("affiliations")
+    assert BATCH_BY_KEY["regroup"].steps.index("groups") < \
+           BATCH_BY_KEY["regroup"].steps.index("propagate")
+
+
+async def test_a_batch_stops_at_the_first_failing_step(client, monkeypatch):
+    """A batch exists to enforce an order, so it must not carry on past a
+    failure and leave later steps working from stale input."""
+    from sonde.jobs import registry
+
+    captured = {}
+    monkeypatch.setattr(registry, "spawn",
+                        lambda k, fn: captured.setdefault(k, fn))
+    calls = []
+
+    def fake_map():
+        async def ok(name):
+            calls.append(name)
+            return {"status": "ok"}
+
+        async def bad(name):
+            calls.append(name)
+            return {"status": "failed"}
+
+        return {"full": lambda: ok("full"),
+                "hydrate": lambda: bad("hydrate"),
+                "follows": lambda: ok("follows")}
+
+    monkeypatch.setattr("sonde.web.app._JOB_MAP_OVERRIDE", fake_map, raising=False)
+    client.post("/settings/batch/refresh", follow_redirects=False)
+    result = await captured["refresh"]()
+
+    assert calls == ["full", "hydrate"], "must not reach follows"
+    assert result["status"] == "failed"
+    assert result["stopped_at"] == "hydrate"
+
+
+async def test_an_unknown_batch_is_rejected(client):
+    assert client.post("/settings/batch/nonsense").status_code == 404
+
+
+@pytest.mark.parametrize("key", ["refresh", "enrich", "regroup",
+                                 "relationships", "housekeeping"])
+async def test_every_batch_resolves(client, key, monkeypatch):
+    from sonde.jobs import registry
+
+    spawned = []
+    monkeypatch.setattr(registry, "spawn", lambda k, fn: spawned.append(k))
+    assert client.post(f"/settings/batch/{key}",
+                       follow_redirects=False).status_code == 303
+    assert spawned == [key]
