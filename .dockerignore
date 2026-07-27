@@ -1,0 +1,24 @@
+# Keep the build context small. The Dockerfile only COPYs pyproject.toml,
+# uv.lock, README.md and sonde/ — everything else is just transfer cost.
+.git
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+
+# Local data and eval artefacts (the eval DB is ~24 MB)
+*.db
+*.db-wal
+*.db-shm
+evals/
+sonde-backups/
+
+# Secrets never belong in an image
+.env
+.env.*
+!.env.example
+
+tests/
+.DS_Store
+.clearance-rendered-preview-*
