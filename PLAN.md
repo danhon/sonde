@@ -569,12 +569,12 @@ Sub-steps for the scoring work are sequenced in
 | M4 | Change over time, snapshots | ✅ done | **Goal 3.** On-box snapshots only, by choice |
 | M5 | Mutuals, detail pages, settings, CSV | ✅ done | 2,170 mutuals |
 | M6 | Affinity index + institutional matching | ✅ done | 24.5% coverage; 56 institution matches |
-| M7 | **External reputation** — Wikidata, Wikipedia, GDELT, homepages | ⬜ **next** | Measured, not built. `public_profile` (12 pts) is dormant until this lands |
+| M7 | **External reputation** — Wikidata, Wikipedia, GDELT, homepages | 🔨 **in progress** | Measured, not built. `public_profile` (12 pts) is dormant until this lands |
 | M8 | Affiliations table, notes/links, prose rationale | ⬜ planned | Needs M7 for org notability |
 | M9 | Auth, hiding, follow dates | ✅ done | Follow dates free via `viewer.followedBy` TIDs |
 | M10 | Recent posts | ✅ done | Top 500 + verified automatic; others on demand |
 | M11 | Groups | ⬜ planned | T1–T6 tiers incl. label propagation |
-| M12 | Email digest | 🔨 in progress | Daily, 14:00 America/Los_Angeles |
+| M12 | Email digest | ✅ done | Daily 14:00 America/Los_Angeles; quiet days silent, broken days always send |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
 ### Detail on what is done
@@ -613,6 +613,15 @@ lists, and exact follow dates decoded from `viewer.followedBy` TIDs.
 **M10** Three recent posts for the top 500 by influence plus every verified
 follower; everyone else on demand from their page. Retires the lifetime-average
 liveness proxy for accounts covered.
+
+**M12** Daily digest at 14:00 `America/Los_Angeles`, pinned to a real timezone
+so it does not drift an hour twice a year with daylight saving — verified to
+hold 14:00 local across both PDT and PST. Arrivals are ranked by influence
+rather than arrival order. A quiet day sends nothing, because a daily "nothing
+happened" email trains you to ignore the one that matters; but health problems
+send regardless, because silence is otherwise ambiguous between "nothing
+happened" and "the app died". Reports stale sweeps, held sweeps, failed runs and
+an app password that is set but not authenticating.
 
 ### Still outstanding
 

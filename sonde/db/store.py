@@ -1397,6 +1397,21 @@ async def recent_changes(limit: int = 100, event: str | None = None) -> list[dic
         return [dict(r) for r in await cur.fetchall()]
 
 
+async def events_since(since_iso: str) -> list[dict]:
+    """Events in a window, joined to what the digest needs to describe them."""
+    db = await _db()
+    async with db.execute(
+        """SELECT e.did, e.event, e.reason, e.detail, e.detected_at,
+                  a.handle, a.display_name, a.followers_count,
+                  a.influence_score, a.verified_status
+             FROM follow_events e LEFT JOIN actors a USING (did)
+            WHERE e.detected_at >= ?
+            ORDER BY e.detected_at DESC""",
+        (since_iso,),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
 async def change_totals() -> dict:
     return {
         "followed": await _scalar("SELECT COUNT(*) FROM follow_events WHERE event = 'followed'"),

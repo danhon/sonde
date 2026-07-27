@@ -35,7 +35,8 @@
         ('posts','Fetch posts','up to 2,500 calls'),
         ('moderation','Sync moderation lists','~1,000 calls'),
         ('rescore','Rescore','no API calls'),
-        ('backup','Backup now','no API calls')] %}
+        ('backup','Backup now','no API calls'),
+        ('digest','Send digest now','forces a send')] %}
     <form method="post" action="/settings/sync/{{ kind }}">
       <button type="submit" title="{{ note }}"
               class="border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs hover:border-red-800 hover:text-red-800
@@ -118,6 +119,15 @@
     {% else %}
       <span class="text-amber-700">App password set but not authenticated{% if auth.error %} — {{ auth.error }}{% endif %}.</span>
       <span class="text-slate-500">Everything still works; viewer-only data is skipped.</span>
+    {% endif %}
+  </p>
+  <p class="mt-2 text-sm">
+    {% if settings.smtp_configured %}
+      <span class="text-slate-600">Daily digest to {{ settings.notify_to }} at
+      {{ "%02d:%02d"|format(settings.digest_hour, settings.digest_minute) }}
+      {{ settings.digest_timezone }}.</span>
+    {% else %}
+      <span class="text-amber-700">SMTP not configured — no digest will be sent.</span>
     {% endif %}
   </p>
   {% if lists %}

@@ -227,6 +227,7 @@ def create_app() -> FastAPI:
         """Manual trigger. Single-flight: a second request attaches to the run."""
         from fastapi import HTTPException
 
+        from sonde.notify import digest
         from sonde.sync import (
             backup, moderation, mutuals, posts, profiles, relevance, runner,
         )
@@ -237,6 +238,7 @@ def create_app() -> FastAPI:
             "hydrate": lambda: profiles.hydrate(limit=1000),
             "posts": posts.fetch_posts,
             "relevance": relevance.enrich,
+            "digest": lambda: digest.run_digest(force=True),
             "moderation": moderation.sync_lists,
             "follows": mutuals.sync_follows,
             "rescore": profiles.rescore,

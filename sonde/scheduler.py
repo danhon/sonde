@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
@@ -69,6 +70,12 @@ async def run_relevance() -> dict:
     from sonde.sync import relevance
 
     return await registry.run("relevance", relevance.enrich)
+
+
+async def run_digest() -> dict:
+    from sonde.notify import digest
+
+    return await registry.run("digest", digest.run_digest)
 
 
 async def run_nightly() -> dict:
@@ -162,6 +169,19 @@ def attach_scheduler(app: FastAPI) -> AsyncIOScheduler:
     scheduler.add_job(
         run_affinity, "cron", day=2, hour=4, minute=5,
         id="affinity", max_instances=1, coalesce=True, misfire_grace_time=21600,
+    )
+    # Daily digest, pinned to a real timezone rather than a UTC hour — a UTC
+    # cron would drift by an hour twice a year with daylight saving.
+    try:
+        digest_tz = ZoneInfo(settings.digest_timezone)
+    except Exception:  # noqa: BLE001 - a bad TZ must not stop the scheduler
+        log.warning("unknown timezone %r; scheduling the digest in UTC",
+                    settings.digest_timezone)
+        digest_tz = timezone.utc
+    scheduler.add_job(
+        run_digest, "cron", hour=settings.digest_hour, minute=settings.digest_minute,
+        timezone=digest_tz, id="digest", max_instances=1, coalesce=True,
+        misfire_grace_time=3600,
     )
     # Rollup + snapshot. follow_events cannot be re-fetched from Bluesky and
     # Docker volumes on ubuntuplex are not backed up, so this is the only thing

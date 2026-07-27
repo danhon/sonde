@@ -107,6 +107,19 @@ class Settings:
     backup_dir: str = field(default_factory=lambda: os.environ.get("BACKUP_DIR", "./sonde-backups"))
     backup_keep: int = field(default_factory=lambda: _int("BACKUP_KEEP", 14))
 
+    # Email digest, sent once a day in local time. The timezone matters: a
+    # cron job pinned to UTC would drift an hour with daylight saving.
+    digest_hour: int = field(default_factory=lambda: _int("DIGEST_HOUR", 14))
+    digest_minute: int = field(default_factory=lambda: _int("DIGEST_MINUTE", 0))
+    digest_timezone: str = field(
+        default_factory=lambda: os.environ.get("TZ", "America/Los_Angeles")
+    )
+    smtp_host: str = field(default_factory=lambda: os.environ.get("SMTP_HOST", ""))
+    smtp_port: int = field(default_factory=lambda: _int("SMTP_PORT", 465))
+    smtp_username: str = field(default_factory=lambda: os.environ.get("SMTP_USERNAME", ""))
+    smtp_password: str = field(default_factory=lambda: os.environ.get("SMTP_PASSWORD", ""))
+    notify_to: str = field(default_factory=lambda: os.environ.get("NOTIFY_TO", ""))
+
     # Web
     web_host: str = field(default_factory=lambda: os.environ.get("WEB_HOST", "0.0.0.0"))
     web_port: int = field(default_factory=lambda: _int("WEB_PORT", 8090))
@@ -114,6 +127,14 @@ class Settings:
     # Build stamp, injected by the Dockerfile
     build_sha: str = field(default_factory=lambda: os.environ.get("BUILD_SHA", "dev"))
     build_time: str = field(default_factory=lambda: os.environ.get("BUILD_TIME", ""))
+
+    @property
+    def smtp_configured(self) -> bool:
+        return bool(self.smtp_host and self.smtp_username and self.notify_to)
+
+    @property
+    def service_host(self) -> str:
+        return os.environ.get("SERVICE_HOST", "sonde.sgc.rayandhon.com")
 
     @property
     def page_size(self) -> int:
