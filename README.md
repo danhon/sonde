@@ -165,7 +165,7 @@ Unit tests prove the logic is self-consistent; the evals prove it agrees with
 Bluesky. They make real API calls, so they're deliberately outside `pytest`.
 
 ```bash
-uv run pytest                                   # 119 unit tests
+uv run pytest                                   # 195 unit tests
 uv run python -m evals.live_sweep               # full sweep vs measured baseline
 uv run python -m evals.live_sweep --head        # head sweep cost
 uv run python -m evals.verified_check           # issuer distribution
