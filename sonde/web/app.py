@@ -15,6 +15,7 @@ from fastapi.responses import (
 )
 from fastapi.templating import Jinja2Templates
 
+from sonde.api.auth import authenticator
 from sonde.config import settings
 from sonde.jobs import registry
 
@@ -115,6 +116,8 @@ def create_app() -> FastAPI:
         person = await store.follower_detail(did)
         if person is None:
             raise HTTPException(status_code=404, detail="not tracked")
+        person["posts"] = await store.posts_for(did)
+        person["moderation_lists"] = await store.lists_matching(did)
         return TEMPLATES.TemplateResponse(
             request=request, name="detail.html",
             context={"p": person, "settings": settings},
@@ -145,6 +148,42 @@ def create_app() -> FastAPI:
             headers={"Content-Disposition": 'attachment; filename="sonde-followers.csv"'},
         )
 
+    @app.get("/ignored", response_class=HTMLResponse)
+    async def ignored(request: Request) -> HTMLResponse:
+        from sonde.db import store
+
+        return TEMPLATES.TemplateResponse(
+            request=request, name="ignored.html",
+            context={
+                "rows": await store.ignored_followers(),
+                "lists": await store.moderation_lists(),
+                "settings": settings,
+            },
+        )
+
+    @app.post("/followers/{did}/ignore")
+    async def ignore_follower(did: str, restore: bool = False) -> RedirectResponse:
+        """Hide or restore. Always locks the decision so a moderation refresh
+        cannot overrule a human."""
+        from sonde.db import store
+
+        await store.set_ignored(did, not restore, reason="manual", lock=True)
+        return RedirectResponse(
+            "/ignored" if restore else f"/followers/{did}", status_code=303
+        )
+
+    @app.post("/settings/lists/{rkey}")
+    async def toggle_list(rkey: str, enabled: bool = False) -> RedirectResponse:
+        from sonde.db import store
+        from sonde.sync import moderation  # noqa: F401 - keeps the module importable
+
+        for entry in await store.moderation_lists():
+            if entry["uri"].rsplit("/", 1)[-1] == rkey:
+                await store.set_list_enabled(entry["uri"], enabled)
+                await store.apply_moderation_hides()
+                break
+        return RedirectResponse("/ignored", status_code=303)
+
     @app.get("/settings", response_class=HTMLResponse)
     async def settings_page(request: Request) -> HTMLResponse:
         from sonde.db import store
@@ -160,6 +199,8 @@ def create_app() -> FastAPI:
                 "runs": await store.recent_runs(15),
                 "active": sorted(await store.active_score_components()),
                 "last_backup": await backup.last_backup(),
+                "auth": authenticator.status(),
+                "lists": await store.moderation_lists(),
                 "needs_review": await store.get_meta("needs_review_count"),
                 "running": registry.running(),
                 "settings": settings,
@@ -171,12 +212,14 @@ def create_app() -> FastAPI:
         """Manual trigger. Single-flight: a second request attaches to the run."""
         from fastapi import HTTPException
 
-        from sonde.sync import backup, mutuals, profiles, runner
+        from sonde.sync import backup, moderation, mutuals, posts, profiles, runner
 
         jobs = {
             "head": runner.head_sweep,
             "full": runner.full_sweep,
             "hydrate": lambda: profiles.hydrate(limit=1000),
+            "posts": posts.fetch_posts,
+            "moderation": moderation.sync_lists,
             "follows": mutuals.sync_follows,
             "rescore": profiles.rescore,
             "backup": backup.snapshot,

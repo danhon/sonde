@@ -53,6 +53,18 @@ async def run_affinity() -> dict:
     return await registry.run("affinity", job)
 
 
+async def run_posts() -> dict:
+    from sonde.sync import posts
+
+    return await registry.run("posts", posts.fetch_posts)
+
+
+async def run_moderation() -> dict:
+    from sonde.sync import moderation
+
+    return await registry.run("moderation", moderation.sync_lists)
+
+
 async def run_nightly() -> dict:
     """Daily rollup then snapshot, in that order so the backup includes it."""
     from sonde.sync import backup
@@ -73,6 +85,8 @@ CATCH_UP: dict[str, tuple[str, int]] = {
     "full": ("full", 6 * 3600),
     "hydrate": ("hydrate", 3600),
     "follows": ("follows", 24 * 3600),
+    "posts": ("posts", 2 * 3600),
+    "moderation": ("moderation", 12 * 3600),
 }
 
 
@@ -119,6 +133,17 @@ def attach_scheduler(app: FastAPI) -> AsyncIOScheduler:
     scheduler.add_job(
         run_follows, "interval", hours=24,
         id="follows", max_instances=1, coalesce=True, misfire_grace_time=3600,
+    )
+    # Recent posts, tiered by the TTL: priority accounts refresh on every full
+    # sweep, everyone else rolls round once a day.
+    scheduler.add_job(
+        run_posts, "interval", hours=2,
+        id="posts", max_instances=1, coalesce=True, misfire_grace_time=3600,
+    )
+    # Curated moderation lists. Cheap, and membership changes slowly.
+    scheduler.add_job(
+        run_moderation, "interval", hours=12,
+        id="moderation", max_instances=1, coalesce=True, misfire_grace_time=3600,
     )
     # Affinity index + rosters. Expensive (~4,300 calls) but monthly, and it is
     # the signal that answers "influential in MY network" rather than in general.

@@ -148,3 +148,81 @@ CREATE TABLE IF NOT EXISTS affinity_sources (
     pages_fetched INTEGER,
     fetched_at    TEXT
 );
+
+-- ---------------------------------------------------------------- M9-M11
+
+-- Three most recent posts per follower. Replaced wholesale on each fetch;
+-- this is a display and classification signal, not an archive.
+CREATE TABLE IF NOT EXISTS posts (
+    did          TEXT NOT NULL,
+    uri          TEXT NOT NULL,
+    text         TEXT,
+    indexed_at   TEXT,
+    like_count   INTEGER,
+    repost_count INTEGER,
+    reply_count  INTEGER,
+    is_repost    INTEGER NOT NULL DEFAULT 0,
+    fetched_at   TEXT NOT NULL,
+    PRIMARY KEY (did, uri)
+);
+
+CREATE INDEX IF NOT EXISTS idx_posts_did  ON posts (did, indexed_at DESC);
+
+-- Overlapping groups. Definitions are seeded but editable.
+CREATE TABLE IF NOT EXISTS groups (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug        TEXT NOT NULL UNIQUE,
+    name        TEXT NOT NULL,
+    description TEXT,
+    created_at  TEXT
+);
+
+-- Many-to-many: a follower can be a journalist AND a newsletter writer.
+-- Every membership records how it was decided so it can be argued with.
+CREATE TABLE IF NOT EXISTS group_members (
+    group_id   INTEGER NOT NULL REFERENCES groups (id) ON DELETE CASCADE,
+    did        TEXT NOT NULL,
+    tier       TEXT NOT NULL,      -- affiliation / wikidata / domain / text / propagation / manual
+    confidence REAL NOT NULL DEFAULT 0.5,
+    evidence   TEXT,               -- the snippet or fact that decided it
+    source_url TEXT,
+    confirmed  INTEGER,            -- NULL = unreviewed, 1 = confirmed, 0 = rejected
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (group_id, did)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gm_did       ON group_members (did);
+CREATE INDEX IF NOT EXISTS idx_gm_unreviewed ON group_members (confirmed, confidence DESC);
+
+-- Curated moderation lists (skywatch.blue and any other curator).
+CREATE TABLE IF NOT EXISTS moderation_lists (
+    uri          TEXT PRIMARY KEY,
+    curator      TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    purpose      TEXT,
+    description  TEXT,
+    enabled      INTEGER NOT NULL DEFAULT 1,   -- per-list opt-out
+    member_count INTEGER,
+    fetched_at   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS moderation_list_members (
+    list_uri TEXT NOT NULL REFERENCES moderation_lists (uri) ON DELETE CASCADE,
+    did      TEXT NOT NULL,
+    PRIMARY KEY (list_uri, did)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mlm_did ON moderation_list_members (did);
+
+-- Dismissed warnings. Kept as an append-only log rather than a boolean, so
+-- "I dismissed that" is answerable later with what exactly was dismissed.
+CREATE TABLE IF NOT EXISTS notice_dismissals (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind         TEXT NOT NULL,     -- e.g. invalid_verification
+    signature    TEXT NOT NULL,     -- what the warning was about, hashed
+    summary      TEXT NOT NULL,     -- human-readable, frozen at dismissal time
+    detail       TEXT,              -- JSON: the subjects it covered
+    dismissed_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notice_kind ON notice_dismissals (kind, dismissed_at DESC);

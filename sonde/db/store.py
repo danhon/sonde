@@ -60,7 +60,19 @@ async def connect(path: str | None = None) -> aiosqlite.Connection:
 # on an existing table, so new columns have to be added explicitly or an upgraded
 # deploy fails on the first query against a live database.
 MIGRATIONS: dict[str, list[tuple[str, str]]] = {
+    "follower_state": [
+        # Ignoring is a display preference: never a delete, always reversible.
+        ("ignored_at", "TEXT"),
+        ("ignored_reason", "TEXT"),     # "manual" or "moderation"
+        # Set when a human decides either way. Automation must never overrule
+        # it: an account you un-hid stays un-hidden on the next moderation run.
+        ("ignore_locked", "INTEGER"),
+        # Exact follow time, decoded from the TID in viewer.followedBy.
+        ("followed_at", "TEXT"),
+        ("follow_uri", "TEXT"),
+    ],
     "actors": [
+        ("posts_fetched_at", "TEXT"),
         ("institution_id", "INTEGER"),
         ("institution_name", "TEXT"),
         ("institution_score", "REAL"),
@@ -214,6 +226,238 @@ async def bump_missed(dids: Iterable[str]) -> list[str]:
     async with db.execute(
         "SELECT did FROM follower_state WHERE is_current = 1 AND missed_sweeps >= ?",
         (settings.departure_confirm_sweeps,),
+    ) as cur:
+        return [r["did"] for r in await cur.fetchall()]
+
+
+# ------------------------------------------------------- M9 ignore
+
+async def set_ignored(did: str, ignored: bool, *, reason: str = "manual",
+                      lock: bool = True) -> None:
+    """Hide from listings. Never a delete — the record and history are kept,
+    the account is still swept, and it still counts in totals.
+
+    `lock` marks the decision as a human's. Automation passes lock=False and
+    skips locked rows, so un-hiding a false positive sticks.
+    """
+    db = await _db()
+    await db.execute(
+        "UPDATE follower_state SET ignored_at = ?, ignored_reason = ?, "
+        "ignore_locked = COALESCE(?, ignore_locked) WHERE did = ?",
+        (utcnow() if ignored else None, reason if ignored else None,
+         1 if lock else None, did),
+    )
+    await db.commit()
+
+
+async def apply_moderation_hides() -> dict:
+    """Hide followers on any enabled moderation list.
+
+    Skips anyone whose visibility a human has decided — in either direction.
+    Also un-hides accounts that were auto-hidden and have since dropped off
+    every list, so a curator's correction propagates.
+    """
+    db = await _db()
+    async with db.execute(
+        """SELECT DISTINCT m.did FROM moderation_list_members m
+             JOIN moderation_lists l ON l.uri = m.list_uri
+            WHERE l.enabled = 1"""
+    ) as cur:
+        listed = {r["did"] for r in await cur.fetchall()}
+
+    async with db.execute(
+        "SELECT did, ignored_at, ignored_reason, ignore_locked "
+        "FROM follower_state WHERE is_current = 1"
+    ) as cur:
+        current = [dict(r) for r in await cur.fetchall()]
+
+    hidden = restored = skipped = 0
+    now = utcnow()
+    for row in current:
+        if row["ignore_locked"]:
+            skipped += 1
+            continue
+        on_list = row["did"] in listed
+        if on_list and not row["ignored_at"]:
+            await db.execute(
+                "UPDATE follower_state SET ignored_at = ?, ignored_reason = 'moderation' "
+                "WHERE did = ?", (now, row["did"]),
+            )
+            hidden += 1
+        elif not on_list and row["ignored_reason"] == "moderation":
+            await db.execute(
+                "UPDATE follower_state SET ignored_at = NULL, ignored_reason = NULL "
+                "WHERE did = ?", (row["did"],),
+            )
+            restored += 1
+    await db.commit()
+    return {"hidden": hidden, "restored": restored,
+            "locked_skipped": skipped, "listed": len(listed)}
+
+
+async def save_moderation_list(meta: dict, members: list[str]) -> int:
+    db = await _db()
+    await db.execute(
+        """INSERT INTO moderation_lists
+             (uri, curator, name, purpose, description, member_count, fetched_at)
+           VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT (uri) DO UPDATE SET
+             name = excluded.name, purpose = excluded.purpose,
+             description = excluded.description,
+             member_count = excluded.member_count, fetched_at = excluded.fetched_at""",
+        (meta["uri"], meta["curator"], meta["name"], meta.get("purpose"),
+         meta.get("description"), len(members), utcnow()),
+    )
+    await db.execute(
+        "DELETE FROM moderation_list_members WHERE list_uri = ?", (meta["uri"],)
+    )
+    await db.executemany(
+        "INSERT INTO moderation_list_members (list_uri, did) VALUES (?,?) "
+        "ON CONFLICT DO NOTHING",
+        [(meta["uri"], did) for did in members],
+    )
+    await db.commit()
+    return len(members)
+
+
+async def moderation_lists() -> list[dict]:
+    db = await _db()
+    async with db.execute(
+        """SELECT l.*,
+                  (SELECT COUNT(*) FROM moderation_list_members m
+                    JOIN follower_state fs ON fs.did = m.did AND fs.is_current = 1
+                   WHERE m.list_uri = l.uri) AS matched
+             FROM moderation_lists l ORDER BY matched DESC, l.name"""
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def set_list_enabled(uri: str, enabled: bool) -> None:
+    db = await _db()
+    await db.execute(
+        "UPDATE moderation_lists SET enabled = ? WHERE uri = ?", (int(enabled), uri)
+    )
+    await db.commit()
+
+
+async def lists_matching(did: str) -> list[dict]:
+    """Which lists flagged this person — shown on their detail page."""
+    db = await _db()
+    async with db.execute(
+        """SELECT l.name, l.curator, l.uri, l.enabled FROM moderation_list_members m
+             JOIN moderation_lists l ON l.uri = m.list_uri
+            WHERE m.did = ? ORDER BY l.name""",
+        (did,),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def ignored_followers() -> list[dict]:
+    db = await _db()
+    async with db.execute(
+        "SELECT a.did, a.handle, a.display_name, a.followers_count, a.influence_score, "
+        "fs.ignored_at FROM actors a JOIN follower_state fs USING (did) "
+        "WHERE fs.ignored_at IS NOT NULL ORDER BY fs.ignored_at DESC"
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def ignored_count() -> int:
+    return await _scalar(
+        "SELECT COUNT(*) FROM follower_state WHERE is_current = 1 AND ignored_at IS NOT NULL"
+    )
+
+
+async def record_follow_date(did: str, uri: str) -> bool:
+    """Store the exact follow time decoded from a viewer.followedBy URI."""
+    from sonde.api.tid import from_at_uri
+
+    when = from_at_uri(uri)
+    if when is None:
+        return False
+    db = await _db()
+    await db.execute(
+        "UPDATE follower_state SET followed_at = ?, follow_uri = ? WHERE did = ?",
+        (when.isoformat(timespec="seconds"), uri, did),
+    )
+    return True
+
+
+# -------------------------------------------------------- M10 posts
+
+async def replace_posts(did: str, posts: list[dict]) -> int:
+    """Keep only the newest few. This is a display signal, not an archive."""
+    db = await _db()
+    now = utcnow()
+    await db.execute("DELETE FROM posts WHERE did = ?", (did,))
+    await db.executemany(
+        """INSERT INTO posts (did, uri, text, indexed_at, like_count,
+                              repost_count, reply_count, is_repost, fetched_at)
+           VALUES (?,?,?,?,?,?,?,?,?)
+           ON CONFLICT (did, uri) DO NOTHING""",
+        [(did, p["uri"], p.get("text"), p.get("indexed_at"), p.get("like_count"),
+          p.get("repost_count"), p.get("reply_count"), int(p.get("is_repost", False)), now)
+         for p in posts],
+    )
+    await db.execute(
+        "UPDATE actors SET posts_fetched_at = ? WHERE did = ?", (now, did)
+    )
+    # Real recency retires the lifetime-average liveness proxy.
+    own = [p for p in posts if not p.get("is_repost") and p.get("indexed_at")]
+    if own:
+        await db.execute(
+            "UPDATE actors SET last_post_at = ? WHERE did = ?",
+            (max(p["indexed_at"] for p in own), did),
+        )
+    return len(posts)
+
+
+async def posts_for(did: str) -> list[dict]:
+    db = await _db()
+    async with db.execute(
+        "SELECT * FROM posts WHERE did = ? ORDER BY indexed_at DESC", (did,)
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def post_targets(priority_limit: int = 500, ttl_hours: int = 20) -> list[str]:
+    """Who needs posts fetched, priority first.
+
+    Top-N by influence, all verified, and recent arrivals refresh on every full
+    sweep; everyone else rolls round once a day. Fetching all 10,042 every run
+    would be 40k calls/day on a shared IP.
+    """
+    db = await _db()
+    async with db.execute(
+        """SELECT a.did,
+                  CASE WHEN a.verified_status = 'valid' THEN 0
+                       WHEN a.influence_score IS NOT NULL THEN 1
+                       ELSE 2 END AS band
+             FROM actors a JOIN follower_state fs USING (did)
+            WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
+              AND (a.posts_fetched_at IS NULL
+                   OR (julianday('now') - julianday(a.posts_fetched_at)) * 24 >= ?)
+            ORDER BY band ASC, a.influence_score DESC NULLS LAST, fs.list_rank ASC""",
+        (ttl_hours,),
+    ) as cur:
+        return [r["did"] for r in await cur.fetchall()]
+
+
+async def group_target_dids(top_n: int = 500) -> list[str]:
+    """Top N by influence plus every verified follower, ignored excluded."""
+    db = await _db()
+    async with db.execute(
+        """SELECT did FROM (
+               SELECT a.did, a.influence_score
+                 FROM actors a JOIN follower_state fs USING (did)
+                WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
+                ORDER BY a.influence_score DESC NULLS LAST LIMIT ?
+           )
+           UNION
+           SELECT a.did FROM actors a JOIN follower_state fs USING (did)
+            WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
+              AND a.verified_status = 'valid'""",
+        (top_n,),
     ) as cur:
         return [r["did"] for r in await cur.fetchall()]
 
@@ -422,7 +666,7 @@ async def ranked_followers(
     # NULLS LAST keeps un-hydrated rows out of the way whichever way we sort.
     order_sql = f"{column} {arrow} NULLS LAST, a.handle ASC"
 
-    where = ["fs.is_current = 1", "a.handle IS NOT ?"]
+    where = ["fs.is_current = 1", "fs.ignored_at IS NULL", "a.handle IS NOT ?"]
     params: list = [settings.actor]
     if verified_only:
         where.append("a.verified_status = 'valid'")
@@ -684,6 +928,7 @@ async def counts() -> dict:
         "private": private,
         "departed": departed,
         "mutuals": mutuals,
+        "ignored": await ignored_count(),
         "reported": int(reported) if reported else None,
     }
 
@@ -786,6 +1031,8 @@ async def follower_detail(did: str) -> dict | None:
     async with db.execute(
         """SELECT a.*, fs.is_current, fs.first_seen_at, fs.last_seen_at,
                   fs.backfilled, fs.list_rank, fs.lost_at, fs.missed_sweeps,
+                  fs.ignored_at, fs.ignored_reason, fs.ignore_locked,
+                  fs.followed_at, fs.follow_uri,
                   (mf.did IS NOT NULL) AS is_mutual
              FROM actors a
              LEFT JOIN follower_state fs USING (did)
@@ -808,7 +1055,7 @@ async def follower_detail(did: str) -> dict | None:
 async def export_rows() -> list[dict]:
     """Flat rows for CSV. Honours the private-follower display policy."""
     db = await _db()
-    where = "fs.is_current = 1"
+    where = "fs.is_current = 1 AND fs.ignored_at IS NULL"
     if settings.respect_no_unauthenticated:
         where += " AND COALESCE(a.labels,'') NOT LIKE '%no-unauthenticated%'"
     async with db.execute(
@@ -1106,6 +1353,94 @@ async def change_totals() -> dict:
             "SELECT COUNT(*) FROM follow_events WHERE event = 'handle_changed'"
         ),
     }
+
+
+# --------------------------------------------------------- notices
+
+async def _invalid_verification_subjects() -> list[dict]:
+    db = await _db()
+    async with db.execute(
+        "SELECT a.did, a.handle, a.display_name FROM actors a "
+        "JOIN follower_state fs USING (did) "
+        "WHERE fs.is_current = 1 AND fs.ignored_at IS NULL "
+        "AND a.verified_status = 'invalid' ORDER BY a.handle"
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def active_notices() -> list[dict]:
+    """Warnings not currently dismissed.
+
+    The signature is the set of subjects, so dismissing "2 accounts" does not
+    also silence a later "5 accounts" — the warning returns when what it is
+    about actually changes.
+    """
+    import hashlib
+
+    notices = []
+    subjects = await _invalid_verification_subjects()
+    if subjects:
+        signature = hashlib.sha256(
+            "|".join(sorted(s["did"] for s in subjects)).encode()
+        ).hexdigest()[:16]
+        notices.append({
+            "kind": "invalid_verification",
+            "signature": signature,
+            "summary": (
+                f"{len(subjects)} follower(s) carry a verification record that "
+                f"fails validation"
+            ),
+            "detail": (
+                "That is not the same as being unverified: a record exists but "
+                "does not validate. Usually the issuer revoked it or the account "
+                "changed handle after being verified."
+            ),
+            "subjects": subjects,
+        })
+
+    db = await _db()
+    async with db.execute(
+        "SELECT kind, signature FROM notice_dismissals"
+    ) as cur:
+        dismissed = {(r["kind"], r["signature"]) for r in await cur.fetchall()}
+    return [n for n in notices if (n["kind"], n["signature"]) not in dismissed]
+
+
+async def dismiss_notice(kind: str, signature: str) -> bool:
+    """Record a dismissal. Append-only: dismissals are a log, not a flag."""
+    for notice in await active_notices():
+        if notice["kind"] == kind and notice["signature"] == signature:
+            db = await _db()
+            await db.execute(
+                """INSERT INTO notice_dismissals
+                     (kind, signature, summary, detail, dismissed_at)
+                   VALUES (?,?,?,?,?)""",
+                (kind, signature, notice["summary"],
+                 json.dumps(notice.get("subjects", [])), utcnow()),
+            )
+            await db.commit()
+            return True
+    return False
+
+
+async def dismissal_log(limit: int = 50) -> list[dict]:
+    db = await _db()
+    async with db.execute(
+        "SELECT * FROM notice_dismissals ORDER BY id DESC LIMIT ?", (limit,)
+    ) as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+    for row in rows:
+        try:
+            row["subjects"] = json.loads(row["detail"] or "[]")
+        except ValueError:
+            row["subjects"] = []
+    return rows
+
+
+async def restore_notice(dismissal_id: int) -> None:
+    db = await _db()
+    await db.execute("DELETE FROM notice_dismissals WHERE id = ?", (dismissal_id,))
+    await db.commit()
 
 
 async def dashboard_stats() -> dict:

@@ -67,6 +67,24 @@ class Settings:
     affinity_max_follows: int = field(default_factory=lambda: _int("AFFINITY_MAX_FOLLOWS", 2000))
     affinity_max_sources: int = field(default_factory=lambda: _int("AFFINITY_MAX_SOURCES", 600))
 
+    # Recent posts. getAuthorFeed is 1 call per actor with no bulk equivalent,
+    # so fetching all 10,042 every run would be 40k calls/day on a shared IP.
+    posts_per_run: int = field(default_factory=lambda: _int("POSTS_PER_RUN", 2500))
+    posts_ttl_hours: int = field(default_factory=lambda: _int("POSTS_TTL_HOURS", 20))
+
+    # Curated moderation lists applied as a first-pass filter. Each list can
+    # still be switched off individually in the UI.
+    moderation_curators: tuple[str, ...] = field(
+        default_factory=lambda: tuple(
+            h.strip() for h in
+            os.environ.get("MODERATION_CURATORS", "skywatch.blue").split(",")
+            if h.strip()
+        )
+    )
+    moderation_enabled: bool = field(
+        default_factory=lambda: _bool("MODERATION_ENABLED", True)
+    )
+
     # Safety rails on departure detection
     departure_confirm_sweeps: int = field(
         default_factory=lambda: _int("DEPARTURE_CONFIRM_SWEEPS", 2)

@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Hidden — sonde{% endblock %}
+{% block content %}
+
+<div class="flex flex-wrap items-baseline gap-4 border-b border-slate-300 pb-3">
+  <h1 class="font-mono text-xs font-semibold uppercase tracking-widest text-red-800">Hidden followers</h1>
+  <span class="text-xs text-slate-500">{{ rows|length }} hidden</span>
+</div>
+
+<p class="mt-4 max-w-2xl text-sm text-slate-600">
+  Hidden accounts are kept in full — still swept, still counted in totals, history
+  intact. They are only left out of listings, rankings and exports. Restoring one
+  <strong>locks that decision</strong>, so a later moderation refresh will not
+  hide it again.
+</p>
+
+{% if lists %}
+<section class="mt-8">
+  <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+    Moderation lists
+  </h2>
+  <p class="mt-3 max-w-2xl text-xs text-slate-500">
+    These lists are not all the same kind of thing. Some catch abuse (spam, follow
+    farming, platform manipulation); others classify politics or affiliation.
+    Applying all of them is the default and it is also a content decision, so each
+    one can be switched off on its own.
+  </p>
+  <div class="mt-3 overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-slate-200 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
+          <th class="py-2 pr-4">List</th><th class="py-2 pr-4">Curator</th>
+          <th class="py-2 pr-4 text-right">Members</th>
+          <th class="py-2 pr-4 text-right">Your followers</th>
+          <th class="py-2 pr-4">Applied</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for l in lists %}
+        <tr class="border-b border-slate-100 {% if not l.enabled %}opacity-50{% endif %}">
+          <td class="py-2 pr-4">{{ l.name }}</td>
+          <td class="py-2 pr-4 font-mono text-xs text-slate-500">{{ l.curator }}</td>
+          <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">
+            {{ "{:,}".format(l.member_count or 0) }}
+          </td>
+          <td class="py-2 pr-4 text-right font-mono tabular-nums
+                     {% if l.matched %}text-red-800{% else %}text-slate-400{% endif %}">
+            {{ l.matched }}
+          </td>
+          <td class="py-2 pr-4">
+            <form method="post" action="/settings/lists/{{ l.uri.rsplit('/', 1)[-1] }}?enabled={{ 'false' if l.enabled else 'true' }}">
+              <button type="submit" class="font-mono text-xs {% if l.enabled %}text-emerald-700{% else %}text-slate-400{% endif %} hover:underline">
+                {{ "on" if l.enabled else "off" }}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<section class="mt-8">
+  <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+    Hidden
+  </h2>
+  {% if not rows %}
+  <p class="mt-4 text-sm text-slate-500">Nothing is hidden.</p>
+  {% else %}
+  <div class="overflow-x-auto">
+    <table class="mt-3 w-full text-sm">
+      <thead>
+        <tr class="border-b border-slate-200 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
+          <th class="py-2 pr-4">Handle</th><th class="py-2 pr-4">Name</th>
+          <th class="py-2 pr-4 text-right">Followers</th>
+          <th class="py-2 pr-4">Hidden since</th><th class="py-2 pr-4"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr class="border-b border-slate-100">
+          <td class="py-2 pr-4">
+            <a class="font-mono text-xs text-red-800 hover:underline" href="/followers/{{ r.did }}">{{ r.handle }}</a>
+          </td>
+          <td class="py-2 pr-4">{{ r.display_name or "" }}</td>
+          <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">
+            {% if r.followers_count is not none %}{{ "{:,}".format(r.followers_count) }}{% else %}—{% endif %}
+          </td>
+          <td class="py-2 pr-4 font-mono text-xs text-slate-400">{{ (r.ignored_at or "")[:10] }}</td>
+          <td class="py-2 pr-4 text-right">
+            <form method="post" action="/followers/{{ r.did }}/ignore?restore=true">
+              <button type="submit" class="font-mono text-xs text-red-800 hover:underline">restore</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{% endblock %}

@@ -294,14 +294,17 @@ async def test_catch_up_runs_jobs_that_are_overdue(monkeypatch):
     # Nothing has ever run: everything is overdue.
     overdue = await sched._catch_up(FakeScheduler())
 
-    assert set(overdue) == {"full", "hydrate", "follows"}
-    assert calls == ["catchup-full", "catchup-hydrate", "catchup-follows"]
+    # Asserted against the registry rather than a hardcoded list, so adding a
+    # scheduled job doesn't silently leave it out of catch-up.
+    assert set(overdue) == set(sched.CATCH_UP)
+    assert calls == [f"catchup-{jid}" for jid in overdue]
+    assert {"full", "hydrate", "follows"} <= set(overdue)
 
 
 async def test_catch_up_skips_jobs_that_ran_recently():
-    from sonde import scheduler as sched
+    from sonde import scheduler as sched  # noqa: F401
 
-    for kind in ("full", "hydrate", "follows"):
+    for _, (kind, _interval) in sched.CATCH_UP.items():
         run_id = await store.start_run(kind)
         await store.finish_run(run_id, status="ok", completed=1)
 
