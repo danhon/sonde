@@ -226,3 +226,43 @@ CREATE TABLE IF NOT EXISTS notice_dismissals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notice_kind ON notice_dismissals (kind, dismissed_at DESC);
+
+-- ---------------------------------------------------------------- M8
+
+-- Organisations, not just news outlets. Weight defaults from Wikidata
+-- notability so Signal and the WSJ get sensible values with no list to keep.
+CREATE TABLE IF NOT EXISTS organisations (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL UNIQUE,
+    kind         TEXT,          -- news / tech / nonprofit / academic / government / publisher / newsletter
+    weight       REAL NOT NULL DEFAULT 0.7,
+    wikidata_id  TEXT,
+    sitelinks    INTEGER,
+    domains      TEXT,          -- JSON array
+    aliases      TEXT,          -- JSON array
+    url          TEXT,
+    discovered_at TEXT,
+    weight_locked INTEGER       -- 1 = a human set this; automation must not move it
+);
+
+-- A person can hold several affiliations of different kinds at once, which the
+-- single institution_* column set could not express.
+CREATE TABLE IF NOT EXISTS affiliations (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    did          TEXT NOT NULL,
+    org_id       INTEGER REFERENCES organisations (id) ON DELETE CASCADE,
+    org_name     TEXT NOT NULL,
+    role         TEXT,
+    kind         TEXT NOT NULL,   -- employment / leadership / founder / own_publication / board / academic / former
+    method       TEXT NOT NULL,   -- attested / domain / roster / wikidata / corroborated / claimed / link / manual
+    confidence   REAL NOT NULL DEFAULT 0.5,
+    note         TEXT,
+    url          TEXT,
+    source_url   TEXT,            -- where the claim came from; mandatory in spirit
+    confirmed    INTEGER,         -- NULL unreviewed, 1 confirmed, 0 rejected
+    first_seen_at TEXT NOT NULL,
+    UNIQUE (did, org_name, kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_aff_did ON affiliations (did);
+CREATE INDEX IF NOT EXISTS idx_aff_unreviewed ON affiliations (confirmed, confidence DESC);

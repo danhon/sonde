@@ -183,3 +183,70 @@ async def test_a_failing_lookup_does_not_abort_the_run():
     assert result["status"] == "ok"
     assert result["fetched"] == 1
     assert result["failed"] == 1
+
+
+# ---------------------------------- endpoint robustness (production bug)
+
+async def test_a_truncated_response_is_retried_not_crashed():
+    """Production 2026-07-27: the endpoint answered HTTP 200 with a body that
+    stops mid-object, so raise_for_status passed and .json() blew up with
+    'Expecting property name enclosed in double quotes: line 1375'."""
+    import httpx as _httpx
+
+    from sonde.external import wikidata as wd
+
+    calls = {"n": 0}
+    good = {"results": {"bindings": [
+        {"handle": {"value": "a.bsky.social"},
+         "item": {"value": "http://www.wikidata.org/entity/Q1"},
+         "itemLabel": {"value": "A"}, "sitelinks": {"value": "5"}}
+    ]}}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # 200, but the body simply stops.
+            return _httpx.Response(200, content=b'{"results": {"bindings": [{"han')
+        return _httpx.Response(200, json=good)
+
+    async def patched(query, timeout=180.0, attempts=4):
+        async with _httpx.AsyncClient(transport=_httpx.MockTransport(handler)) as c:
+            for attempt in range(attempts):
+                resp = await c.post(wd.ENDPOINT, data={"query": query})
+                try:
+                    return resp.json()["results"]["bindings"]
+                except ValueError:
+                    continue
+        raise AssertionError("should have recovered")
+
+    await follower("did:plc:a", "a.bsky.social")
+    result = await wikidata.refresh(fetch=patched)
+
+    # 1 truncated + 1 good mapping + 1 detail query for the single match.
+    assert calls["n"] == 3, "the truncated response must be retried, not fatal"
+    assert result["matched"] == 1
+
+
+async def test_the_query_is_sent_by_post():
+    """A ~14KB query in a URL invites trouble at proxies, and Wikimedia asks
+    for POST on anything long."""
+    import inspect
+
+    from sonde.external import wikidata as wd
+
+    source = inspect.getsource(wd._sparql)
+    assert "client.post" in source
+    assert "client.get" not in source
+
+
+async def test_persistent_failure_still_raises():
+    from sonde.external import wikidata as wd
+
+    async def always_truncated(query, **kw):
+        raise wd.TruncatedResponse("still broken")
+
+    await follower("did:plc:a", "a.bsky.social")
+    with pytest.raises(wd.TruncatedResponse):
+        await wikidata.refresh(fetch=always_truncated)
+
+    assert (await store.recent_runs())[0]["status"] == "failed"

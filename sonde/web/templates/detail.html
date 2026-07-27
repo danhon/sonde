@@ -152,6 +152,40 @@
   {% endif %}
 </section>
 
+{% if p.affiliations %}
+<section class="mt-8">
+  <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+    Affiliations
+  </h2>
+  <ul class="mt-3 space-y-2">
+    {% for a in p.affiliations %}
+    <li class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-slate-100 pb-2">
+      <span class="rounded-sm bg-slate-100 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-slate-600">
+        {{ a.kind.replace('_', ' ') }}
+      </span>
+      {% if a.url %}
+        <a class="text-sm text-red-800 hover:underline" href="{{ a.url }}" target="_blank" rel="noopener">{{ a.org_name }}</a>
+      {% else %}
+        <span class="text-sm font-medium">{{ a.org_name }}</span>
+      {% endif %}
+      {% if a.role %}<span class="text-sm text-slate-600">{{ a.role }}</span>{% endif %}
+      <span class="ml-auto font-mono text-[10px] uppercase tracking-widest text-slate-400">
+        {{ a.method }} · {{ "%.2f"|format(a.confidence) }}
+        {%- if a.confirmed == 1 %} · confirmed{% endif %}
+      </span>
+      {% if a.note %}<span class="w-full text-xs text-slate-500">{{ a.note }}
+        {%- if a.source_url %} — <a class="text-red-800 hover:underline" href="{{ a.source_url }}" target="_blank" rel="noopener">source</a>{% endif %}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="mt-2 text-xs text-slate-500">
+    Best evidence wins rather than accumulating, so being both attested and
+    bio-claimed at the same place is not counted twice. Leading an organisation
+    counts for more than working at one; a former role counts for much less.
+  </p>
+</section>
+{% endif %}
+
 {% if p.wikidata_id %}
 <section class="mt-8">
   <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">

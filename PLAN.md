@@ -571,7 +571,7 @@ Sub-steps for the scoring work are sequenced in
 | M6 | Affinity index + institutional matching | ✅ done | 24.5% coverage; 56 institution matches |
 | M7 | External reputation — Wikidata + Wikipedia | ✅ done | 107 matched, 58 with pageviews. `public_profile` is live |
 | M7b | Link signals from bios | ✅ done | GDELT and LinkedIn **dropped on evidence** — see below |
-| M8 | Affiliations table, notes/links, prose rationale | ⬜ planned | Needs M7 for org notability |
+| M8 | Affiliations table, kinds, notes/links | ✅ done | 103 affiliations for 60 people; prose rationale still to come |
 | M9 | Auth, hiding, follow dates | ✅ done | Follow dates free via `viewer.followedBy` TIDs |
 | M10 | Recent posts | ✅ done | Top 500 + verified automatic; others on demand |
 | M11 | Groups | ⬜ planned | T1–T6 tiers incl. label propagation |
@@ -645,6 +645,18 @@ is recorded here rather than quietly abandoned:
   are aggregators (linktr.ee, 16) and shorteners rather than personal sites with
   structured data. The **host itself** carries the signal, so it is read for
   free instead of fetched.
+
+**M8** Affiliations are now a table with a *kind*, because the single
+`institution_*` column set could not express more than one relationship at a
+time. Leadership counts for more than employment, a former role for much less,
+and an own publication is a claim no employer lookup would ever find. Evidence
+comes from atproto (attested / domain / roster / bio claim), Wikidata employers
+and positions, and self-declared platform links; best evidence wins rather than
+accumulating. Organisation weight derives from Wikidata notability, so Signal
+scores without anyone adding Signal, and a human-set weight is never moved by a
+later pass. Measured on the real enrichment set: 103 affiliations across 60
+people — 59 Wikidata employments, 12 attested, 12 own publications, 7
+leadership, 2 academic.
 
 **M12** Daily digest at 14:00 `America/Los_Angeles`, pinned to a real timezone
 so it does not drift an hour twice a year with daylight saving — verified to

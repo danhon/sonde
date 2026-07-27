@@ -19,6 +19,7 @@ Signal" work without anyone hand-adding Signal to a list.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import httpx
@@ -63,16 +64,64 @@ GROUP BY ?item
 DETAIL_BATCH = 250
 
 
-async def _sparql(query: str, timeout: float = 180.0) -> list[dict]:
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.get(
-            ENDPOINT,
-            params={"query": query},
-            headers={"Accept": "application/sparql-results+json",
-                     "User-Agent": USER_AGENT},
-        )
-    resp.raise_for_status()
-    return resp.json()["results"]["bindings"]
+class TruncatedResponse(Exception):
+    """The endpoint returned 200 with a body that is not complete JSON."""
+
+
+async def _sparql(query: str, timeout: float = 180.0, attempts: int = 4) -> list[dict]:
+    """POST the query, retrying truncated and throttled responses.
+
+    The public endpoint answers a too-slow query with HTTP 200 and a body that
+    simply stops mid-object, so `raise_for_status()` passes and `.json()` then
+    fails with "Expecting property name enclosed in double quotes". Seen in
+    production on 2026-07-27; it works locally whenever the endpoint is less
+    loaded, which is exactly the kind of failure that only shows up in
+    production.
+
+    POST rather than GET: Wikimedia recommends it for anything long, and a
+    ~14KB query in a URL is asking for trouble at proxies.
+    """
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        if attempt:
+            # Long backoff on purpose — retrying a heavy query immediately just
+            # adds load to the thing that is already struggling.
+            await asyncio.sleep(min(15 * (2 ** (attempt - 1)), 120))
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(
+                    ENDPOINT,
+                    data={"query": query},
+                    headers={"Accept": "application/sparql-results+json",
+                             "User-Agent": USER_AGENT,
+                             "Content-Type": "application/x-www-form-urlencoded"},
+                )
+            if resp.status_code in (429, 500, 502, 503, 504):
+                last_error = httpx.HTTPStatusError(
+                    f"{resp.status_code} from Wikidata", request=resp.request,
+                    response=resp,
+                )
+                log.warning("wikidata returned %s (attempt %d/%d)",
+                            resp.status_code, attempt + 1, attempts)
+                continue
+            resp.raise_for_status()
+            try:
+                payload = resp.json()
+            except ValueError as exc:
+                # 200 with an incomplete body.
+                last_error = TruncatedResponse(
+                    f"{exc} (received {len(resp.content):,} bytes)"
+                )
+                log.warning("wikidata response was truncated at %s bytes "
+                            "(attempt %d/%d)", f"{len(resp.content):,}",
+                            attempt + 1, attempts)
+                continue
+            return payload["results"]["bindings"]
+        except (httpx.TransportError, httpx.TimeoutException) as exc:
+            last_error = exc
+            log.warning("wikidata transport error: %s (attempt %d/%d)",
+                        exc, attempt + 1, attempts)
+    raise last_error or TruncatedResponse("wikidata query failed")
 
 
 def _value(row: dict, key: str) -> str | None:

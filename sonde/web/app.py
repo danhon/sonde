@@ -118,6 +118,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="not tracked")
         person["posts"] = await store.posts_for(did)
         person["moderation_lists"] = await store.lists_matching(did)
+        person["affiliations"] = await store.affiliations_for(did)
         return TEMPLATES.TemplateResponse(
             request=request, name="detail.html",
             context={"p": person, "settings": settings},
@@ -246,6 +247,7 @@ def create_app() -> FastAPI:
             "relevance": relevance.enrich,
             "digest": lambda: digest.run_digest(force=True),
             "external": external_job,
+            "affiliations": store.rebuild_affiliations,
             "moderation": moderation.sync_lists,
             "follows": mutuals.sync_follows,
             "rescore": profiles.rescore,

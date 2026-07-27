@@ -578,7 +578,8 @@ async def active_score_components() -> set[str]:
         "selectivity": "followers_count IS NOT NULL AND follows_count IS NOT NULL",
         "liveness": "last_post_at IS NOT NULL OR posts_count IS NOT NULL",
         "affinity": "affinity_sampled IS NOT NULL OR affinity_exact IS NOT NULL",
-        "institution": "institution_score IS NOT NULL",
+        "institution": ("institution_score IS NOT NULL OR did IN "
+                        "(SELECT did FROM affiliations)"),
         "verified_affinity": "verified_affinity IS NOT NULL",
         "public_profile": "wikidata_sitelinks IS NOT NULL OR wikipedia_views_30d IS NOT NULL",
     }
@@ -639,9 +640,29 @@ async def rescore_all() -> int:
         "WHERE handle = ? OR did = ?",
         (settings.actor, await get_meta("subject_did")),
     )
+    # Affiliations supersede the single institution_* columns where they exist.
+    async with db.execute(
+        """SELECT a.did, MAX(a.confidence *
+                 CASE a.kind WHEN 'leadership' THEN 1.15 WHEN 'founder' THEN 1.1
+                             WHEN 'former' THEN 0.35 WHEN 'board' THEN 0.85
+                             ELSE 1.0 END
+                 * COALESCE(o.weight, 0.7)) AS best,
+                  a.org_name, a.kind, a.method
+             FROM affiliations a LEFT JOIN organisations o ON o.id = a.org_id
+            WHERE COALESCE(a.confirmed, 1) = 1
+            GROUP BY a.did"""
+    ) as cur:
+        best_aff = {r["did"]: dict(r) for r in await cur.fetchall()}
+
     updates = []
     for row in rows:
         row["affinity_scale"] = scale
+        aff = best_aff.get(row["did"])
+        if aff and (aff["best"] or 0) > (row.get("institution_score") or 0):
+            row["institution_score"] = min(aff["best"], 1.0)
+            row["institution_name"] = aff["org_name"]
+            row["institution_method"] = f"{aff['method']} ({aff['kind']})"
+            row["institution_confidence"] = min(aff["best"], 1.0)
         score = scoring.score_actor(row, active=active)
         updates.append((score.normalised, score.as_json(), row["did"]))
     await db.executemany(
@@ -1186,6 +1207,176 @@ async def save_roster(institution_id: int, records: list[dict]) -> int:
     )
     await db.commit()
     return len(records)
+
+
+# ------------------------------------------------------ M8 affiliations
+
+async def upsert_organisation(name: str, *, kind: str | None = None,
+                              wikidata_id: str | None = None,
+                              sitelinks: int | None = None,
+                              url: str | None = None) -> int:
+    """Weight defaults from notability so there is no list to hand-maintain.
+
+    A human-set weight is never overwritten: `weight_locked` marks the decision
+    as theirs, which is the same rule hiding and moderation already follow.
+    """
+    from sonde.organisations import default_weight
+
+    db = await _db()
+    weight = default_weight(sitelinks, kind)
+    await db.execute(
+        """INSERT INTO organisations
+             (name, kind, weight, wikidata_id, sitelinks, url, discovered_at)
+           VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT (name) DO UPDATE SET
+             kind        = COALESCE(excluded.kind, organisations.kind),
+             wikidata_id = COALESCE(excluded.wikidata_id, organisations.wikidata_id),
+             sitelinks   = COALESCE(excluded.sitelinks, organisations.sitelinks),
+             url         = COALESCE(excluded.url, organisations.url),
+             weight      = CASE WHEN organisations.weight_locked = 1
+                                THEN organisations.weight ELSE excluded.weight END""",
+        (name, kind, weight, wikidata_id, sitelinks, url, utcnow()),
+    )
+    async with db.execute("SELECT id FROM organisations WHERE name = ?", (name,)) as cur:
+        row = await cur.fetchone()
+    return int(row["id"])
+
+
+async def save_affiliations(did: str, affiliations: list) -> int:
+    """Replace derived affiliations, leaving anything a human touched alone."""
+    db = await _db()
+    await db.execute(
+        "DELETE FROM affiliations WHERE did = ? AND confirmed IS NULL "
+        "AND method != 'manual'", (did,),
+    )
+    now = utcnow()
+    written = 0
+    for aff in affiliations:
+        org_id = await upsert_organisation(aff.org_name, url=aff.url)
+        await db.execute(
+            """INSERT INTO affiliations
+                 (did, org_id, org_name, role, kind, method, confidence,
+                  note, url, source_url, first_seen_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT (did, org_name, kind) DO UPDATE SET
+                 role = excluded.role, method = excluded.method,
+                 confidence = excluded.confidence, note = excluded.note,
+                 url = excluded.url, source_url = excluded.source_url
+               WHERE affiliations.confirmed IS NULL""",
+            (did, org_id, aff.org_name, aff.role, aff.kind, aff.method,
+             aff.confidence, aff.note, aff.url, aff.source_url, now),
+        )
+        written += 1
+    return written
+
+
+async def affiliations_for(did: str) -> list[dict]:
+    db = await _db()
+    async with db.execute(
+        """SELECT a.*, o.weight AS org_weight, o.kind AS org_kind,
+                  o.sitelinks AS org_sitelinks
+             FROM affiliations a LEFT JOIN organisations o ON o.id = a.org_id
+            WHERE a.did = ? AND COALESCE(a.confirmed, 1) = 1
+            ORDER BY a.confidence DESC""",
+        (did,),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def best_affiliation_score(did: str) -> tuple[float, dict | None]:
+    """Best evidence wins rather than accumulating, so being both attested and
+    bio-claimed at the same place is not counted twice."""
+    from sonde.affiliations import KIND_WEIGHT
+
+    best_score, best_row = 0.0, None
+    for row in await affiliations_for(did):
+        strength = min(row["confidence"] * KIND_WEIGHT.get(row["kind"], 1.0), 1.0)
+        score = strength * (row["org_weight"] or 0.7)
+        if score > best_score:
+            best_score, best_row = score, row
+    return best_score, best_row
+
+
+async def rebuild_affiliations() -> dict:
+    """Derive affiliations for the enrichment set from everything already stored."""
+    from sonde.affiliations import from_links, from_wikidata
+    from sonde.institutions import match_actor
+
+    db = await _db()
+    targets = await group_target_dids(top_n=settings.posts_top_n)
+    if not targets:
+        return {"scanned": 0, "affiliations": 0, "people": 0}
+    placeholders = ",".join("?" for _ in targets)
+    async with db.execute(
+        f"""SELECT did, handle, description, verified_status, verifications,
+                   wikidata_id, wikidata_employers, wikidata_positions, link_signals
+              FROM actors WHERE did IN ({placeholders})""",
+        tuple(targets),
+    ) as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+
+    institutions = await all_institutions()
+    rosters = await roster_map()
+    total = people = 0
+
+    for row in rows:
+        found = []
+        row["verification_records"] = json.loads(row.get("verifications") or "[]")
+
+        # 1. atproto evidence: attested / domain / roster / bio claim.
+        match = match_actor(row, institutions, roster_ids=rosters.get(row["did"], set()))
+        if match:
+            from sonde.affiliations import Affiliation, kind_from_role
+
+            found.append(Affiliation(
+                org_name=match.name,
+                kind=kind_from_role(match.role),
+                method=match.method.split()[0],
+                confidence=match.confidence,
+                role=match.role,
+                note=f"{match.method} via Bluesky",
+                source_url=f"https://bsky.app/profile/{row['handle']}",
+            ))
+
+        # 2. Wikidata employers and positions — independent and reviewed.
+        found += from_wikidata(
+            json.loads(row.get("wikidata_employers") or "[]"),
+            json.loads(row.get("wikidata_positions") or "[]"),
+            row.get("wikidata_id"),
+        )
+
+        # 3. Their own publications, from links they published themselves.
+        found += from_links(json.loads(row.get("link_signals") or "[]"))
+
+        if found:
+            total += await save_affiliations(row["did"], found)
+            people += 1
+
+    await db.commit()
+    return {"scanned": len(rows), "affiliations": total, "people": people}
+
+
+async def unreviewed_affiliations(limit: int = 200) -> list[dict]:
+    db = await _db()
+    async with db.execute(
+        """SELECT a.*, act.handle, act.display_name, o.weight AS org_weight
+             FROM affiliations a
+             JOIN actors act USING (did)
+             LEFT JOIN organisations o ON o.id = a.org_id
+            WHERE a.confirmed IS NULL
+            ORDER BY a.confidence DESC, act.handle LIMIT ?""",
+        (limit,),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def review_affiliation(affiliation_id: int, confirmed: bool) -> None:
+    db = await _db()
+    await db.execute(
+        "UPDATE affiliations SET confirmed = ? WHERE id = ?",
+        (1 if confirmed else 0, affiliation_id),
+    )
+    await db.commit()
 
 
 async def apply_institution_matches() -> dict:
