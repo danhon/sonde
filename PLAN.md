@@ -578,7 +578,7 @@ Sub-steps for the scoring work are sequenced in
 | M12 | Email digest | ✅ done | Daily 14:00 America/Los_Angeles; quiet days silent, broken days always send |
 | M15a | Institution slices | ✅ done | Sortable, kind-filtered, former separated |
 | M15b | Group discovery + review queue | ✅ done | 25 candidates proposed, none auto-created |
-| M15c | Follow-graph propagation | ⬜ planned | Needs edges stored during the affinity build |
+| M15c | Follow-graph propagation | 🔨 in progress | Edges now stored; verifying against the real graph |
 | M14 | Relationship score — interaction-based ranking | ⬜ planned | Separate from influence; notifications are ~190x cheaper than per-post |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
