@@ -78,19 +78,24 @@
 
     function busy(jobs) {
       dot.className = "h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-700";
-      const job = jobs[0];
-      let label = `Running ${job.kind}`;
-      if (job.total) {
-        label += ` — ${job.current}/${job.total} ${job.unit}`;
+      // Jobs run in parallel, so name all of them. They share one rate limiter,
+      // which is why running several is safe but each one is slower.
+      const parts = jobs.map((job) => {
+        let label = job.kind;
+        if (job.total) label += ` ${job.current}/${job.total} ${job.unit}`;
+        else if (job.detail) label += ` ${job.detail}`;
+        return `${label} (${humanise(job.elapsed)})`;
+      });
+      text.textContent = `Running ${plural(jobs.length, "job")} — ${parts.join(" · ")}`;
+      // The bar tracks whichever job has furthest to go.
+      const measured = jobs.filter((j) => j.total);
+      if (measured.length) {
+        const slowest = measured.reduce((a, b) => (a.pct <= b.pct ? a : b));
         bar.classList.remove("hidden");
-        fill.style.width = `${job.pct}%`;
+        fill.style.width = `${slowest.pct}%`;
       } else {
         bar.classList.add("hidden");
       }
-      if (job.detail) label += ` · ${job.detail}`;
-      label += ` · ${humanise(job.elapsed)}`;
-      if (jobs.length > 1) label += ` (+${plural(jobs.length - 1, "other")})`;
-      text.textContent = label;
     }
 
     function stopped(message) {

@@ -339,3 +339,59 @@ async def test_catch_up_staggers_so_jobs_do_not_all_fire_at_once():
         for i in range(len(run_dates) - 1)
     ]
     assert all(g >= 60 for g in gaps), f"jobs fire too close together: {gaps}"
+
+
+# --------------------------------- concurrent jobs share the API budget
+
+async def test_clicking_several_jobs_runs_them_in_parallel_not_a_queue():
+    registry = JobRegistry()
+    started, release = [], asyncio.Event()
+
+    async def job(name):
+        started.append(name)
+        await release.wait()
+        return {}
+
+    registry.spawn("full", lambda: job("full"))
+    registry.spawn("posts", lambda: job("posts"))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert set(started) == {"full", "posts"}, "both start; there is no queue"
+    assert set(registry.running()) == {"full", "posts"}
+    release.set()
+
+
+async def test_every_client_shares_one_rate_limiter():
+    """Clients used to build their own, so the configured cap multiplied by the
+    number of concurrent jobs — measured at 18 req/s against a configured 3, on
+    an IP shared with two other apps."""
+    from sonde.api.client import BlueskyClient, reset_shared_limiter
+
+    reset_shared_limiter()
+    a, b = BlueskyClient("https://fake"), BlueskyClient("https://fake")
+    try:
+        assert a.limiter is b.limiter
+    finally:
+        await a.aclose()
+        await b.aclose()
+        reset_shared_limiter()
+
+
+async def test_an_explicit_rate_still_gets_a_private_limiter():
+    """Tests need to run flat out without touching the shared budget."""
+    from sonde.api.client import BlueskyClient, reset_shared_limiter, shared_limiter
+
+    reset_shared_limiter()
+    fast = BlueskyClient("https://fake", per_second=1000)
+    try:
+        assert fast.limiter is not shared_limiter()
+        assert fast.limiter.rate == 1000
+    finally:
+        await fast.aclose()
+        reset_shared_limiter()
+
+
+def test_the_strip_names_every_running_job(client):
+    html = client.get("/").text
+    assert "Running ${plural(jobs.length" in html or "plural(jobs.length" in html

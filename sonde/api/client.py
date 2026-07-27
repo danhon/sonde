@@ -55,6 +55,30 @@ class RateLimited(Exception):
     """Raised when a 429 survives every retry."""
 
 
+# ONE limiter for the whole process, shared by every client.
+#
+# Clients used to build their own, so the cap multiplied by the number of jobs
+# running: clicking three jobs on the settings page gave 3x the configured rate
+# against an IP already shared with BlueBirdNET and atproto-labeler. Measured at
+# 18 req/s against a configured 3.
+#
+# Created lazily because a RateLimiter binds to the running event loop.
+_shared: RateLimiter | None = None
+
+
+def shared_limiter() -> RateLimiter:
+    global _shared
+    if _shared is None:
+        _shared = RateLimiter(settings.rate_limit_per_second)
+    return _shared
+
+
+def reset_shared_limiter() -> None:
+    """Tests only: drop the process-wide limiter between event loops."""
+    global _shared
+    _shared = None
+
+
 class BlueskyClient:
     """Thin XRPC wrapper. Counts its own calls so sync_runs can record them."""
 
@@ -67,8 +91,11 @@ class BlueskyClient:
         max_retries: int | None = None,
     ) -> None:
         self.base_url = (base_url or settings.api_base).rstrip("/")
-        self.limiter = RateLimiter(
-            per_second if per_second is not None else settings.rate_limit_per_second
+        # An explicit rate gets a private limiter (tests want to run flat out);
+        # everything else shares the process-wide one, so concurrent jobs add up
+        # to the configured rate rather than multiplying it.
+        self.limiter = (
+            RateLimiter(per_second) if per_second is not None else shared_limiter()
         )
         self.max_retries = max_retries if max_retries is not None else settings.max_retries
         self.calls = 0

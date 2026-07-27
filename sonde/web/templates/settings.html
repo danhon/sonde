@@ -53,9 +53,11 @@
     </form>
     {% endfor %}
   </div>
-  <p class="mt-2 text-xs text-slate-500">
-    Jobs are single-flight — triggering one that's already running attaches to it
-    rather than starting a second.
+  <p class="mt-2 max-w-2xl text-xs text-slate-500">
+    Several jobs can be started at once and they run in parallel, not in a
+    queue — but they share one rate limiter, so the API budget is respected
+    however many are going. Each is slower as a result. Triggering a job that is
+    already running attaches to it rather than starting a second copy.
   </p>
 </section>
 
