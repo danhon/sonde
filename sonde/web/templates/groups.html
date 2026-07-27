@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Groups — sonde{% endblock %}
+{% block content %}
+
+<div class="flex flex-wrap items-baseline gap-4 border-b border-slate-300 pb-3">
+  <h1 class="font-mono text-xs font-semibold uppercase tracking-widest text-red-800">Groups</h1>
+  <span class="text-xs text-slate-500">
+    top {{ settings.posts_top_n }} by influence plus every verified follower
+  </span>
+</div>
+
+<p class="mt-4 max-w-2xl text-sm text-slate-600">
+  Membership overlaps on purpose — a journalist who writes a newsletter is both.
+  Each one records how it was decided, so a wrong answer can be argued with
+  rather than only deleted.
+</p>
+
+<div class="mt-6 flex flex-wrap gap-2">
+  {% for g in summary %}
+  <a href="/groups?slug={{ g.slug }}"
+     class="border px-3 py-1.5 font-mono text-xs
+            {% if g.slug == slug %}border-red-800 bg-red-50 text-red-800{% else %}border-slate-300 bg-white hover:border-red-800 hover:text-red-800{% endif %}">
+    {{ g.name }} <span class="tabular-nums text-slate-400">{{ g.members }}</span>
+  </a>
+  {% endfor %}
+</div>
+
+{% if slug and members %}
+<div class="mt-8 overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-slate-300 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
+        <th class="py-2 pr-4">Handle</th><th class="py-2 pr-4">Name</th>
+        <th class="py-2 pr-4 text-right">Followers</th>
+        <th class="py-2 pr-4 text-right">Score</th>
+        <th class="py-2 pr-4">Why</th><th class="py-2 pr-4"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in members %}
+      <tr class="border-b border-slate-100 hover:bg-slate-50">
+        <td class="py-2 pr-4">
+          <a class="font-mono text-xs text-red-800 hover:underline" href="/followers/{{ m.did }}">{{ m.handle }}</a>
+          {% if m.verified_status == 'valid' %}<span class="ml-1 text-sky-700" title="verified">✓</span>{% endif %}
+        </td>
+        <td class="py-2 pr-4">{{ m.display_name or "" }}</td>
+        <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-600">
+          {% if m.followers_count is not none %}{{ "{:,}".format(m.followers_count) }}{% else %}—{% endif %}
+        </td>
+        <td class="py-2 pr-4 text-right font-mono font-semibold tabular-nums">
+          {% if m.influence_score is not none %}{{ m.influence_score }}{% else %}—{% endif %}
+        </td>
+        <td class="py-2 pr-4 text-xs text-slate-500">
+          {{ m.evidence }}
+          <span class="font-mono text-[10px] uppercase tracking-wider text-slate-400">{{ m.tier }}</span>
+        </td>
+        <td class="py-2 pr-4 text-right">
+          {% if m.confirmed is none %}
+          <form method="post" action="/groups/{{ slug }}/{{ m.did }}/review?keep=false">
+            <button type="submit" class="font-mono text-xs text-slate-400 hover:text-red-800">remove</button>
+          </form>
+          {% else %}
+          <span class="font-mono text-[10px] uppercase tracking-wider text-emerald-700">kept</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% elif slug %}
+<p class="mt-8 text-sm text-slate-500">Nobody in this group yet.</p>
+{% else %}
+<p class="mt-8 text-sm text-slate-500">Pick a group above.</p>
+{% endif %}
+
+{% endblock %}

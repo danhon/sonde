@@ -92,6 +92,7 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         # meant the join always looked "fresh", so pageviews never ran.
         ("pageviews_fetched_at", "TEXT"),
         ("link_signals", "TEXT"),      # JSON, derived from the bio — no calls
+        ("wikidata_past_employers", "TEXT"),
     ],
 }
 
@@ -1081,7 +1082,7 @@ async def follower_detail(did: str) -> dict | None:
     # Parsed here too, not just in wikidata_matched(), or the detail page
     # renders the raw JSON string.
     for key in ("wikidata_occupations", "wikidata_employers", "wikidata_positions",
-                "link_signals"):
+                "wikidata_past_employers", "link_signals"):
         try:
             out[key] = json.loads(out.get(key) or "[]")
         except (ValueError, TypeError):
@@ -1309,7 +1310,8 @@ async def rebuild_affiliations() -> dict:
     placeholders = ",".join("?" for _ in targets)
     async with db.execute(
         f"""SELECT did, handle, description, verified_status, verifications,
-                   wikidata_id, wikidata_employers, wikidata_positions, link_signals
+                   wikidata_id, wikidata_employers, wikidata_positions,
+                   wikidata_past_employers, link_signals
               FROM actors WHERE did IN ({placeholders})""",
         tuple(targets),
     ) as cur:
@@ -1343,6 +1345,8 @@ async def rebuild_affiliations() -> dict:
             json.loads(row.get("wikidata_employers") or "[]"),
             json.loads(row.get("wikidata_positions") or "[]"),
             row.get("wikidata_id"),
+            past_employers=json.loads(row.get("wikidata_past_employers") or "[]"),
+            description=row.get("description"),
         )
 
         # 3. Their own publications, from links they published themselves.
@@ -1354,6 +1358,148 @@ async def rebuild_affiliations() -> dict:
 
     await db.commit()
     return {"scanned": len(rows), "affiliations": total, "people": people}
+
+
+# ----------------------------------------------------------- M11 groups
+
+async def seed_groups() -> int:
+    from sonde.groups import GROUPS
+
+    db = await _db()
+    added = 0
+    for group in GROUPS:
+        cur = await db.execute(
+            "INSERT INTO groups (slug, name, created_at) VALUES (?,?,?) "
+            "ON CONFLICT (slug) DO NOTHING",
+            (group["slug"], group["name"], utcnow()),
+        )
+        added += cur.rowcount or 0
+    await db.commit()
+    return added
+
+
+async def classify_groups() -> dict:
+    """Assign the enrichment set to groups from data already stored."""
+    from sonde.groups import classify
+
+    await seed_groups()
+    db = await _db()
+    async with db.execute("SELECT id, slug FROM groups") as cur:
+        ids = {r["slug"]: r["id"] for r in await cur.fetchall()}
+
+    targets = await group_target_dids(top_n=settings.posts_top_n)
+    if not targets:
+        return {"scanned": 0, "memberships": 0, "people": 0}
+    placeholders = ",".join("?" for _ in targets)
+    async with db.execute(
+        f"""SELECT did, handle, description, wikidata_occupations,
+                   wikidata_positions, link_signals
+              FROM actors WHERE did IN ({placeholders})""",
+        tuple(targets),
+    ) as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+
+    # Post text is a strong signal and is already stored for this exact set.
+    async with db.execute(
+        f"SELECT did, text FROM posts WHERE did IN ({placeholders}) AND text IS NOT NULL",
+        tuple(targets),
+    ) as cur:
+        texts: dict[str, list[str]] = {}
+        for row in await cur.fetchall():
+            texts.setdefault(row["did"], []).append(row["text"])
+
+    # Derived rows are replaced; anything a human reviewed is left alone.
+    await db.execute("DELETE FROM group_members WHERE confirmed IS NULL AND tier != 'manual'")
+
+    now = utcnow()
+    total = people = 0
+    by_group: dict[str, int] = {}
+    for row in rows:
+        for key in ("wikidata_occupations", "wikidata_positions", "link_signals"):
+            try:
+                row[key] = json.loads(row.get(key) or "[]")
+            except (ValueError, TypeError):
+                row[key] = []
+        row["affiliations"] = await affiliations_for(row["did"])
+        row["post_texts"] = texts.get(row["did"], [])
+
+        memberships = classify(row)
+        if not memberships:
+            continue
+        people += 1
+        for membership in memberships:
+            group_id = ids.get(membership.slug)
+            if group_id is None:
+                continue
+            await db.execute(
+                """INSERT INTO group_members
+                     (group_id, did, tier, confidence, evidence, source_url, created_at)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT (group_id, did) DO UPDATE SET
+                     tier = excluded.tier, confidence = excluded.confidence,
+                     evidence = excluded.evidence
+                   WHERE group_members.confirmed IS NULL""",
+                (group_id, row["did"], membership.tier, membership.confidence,
+                 membership.evidence, membership.source_url, now),
+            )
+            total += 1
+            by_group[membership.slug] = by_group.get(membership.slug, 0) + 1
+
+    await db.commit()
+    return {"scanned": len(rows), "memberships": total, "people": people,
+            "by_group": dict(sorted(by_group.items(), key=lambda kv: -kv[1]))}
+
+
+async def group_summary() -> list[dict]:
+    db = await _db()
+    async with db.execute(
+        """SELECT g.slug, g.name, g.id,
+                  COUNT(m.did) AS members,
+                  SUM(CASE WHEN m.confirmed IS NULL THEN 1 ELSE 0 END) AS unreviewed
+             FROM groups g
+             LEFT JOIN group_members m ON m.group_id = g.id
+                   AND COALESCE(m.confirmed, 1) = 1
+            GROUP BY g.id ORDER BY members DESC, g.name"""
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def group_members(slug: str, limit: int = 200) -> list[dict]:
+    db = await _db()
+    async with db.execute(
+        """SELECT a.did, a.handle, a.display_name, a.followers_count,
+                  a.influence_score, a.verified_status,
+                  m.tier, m.confidence, m.evidence, m.confirmed
+             FROM group_members m
+             JOIN groups g ON g.id = m.group_id
+             JOIN actors a USING (did)
+            WHERE g.slug = ? AND COALESCE(m.confirmed, 1) = 1
+            ORDER BY a.influence_score DESC NULLS LAST LIMIT ?""",
+        (slug, limit),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def groups_for(did: str) -> list[dict]:
+    db = await _db()
+    async with db.execute(
+        """SELECT g.slug, g.name, m.tier, m.confidence, m.evidence, m.confirmed
+             FROM group_members m JOIN groups g ON g.id = m.group_id
+            WHERE m.did = ? AND COALESCE(m.confirmed, 1) = 1
+            ORDER BY m.confidence DESC""",
+        (did,),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def review_group_member(group_slug: str, did: str, confirmed: bool) -> None:
+    db = await _db()
+    await db.execute(
+        "UPDATE group_members SET confirmed = ? WHERE did = ? AND group_id = "
+        "(SELECT id FROM groups WHERE slug = ?)",
+        (1 if confirmed else 0, did, group_slug),
+    )
+    await db.commit()
 
 
 async def unreviewed_affiliations(limit: int = 200) -> list[dict]:
@@ -1515,12 +1661,14 @@ async def apply_wikidata(mapping: dict[str, dict]) -> int:
             json.dumps(entity.get("occupations") or []),
             json.dumps(entity.get("employers") or []),
             json.dumps(entity.get("positions") or []),
+            json.dumps(entity.get("past_employers") or []),
             now, did,
         ))
     await db.executemany(
         """UPDATE actors SET wikidata_id = ?, wikidata_sitelinks = ?,
               wikipedia_title = ?, wikidata_occupations = ?,
               wikidata_employers = ?, wikidata_positions = ?,
+              wikidata_past_employers = ?,
               external_fetched_at = ? WHERE did = ?""",
         updates,
     )

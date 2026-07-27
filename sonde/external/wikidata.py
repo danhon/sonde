@@ -48,16 +48,36 @@ SELECT ?handle ?item ?itemLabel ?sitelinks WHERE {
 """
 
 # P106 = occupation, P108 = employer, P39 = position held.
+#
+# Employers and positions are read through the STATEMENT rather than the direct
+# `wdt:` shortcut, so an end-date qualifier (P582) can exclude past roles.
+# Without this, Meredith Whittaker came back as employed by Google — true until
+# 2019, and wrong now that she is President of Signal. Occupations need no such
+# filter: "journalist" does not stop being true when you change jobs.
 DETAIL_QUERY = """
 SELECT ?item
        (GROUP_CONCAT(DISTINCT ?occLabel; separator="|") AS ?occupations)
        (GROUP_CONCAT(DISTINCT ?empLabel; separator="|") AS ?employers)
        (GROUP_CONCAT(DISTINCT ?posLabel; separator="|") AS ?positions)
+       (GROUP_CONCAT(DISTINCT ?pastLabel; separator="|") AS ?past_employers)
 WHERE {
   VALUES ?item { %s }
   OPTIONAL { ?item wdt:P106 ?occ . ?occ rdfs:label ?occLabel . FILTER(LANG(?occLabel)="en") }
-  OPTIONAL { ?item wdt:P108 ?emp . ?emp rdfs:label ?empLabel . FILTER(LANG(?empLabel)="en") }
-  OPTIONAL { ?item wdt:P39  ?pos . ?pos rdfs:label ?posLabel . FILTER(LANG(?posLabel)="en") }
+  OPTIONAL {
+    ?item p:P108 ?empSt . ?empSt ps:P108 ?emp .
+    FILTER NOT EXISTS { ?empSt pq:P582 ?empEnd }
+    ?emp rdfs:label ?empLabel . FILTER(LANG(?empLabel)="en")
+  }
+  OPTIONAL {
+    ?item p:P108 ?pastSt . ?pastSt ps:P108 ?past .
+    ?pastSt pq:P582 ?pastEnd .
+    ?past rdfs:label ?pastLabel . FILTER(LANG(?pastLabel)="en")
+  }
+  OPTIONAL {
+    ?item p:P39 ?posSt . ?posSt ps:P39 ?pos .
+    FILTER NOT EXISTS { ?posSt pq:P582 ?posEnd }
+    ?pos rdfs:label ?posLabel . FILTER(LANG(?posLabel)="en")
+  }
 }
 GROUP BY ?item
 """
@@ -152,6 +172,7 @@ def parse_people(rows: list[dict]) -> dict[str, dict]:
             "occupations": _split(row, "occupations"),
             "employers": _split(row, "employers"),
             "positions": _split(row, "positions"),
+            "past_employers": _split(row, "past_employers"),
         }
     return out
 
@@ -165,6 +186,7 @@ def parse_detail(rows: list[dict]) -> dict[str, dict]:
                 "occupations": _split(row, "occupations"),
                 "employers": _split(row, "employers"),
                 "positions": _split(row, "positions"),
+                "past_employers": _split(row, "past_employers"),
             }
     return out
 

@@ -122,17 +122,80 @@ def role_near(text: str | None, org_alias: str) -> str | None:
     return plain.group(0).strip() if plain else None
 
 
+def _named_in(text: str | None, org_name: str) -> bool:
+    """Does the bio actually mention this organisation?
+
+    Matches on the most distinctive token so "Signal Foundation" is found in
+    "President of Signal", while short generic words are not enough on their own.
+    """
+    if not text:
+        return False
+    lowered = text.lower()
+    if org_name.lower() in lowered:
+        return True
+    tokens = [t for t in re.findall(r"[\w'&-]+", org_name)
+              if len(t) > 3 and t.lower() not in
+              {"the", "inc", "llc", "ltd", "corp", "group", "foundation",
+               "institute", "university", "company", "news", "media"}]
+    if not tokens:
+        return False
+    longest = max(tokens, key=len)
+    return re.search(rf"(?<!\w){re.escape(longest.lower())}(?!\w)", lowered) is not None
+
+
 def from_wikidata(employers: list[str], positions: list[str],
-                  qid: str | None = None) -> list[Affiliation]:
-    """Employers and positions from Wikidata — independent and reviewed."""
+                  qid: str | None = None,
+                  past_employers: list[str] | None = None,
+                  description: str | None = None) -> list[Affiliation]:
+    """Employers and positions from Wikidata — independent and reviewed.
+
+Employers whose statement carries an end date are marked `former`. That
+    catches most cases — Liz Fong-Jones and Miguel de Icaza both come back with
+    Google and Microsoft correctly in the past.
+
+    Where Wikidata records several employers and dates NONE of them, they cannot
+    all be current. Meredith Whittaker lists the FTC, Google, NYU and the Signal
+    Foundation, all undated; her bio says "President of Signal". So the bio
+    breaks the tie: an employer the bio names is treated as current, and the
+    undated rest are demoted to `former`. Without a bio to arbitrate, they stay
+    employment but at reduced confidence and say so.
+    """
     source = f"https://www.wikidata.org/wiki/{qid}" if qid else None
     out: list[Affiliation] = []
-    for employer in employers:
+    for employer in past_employers or []:
         out.append(Affiliation(
-            org_name=employer, kind="employment", method="wikidata",
-            confidence=WIKIDATA, note=f"Wikidata records this employer",
+            org_name=employer, kind="former", method="wikidata",
+            confidence=WIKIDATA, note="Wikidata records this as a past employer",
             source_url=source,
         ))
+
+    corroborated = [e for e in employers if _named_in(description, e)]
+    for employer in employers:
+        if corroborated and employer not in corroborated:
+            out.append(Affiliation(
+                org_name=employer, kind="former", method="wikidata",
+                confidence=WIKIDATA * 0.9,
+                note="undated in Wikidata, and their bio names a different "
+                     "current employer",
+                source_url=source,
+            ))
+            continue
+        if corroborated:
+            out.append(Affiliation(
+                org_name=employer, kind="employment", method="corroborated",
+                confidence=1.0,
+                note="Wikidata employer, confirmed by their own bio",
+                source_url=source,
+            ))
+        else:
+            out.append(Affiliation(
+                org_name=employer, kind="employment", method="wikidata",
+                confidence=WIKIDATA * (0.75 if len(employers) > 1 else 1.0),
+                note=("Wikidata employer; several are recorded undated, so "
+                      "which is current is unverified"
+                      if len(employers) > 1 else "Wikidata records this employer"),
+                source_url=source,
+            ))
     for position in positions:
         kind = kind_from_role(position, default="leadership")
         out.append(Affiliation(

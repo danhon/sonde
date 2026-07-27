@@ -574,7 +574,7 @@ Sub-steps for the scoring work are sequenced in
 | M8 | Affiliations table, kinds, notes/links | ✅ done | 103 affiliations for 60 people; prose rationale still to come |
 | M9 | Auth, hiding, follow dates | ✅ done | Follow dates free via `viewer.followedBy` TIDs |
 | M10 | Recent posts | ✅ done | Top 500 + verified automatic; others on demand |
-| M11 | Groups | ⬜ planned | T1–T6 tiers incl. label propagation |
+| M11 | Groups | ✅ done | 215 people, 325 memberships across 12 groups. T5 propagation still to come |
 | M12 | Email digest | ✅ done | Daily 14:00 America/Los_Angeles; quiet days silent, broken days always send |
 | M14 | Relationship score — interaction-based ranking | ⬜ planned | Separate from influence; notifications are ~190x cheaper than per-post |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
@@ -657,6 +657,22 @@ scores without anyone adding Signal, and a human-set weight is never moved by a
 later pass. Measured on the real enrichment set: 103 affiliations across 60
 people — 59 Wikidata employments, 12 attested, 12 own publications, 7
 leadership, 2 academic.
+
+**M11** Overlapping groups over the top 500 plus every verified follower, from
+data already stored — no new API calls. 215 people in 325 memberships: 108
+writers, 56 academics, 51 journalists, 26 newsletter writers, 26 technologists,
+24 developers. Evidence is tiered (affiliation, Wikidata occupation, link
+domain, bio and post text) and each membership records which tier decided it,
+so a wrong answer can be argued with rather than only deleted. Removing someone
+sticks across reclassification.
+
+Two accuracy bugs found by checking real people rather than trusting the counts:
+a *former* affiliation was conferring membership, which put Meredith Whittaker
+in a Google group six years after she left; and occupation matching was exact,
+so Wikidata's "artificial intelligence researcher" and "site reliability
+engineer" matched nothing at all. T5 follow-graph propagation is still
+outstanding — it is what should find civic tech and privacy people, who are
+currently only caught by bio text.
 
 **M12** Daily digest at 14:00 `America/Los_Angeles`, pinned to a real timezone
 so it does not drift an hour twice a year with daylight saving — verified to

@@ -38,7 +38,8 @@
         ('backup','Backup now','no API calls'),
         ('digest','Send digest now','forces a send'),
         ('external','External reputation','1 query + ~100 calls'),
-        ('affiliations','Rebuild affiliations','no API calls')] %}
+        ('affiliations','Rebuild affiliations','no API calls'),
+        ('groups','Reclassify groups','no API calls')] %}
     <form method="post" action="/settings/sync/{{ kind }}">
       <button type="submit" title="{{ note }}"
               class="border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs hover:border-red-800 hover:text-red-800

@@ -119,6 +119,7 @@ def create_app() -> FastAPI:
         person["posts"] = await store.posts_for(did)
         person["moderation_lists"] = await store.lists_matching(did)
         person["affiliations"] = await store.affiliations_for(did)
+        person["groups"] = await store.groups_for(did)
         return TEMPLATES.TemplateResponse(
             request=request, name="detail.html",
             context={"p": person, "settings": settings},
@@ -148,6 +149,27 @@ def create_app() -> FastAPI:
             media_type="text/csv",
             headers={"Content-Disposition": 'attachment; filename="sonde-followers.csv"'},
         )
+
+    @app.get("/groups", response_class=HTMLResponse)
+    async def groups_index(request: Request, slug: str | None = None) -> HTMLResponse:
+        from sonde.db import store
+
+        return TEMPLATES.TemplateResponse(
+            request=request, name="groups.html",
+            context={
+                "summary": await store.group_summary(),
+                "slug": slug,
+                "members": await store.group_members(slug) if slug else [],
+                "settings": settings,
+            },
+        )
+
+    @app.post("/groups/{slug}/{did}/review")
+    async def review_group(slug: str, did: str, keep: bool = True) -> RedirectResponse:
+        from sonde.db import store
+
+        await store.review_group_member(slug, did, keep)
+        return RedirectResponse(f"/groups?slug={slug}", status_code=303)
 
     @app.get("/ignored", response_class=HTMLResponse)
     async def ignored(request: Request) -> HTMLResponse:
@@ -249,6 +271,7 @@ def create_app() -> FastAPI:
             "digest": lambda: digest.run_digest(force=True),
             "external": external_job,
             "affiliations": store.rebuild_affiliations,
+            "groups": store.classify_groups,
             "moderation": moderation.sync_lists,
             "follows": mutuals.sync_follows,
             "rescore": profiles.rescore,
