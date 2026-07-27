@@ -65,6 +65,12 @@ async def run_moderation() -> dict:
     return await registry.run("moderation", moderation.sync_lists)
 
 
+async def run_relevance() -> dict:
+    from sonde.sync import relevance
+
+    return await registry.run("relevance", relevance.enrich)
+
+
 async def run_nightly() -> dict:
     """Daily rollup then snapshot, in that order so the backup includes it."""
     from sonde.sync import backup
@@ -144,6 +150,12 @@ def attach_scheduler(app: FastAPI) -> AsyncIOScheduler:
     scheduler.add_job(
         run_moderation, "interval", hours=12,
         id="moderation", max_instances=1, coalesce=True, misfire_grace_time=3600,
+    )
+    # Exact relevance. Auth-only, one call per actor, so it runs monthly over
+    # the top slice and refines what the sampled index already covers.
+    scheduler.add_job(
+        run_relevance, "cron", day=3, hour=4, minute=25,
+        id="relevance", max_instances=1, coalesce=True, misfire_grace_time=21600,
     )
     # Affinity index + rosters. Expensive (~4,300 calls) but monthly, and it is
     # the signal that answers "influential in MY network" rather than in general.

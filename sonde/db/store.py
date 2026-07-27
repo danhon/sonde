@@ -420,27 +420,31 @@ async def posts_for(did: str) -> list[dict]:
         return [dict(r) for r in await cur.fetchall()]
 
 
-async def post_targets(priority_limit: int = 500, ttl_hours: int = 20) -> list[str]:
-    """Who needs posts fetched, priority first.
+async def post_targets(ttl_hours: int = 20, limit: int | None = None) -> list[str]:
+    """Who gets posts fetched automatically: the top 500 by influence plus every
+    verified follower — the same set that gets grouped.
 
-    Top-N by influence, all verified, and recent arrivals refresh on every full
-    sweep; everyone else rolls round once a day. Fetching all 10,042 every run
-    would be 40k calls/day on a shared IP.
+    Everyone else is fetched on demand from their own page. `getAuthorFeed` is
+    one call per actor with no bulk equivalent, so covering all 10,042 would be
+    ~12,400 calls a day for data nobody had asked to see.
     """
     db = await _db()
+    targets = await group_target_dids(top_n=settings.posts_top_n)
+    if not targets:
+        return []
+    placeholders = ",".join("?" for _ in targets)
     async with db.execute(
-        """SELECT a.did,
-                  CASE WHEN a.verified_status = 'valid' THEN 0
-                       WHEN a.influence_score IS NOT NULL THEN 1
-                       ELSE 2 END AS band
-             FROM actors a JOIN follower_state fs USING (did)
-            WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
-              AND (a.posts_fetched_at IS NULL
-                   OR (julianday('now') - julianday(a.posts_fetched_at)) * 24 >= ?)
-            ORDER BY band ASC, a.influence_score DESC NULLS LAST, fs.list_rank ASC""",
-        (ttl_hours,),
+        f"""SELECT a.did FROM actors a
+              JOIN follower_state fs USING (did)
+             WHERE a.did IN ({placeholders})
+               AND (a.posts_fetched_at IS NULL
+                    OR (julianday('now') - julianday(a.posts_fetched_at)) * 24 >= ?)
+             ORDER BY (a.verified_status = 'valid') DESC,
+                      a.influence_score DESC NULLS LAST""",
+        (*targets, ttl_hours),
     ) as cur:
-        return [r["did"] for r in await cur.fetchall()]
+        rows = [r["did"] for r in await cur.fetchall()]
+    return rows[:limit] if limit else rows
 
 
 async def group_target_dids(top_n: int = 500) -> list[str]:
@@ -1279,6 +1283,55 @@ async def store_affinity(scores: dict[str, float], verified_hits: dict[str, int]
     )
     await db.commit()
     return len(scores)
+
+
+async def relevance_targets(limit: int = 1000) -> list[str]:
+    """Top slice by influence, freshest-stale first. Auth-only and one call
+    per actor, so it never covers everyone."""
+    db = await _db()
+    async with db.execute(
+        """SELECT a.did FROM actors a JOIN follower_state fs USING (did)
+            WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
+              AND a.handle IS NOT ?
+            ORDER BY (a.affinity_exact IS NOT NULL),
+                     a.influence_score DESC NULLS LAST
+            LIMIT ?""",
+        (settings.actor, limit),
+    ) as cur:
+        return [r["did"] for r in await cur.fetchall()]
+
+
+async def record_exact_affinity(did: str, count: int) -> None:
+    db = await _db()
+    await db.execute(
+        "UPDATE actors SET affinity_exact = ?, enriched_at = ? WHERE did = ?",
+        (count, utcnow(), did),
+    )
+
+
+async def affinity_agreement() -> dict | None:
+    """Does the sampled index agree with the exact counts?
+
+    If it does not, the sample is too small — which is a fact worth surfacing
+    rather than quietly scoring on.
+    """
+    db = await _db()
+    async with db.execute(
+        "SELECT affinity_sampled AS s, affinity_exact AS e FROM actors "
+        "WHERE affinity_exact IS NOT NULL AND affinity_sampled IS NOT NULL"
+    ) as cur:
+        rows = [(r["s"] or 0, r["e"] or 0) for r in await cur.fetchall()]
+    if len(rows) < 10:
+        return None
+    ranked_sampled = sorted(range(len(rows)), key=lambda i: -rows[i][0])
+    ranked_exact = sorted(range(len(rows)), key=lambda i: -rows[i][1])
+    top = max(len(rows) // 5, 5)
+    overlap = len(set(ranked_sampled[:top]) & set(ranked_exact[:top]))
+    return {
+        "compared": len(rows),
+        "top_overlap_pct": round(overlap / top * 100, 1),
+        "note": "share of the top quintile the sampled index and exact counts agree on",
+    }
 
 
 async def affinity_source_count() -> int:

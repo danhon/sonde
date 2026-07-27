@@ -169,11 +169,29 @@
 </section>
 {% endif %}
 
-{% if p.posts %}
 <section class="mt-8">
-  <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
-    Recent posts
-  </h2>
+  <div class="flex flex-wrap items-baseline gap-3 border-b border-slate-300 pb-2">
+    <h2 class="font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+      Recent posts
+    </h2>
+    {% if p.posts_fetched_at %}
+    <span class="font-mono text-[10px] uppercase tracking-widest text-slate-400">
+      fetched {{ p.posts_fetched_at[:16].replace("T", " ") }}
+    </span>
+    {% endif %}
+    <form method="post" action="/followers/{{ p.did }}/posts" class="ml-auto">
+      <button type="submit" class="font-mono text-xs text-red-800 hover:underline">
+        {% if p.posts %}refresh{% else %}fetch posts{% endif %}
+      </button>
+    </form>
+  </div>
+  {% if not p.posts %}
+  <p class="mt-3 text-sm text-slate-500">
+    Posts are fetched automatically for the top {{ settings.posts_top_n }} by influence
+    and every verified follower. For anyone else, fetch them here when you want them.
+  </p>
+  {% endif %}
+  {% if p.posts %}
   <ul class="mt-3 space-y-3">
     {% for post in p.posts %}
     <li class="border-l-2 border-slate-200 pl-3">
@@ -188,8 +206,8 @@
     </li>
     {% endfor %}
   </ul>
+  {% endif %}
 </section>
-{% endif %}
 
 <div class="mt-8 flex items-center gap-4">
   <a href="/followers" class="font-mono text-xs text-red-800 hover:underline">← all followers</a>

@@ -162,6 +162,19 @@ def create_app() -> FastAPI:
             },
         )
 
+    @app.post("/followers/{did}/posts")
+    async def fetch_posts_now(did: str) -> RedirectResponse:
+        """On-demand fetch for anyone outside the automatic set."""
+        from sonde.api.client import BlueskyClient
+        from sonde.sync.posts import fetch_one
+
+        client = BlueskyClient()
+        try:
+            await fetch_one(client, did)
+        finally:
+            await client.aclose()
+        return RedirectResponse(f"/followers/{did}", status_code=303)
+
     @app.post("/followers/{did}/ignore")
     async def ignore_follower(did: str, restore: bool = False) -> RedirectResponse:
         """Hide or restore. Always locks the decision so a moderation refresh
@@ -214,13 +227,16 @@ def create_app() -> FastAPI:
         """Manual trigger. Single-flight: a second request attaches to the run."""
         from fastapi import HTTPException
 
-        from sonde.sync import backup, moderation, mutuals, posts, profiles, runner
+        from sonde.sync import (
+            backup, moderation, mutuals, posts, profiles, relevance, runner,
+        )
 
         jobs = {
             "head": runner.head_sweep,
             "full": runner.full_sweep,
             "hydrate": lambda: profiles.hydrate(limit=1000),
             "posts": posts.fetch_posts,
+            "relevance": relevance.enrich,
             "moderation": moderation.sync_lists,
             "follows": mutuals.sync_follows,
             "rescore": profiles.rescore,

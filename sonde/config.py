@@ -69,8 +69,14 @@ class Settings:
 
     # Recent posts. getAuthorFeed is 1 call per actor with no bulk equivalent,
     # so fetching all 10,042 every run would be 40k calls/day on a shared IP.
-    posts_per_run: int = field(default_factory=lambda: _int("POSTS_PER_RUN", 2500))
+    # Automatic post fetching covers the top N by influence plus every verified
+    # follower. Everyone else is fetched on demand from their own page.
+    posts_top_n: int = field(default_factory=lambda: _int("POSTS_TOP_N", 500))
+    posts_per_run: int = field(default_factory=lambda: _int("POSTS_PER_RUN", 800))
     posts_ttl_hours: int = field(default_factory=lambda: _int("POSTS_TTL_HOURS", 20))
+
+    # Exact relevance (getKnownFollowers) — auth only, 1+ calls per actor.
+    relevance_top_n: int = field(default_factory=lambda: _int("RELEVANCE_TOP_N", 1000))
 
     # Curated moderation lists applied as a first-pass filter. Each list can
     # still be switched off individually in the UI.

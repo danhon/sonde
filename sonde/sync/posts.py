@@ -5,10 +5,10 @@ fetching three posts for all 10,042 followers on every run would be 40,168
 calls a day on an IP shared with two other apps. Affordable against the quota,
 not against good manners.
 
-Tiered instead: the top 500 by influence, every verified follower, and recent
-arrivals refresh on each full sweep; everyone else rolls round once a day. That
-is ~12,400 calls/day — 1.4% of the budget — and every follower still gets three
-recent posts refreshed daily.
+So the automatic pass covers only the top 500 by influence plus every verified
+follower — ~600 accounts, the same set that gets grouped. Everyone else is
+fetched on demand from their own page, because there is no point paying daily
+for posts nobody has asked to see.
 
 Posts do double duty. They retire the lifetime-average liveness proxy (which
 flattered accounts that died years ago), and their text is the strongest free
@@ -62,9 +62,10 @@ async def fetch_posts(
     fetched = empty = failed = 0
 
     try:
-        targets = await store.post_targets(ttl_hours=ttl_hours if ttl_hours is not None
-                                           else settings.posts_ttl_hours)
-        targets = targets[:limit]
+        targets = await store.post_targets(
+            ttl_hours=ttl_hours if ttl_hours is not None else settings.posts_ttl_hours,
+            limit=limit,
+        )
         if not targets:
             await store.finish_run(run_id, status="ok", completed=1, api_calls=0)
             return {"status": "ok", "kind": "posts", "fetched": 0, "api_calls": 0}
@@ -110,3 +111,25 @@ async def fetch_posts(
                            api_calls=client.calls)
     return {"status": "ok", "kind": "posts", "fetched": fetched,
             "empty": empty, "failed": failed, "api_calls": client.calls}
+
+
+async def fetch_one(client: BlueskyClient, did: str) -> list[dict]:
+    """Fetch posts for a single follower, on demand.
+
+    Used from the detail page for anyone outside the automatic set, which is
+    everyone below the top 500 who is not verified.
+    """
+    try:
+        data = await client.xrpc(
+            "app.bsky.feed.getAuthorFeed",
+            {"actor": did, "limit": KEEP_PER_FOLLOWER, "filter": "posts_no_replies"},
+        )
+    except Exception:
+        log.info("posts unavailable for %s", did, exc_info=True)
+        await store.replace_posts(did, [])
+        await store.commit()
+        return []
+    posts = _parse_feed(data)
+    await store.replace_posts(did, posts)
+    await store.commit()
+    return posts
