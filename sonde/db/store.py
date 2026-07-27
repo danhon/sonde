@@ -565,6 +565,29 @@ async def record_progress(run_id: int, *, pages: int | None = None,
     await db.commit()
 
 
+async def last_run_ages() -> dict[str, float]:
+    """Seconds since each job kind last completed successfully.
+
+    Interval schedules live only in memory, so every restart pushes them out by
+    a full interval. Deploy more often than a job's interval and it never runs
+    at all. This lets startup notice a job is overdue and catch it up.
+    """
+    db = await _db()
+    async with db.execute(
+        "SELECT kind, MAX(ended_at) AS last FROM sync_runs "
+        "WHERE status = 'ok' AND ended_at IS NOT NULL GROUP BY kind"
+    ) as cur:
+        rows = await cur.fetchall()
+    now = datetime.now(timezone.utc)
+    ages: dict[str, float] = {}
+    for row in rows:
+        try:
+            ages[row["kind"]] = (now - datetime.fromisoformat(row["last"])).total_seconds()
+        except (ValueError, TypeError):
+            continue
+    return ages
+
+
 async def last_sync_age_seconds() -> float | None:
     db = await _db()
     async with db.execute(

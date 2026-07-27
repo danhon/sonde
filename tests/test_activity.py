@@ -245,3 +245,94 @@ async def test_a_genuine_failure_still_renders_red(client):
     html = client.get("/").text
     row = html[html.index(">failed") - 400: html.index(">failed") + 20]
     assert "text-red-700" in row
+
+
+# ------------------------------------- scheduler state across restarts
+
+async def test_last_run_ages_reports_per_kind():
+    """Interval timers reset on restart, so 'when did this last succeed'
+    has to come from the database instead."""
+    full = await store.start_run("full")
+    await store.finish_run(full, status="ok", completed=1)
+    hyd = await store.start_run("hydrate")
+    await store.finish_run(hyd, status="ok", completed=1)
+
+    ages = await store.last_run_ages()
+    assert set(ages) == {"full", "hydrate"}
+    assert all(0 <= v < 5 for v in ages.values())
+
+
+async def test_last_run_ages_ignores_unsuccessful_runs():
+    """An interrupted or failed run must not count as 'recently done',
+    or catch-up would skip a job that never actually completed."""
+    interrupted = await store.start_run("full")
+    await store.reconcile_orphaned_runs()
+    failed = await store.start_run("hydrate")
+    await store.finish_run(failed, status="failed", error="boom")
+
+    assert await store.last_run_ages() == {}
+
+
+async def test_catch_up_runs_jobs_that_are_overdue(monkeypatch):
+    """The real failure: deploy every 4h and the 6h full sweep never fires,
+    so departures are never detected."""
+    from sonde import scheduler as sched
+
+    calls = []
+
+    class FakeJob:
+        def __init__(self, jid):
+            self.id, self.func = jid, lambda: None
+
+    class FakeScheduler:
+        def get_job(self, jid):
+            return FakeJob(jid)
+
+        def add_job(self, func, trigger, **kw):
+            calls.append(kw["id"])
+
+    # Nothing has ever run: everything is overdue.
+    overdue = await sched._catch_up(FakeScheduler())
+
+    assert set(overdue) == {"full", "hydrate", "follows"}
+    assert calls == ["catchup-full", "catchup-hydrate", "catchup-follows"]
+
+
+async def test_catch_up_skips_jobs_that_ran_recently():
+    from sonde import scheduler as sched
+
+    for kind in ("full", "hydrate", "follows"):
+        run_id = await store.start_run(kind)
+        await store.finish_run(run_id, status="ok", completed=1)
+
+    class FakeScheduler:
+        def get_job(self, jid):
+            raise AssertionError("should not schedule a job that just ran")
+
+        def add_job(self, *a, **kw):
+            raise AssertionError("should not schedule a job that just ran")
+
+    assert await sched._catch_up(FakeScheduler()) == []
+
+
+async def test_catch_up_staggers_so_jobs_do_not_all_fire_at_once():
+    """116 + 40 + 46 calls together would queue behind the rate limiter
+    and starve the head sweep."""
+    from sonde import scheduler as sched
+
+    run_dates = []
+
+    class FakeScheduler:
+        def get_job(self, jid):
+            return type("J", (), {"id": jid, "func": lambda: None})()
+
+        def add_job(self, func, trigger, **kw):
+            run_dates.append(kw["run_date"])
+
+    await sched._catch_up(FakeScheduler())
+
+    gaps = [
+        (run_dates[i + 1] - run_dates[i]).total_seconds()
+        for i in range(len(run_dates) - 1)
+    ]
+    assert all(g >= 60 for g in gaps), f"jobs fire too close together: {gaps}"

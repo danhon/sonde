@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 
+from datetime import datetime, timedelta, timezone
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 
@@ -61,6 +63,39 @@ async def run_nightly() -> dict:
         return {**result, "snapshot": snap}
 
     return await registry.run("nightly", job)
+
+
+# Interval jobs and how long they may go unrun before startup catches them up.
+# The scheduler's own timers are in-memory, so a restart resets every interval:
+# deploy more often than a job's interval and it would otherwise never fire.
+# `cron` jobs (nightly, affinity) are absolute and need no catch-up.
+CATCH_UP: dict[str, tuple[str, int]] = {
+    "full": ("full", 6 * 3600),
+    "hydrate": ("hydrate", 3600),
+    "follows": ("follows", 24 * 3600),
+}
+
+
+async def _catch_up(scheduler: AsyncIOScheduler) -> list[str]:
+    """Run anything that is overdue, staggered so they don't all fire at once."""
+    ages = await store.last_run_ages()
+    overdue = []
+    for job_id, (kind, interval) in CATCH_UP.items():
+        age = ages.get(kind)
+        if age is None or age >= interval:
+            overdue.append(job_id)
+
+    # 116 + 40 + 46 calls arriving together would queue behind the rate limiter
+    # and starve the head sweep. Space them out.
+    for position, job_id in enumerate(overdue):
+        scheduler.add_job(
+            scheduler.get_job(job_id).func,
+            "date",
+            run_date=datetime.now(timezone.utc) + timedelta(seconds=30 + position * 90),
+            id=f"catchup-{job_id}",
+            replace_existing=True,
+        )
+    return overdue
 
 
 def attach_scheduler(app: FastAPI) -> AsyncIOScheduler:
@@ -123,6 +158,11 @@ def attach_scheduler(app: FastAPI) -> AsyncIOScheduler:
             # Otherwise the app looks dead for HEAD_SWEEP_MINUTES after every
             # deploy. A head sweep is 1-2 calls.
             scheduler.add_job(run_head, id="startup-head", replace_existing=True)
+            caught = await _catch_up(scheduler)
+            if caught:
+                log.info(
+                    "overdue after restart, catching up: %s", ", ".join(caught)
+                )
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
