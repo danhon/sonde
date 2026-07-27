@@ -575,6 +575,7 @@ Sub-steps for the scoring work are sequenced in
 | M10 | Recent posts | ✅ done | Top 500 + verified automatic; others on demand |
 | M11 | Groups | ⬜ planned | T1–T6 tiers incl. label propagation |
 | M12 | Email digest | ✅ done | Daily 14:00 America/Los_Angeles; quiet days silent, broken days always send |
+| M14 | Relationship score — interaction-based ranking | ⬜ planned | Separate from influence; notifications are ~190x cheaper than per-post |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
 ### Detail on what is done
@@ -622,6 +623,72 @@ happened" email trains you to ignore the one that matters; but health problems
 send regardless, because silence is otherwise ambiguous between "nothing
 happened" and "the app died". Reports stale sweeps, held sweeps, failed runs and
 an app password that is set but not authenticating.
+
+### M14 — Relationship score (planned)
+
+Requested 2026-07-27: rank the top 1,000 by influence plus every verified
+follower by how much I have actually *interacted* with them — conversations,
+reposts, quote posts — rather than how prominent they are.
+
+This is a different question from influence, and deliberately a separate score.
+Influence asks "does this person matter"; relationship asks "do we actually know
+each other". A 700k-follower columnist I have never spoken to should rank low
+here, and a 400-follower friend I talk to weekly should rank high.
+
+**Source: notifications, not posts.** The obvious approach — walk my 23,602
+posts asking who liked, reposted and quoted each — costs ~94,000 calls and about
+9 hours. `app.bsky.notification.listNotifications` returns every inbound
+interaction with `author`, `reason` (like / repost / reply / quote / mention),
+`reasonSubject` (which of my posts) and `indexedAt`, 100 per call. Fifty
+thousand notifications is 500 calls, about 3 minutes. **Roughly 190× cheaper for
+strictly more information.**
+
+Outbound is nearly free too: my own author feed already carries my replies (the
+reply parent names who I replied to), my reposts and my quote posts, at ~236
+calls for my entire history. `getActorLikes` covers my likes.
+
+**Store what we observe, permanently.** The notification API's retention window
+is unknown and probably finite. Interactions therefore go into an append-only
+table as they are seen, so sonde accumulates its own history and the score gets
+better the longer it runs — the same reasoning that makes `follow_events`
+irreplaceable. First run captures whatever the API still holds; incremental runs
+walk back only to the newest interaction already stored.
+
+**What the score should weigh.** Not raw counts — a bot that likes everything
+would win. The signals, in order of what they cost the giver:
+
+| Signal | Why it counts |
+|---|---|
+| **Conversation** — a thread where we both posted, more than once | The strongest evidence of a relationship, and the hardest to fake |
+| **Quote post** | They engaged with the substance, attributed, to their own audience |
+| **Reply** | Directed attention, but one turn |
+| **Repost** | Endorsement without commentary |
+| **Like** | Cheapest possible signal; counted, weighted near zero |
+| **Mention** | Context-dependent; low weight |
+
+Three modifiers matter more than the raw weights:
+
+- **Reciprocity.** Interactions in both directions mean a relationship;
+  inbound-only means an audience. A multiplier on `min(in, out) / max(in, out)`
+  rather than a sum, so 50 likes from someone I have never replied to does not
+  outrank three exchanges with someone I talk to.
+- **Recency decay.** A conversation last week beats one in 2023. Same
+  exponential form the liveness component already uses.
+- **Breadth over time.** Interacting across many separate days beats a single
+  burst — one argument is not a relationship.
+
+**Presentation.** A separate `/relationships` ranking and a column on the
+follower table, never folded into the influence score. They answer different
+questions and averaging them would destroy both. The detail page shows the
+interaction history that produced the number, as every other score already does.
+
+**Sequencing.** 14a interactions table and notification ingest; 14b outbound
+from my own feed and likes; 14c conversation detection by thread; 14d scoring
+with reciprocity and decay; 14e `/relationships` and the detail panel; 14f
+recalibrate against a hand-checked sample of people I know I talk to.
+
+Depends on nothing except auth, which exists. Estimated ~500 calls on first run,
+then a few dozen a day incrementally.
 
 ### Still outstanding
 

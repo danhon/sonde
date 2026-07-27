@@ -85,6 +85,9 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("wikipedia_title", "TEXT"),
         ("wikipedia_views_30d", "INTEGER"),
         ("external_fetched_at", "TEXT"),
+        ("wikidata_occupations", "TEXT"),
+        ("wikidata_employers", "TEXT"),
+        ("wikidata_positions", "TEXT"),
     ],
 }
 
@@ -1283,6 +1286,89 @@ async def store_affinity(scores: dict[str, float], verified_hits: dict[str, int]
     )
     await db.commit()
     return len(scores)
+
+
+async def apply_wikidata(mapping: dict[str, dict]) -> int:
+    """Join the bulk mapping onto followers by handle.
+
+    Handle-exact only: a name-based match risks attaching the wrong person's
+    reputation, which is a worse failure than attaching none.
+    """
+    db = await _db()
+    async with db.execute(
+        "SELECT did, handle FROM actors a JOIN follower_state fs USING (did) "
+        "WHERE fs.is_current = 1 AND a.handle IS NOT NULL"
+    ) as cur:
+        followers = [(r["did"], (r["handle"] or "").lower()) for r in await cur.fetchall()]
+
+    now = utcnow()
+    updates = []
+    for did, handle in followers:
+        entity = mapping.get(handle)
+        if not entity:
+            continue
+        updates.append((
+            entity["qid"], entity["sitelinks"], entity.get("label"),
+            json.dumps(entity.get("occupations") or []),
+            json.dumps(entity.get("employers") or []),
+            json.dumps(entity.get("positions") or []),
+            now, did,
+        ))
+    await db.executemany(
+        """UPDATE actors SET wikidata_id = ?, wikidata_sitelinks = ?,
+              wikipedia_title = ?, wikidata_occupations = ?,
+              wikidata_employers = ?, wikidata_positions = ?,
+              external_fetched_at = ? WHERE did = ?""",
+        updates,
+    )
+    await db.commit()
+    return len(updates)
+
+
+async def wikidata_matched() -> list[dict]:
+    db = await _db()
+    async with db.execute(
+        """SELECT a.did, a.handle, a.display_name, a.wikidata_id,
+                  a.wikidata_sitelinks, a.wikipedia_title, a.wikipedia_views_30d,
+                  a.wikidata_occupations, a.wikidata_employers, a.wikidata_positions,
+                  a.influence_score
+             FROM actors a JOIN follower_state fs USING (did)
+            WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
+              AND a.wikidata_id IS NOT NULL
+            ORDER BY a.wikidata_sitelinks DESC"""
+    ) as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+    for row in rows:
+        for key in ("wikidata_occupations", "wikidata_employers", "wikidata_positions"):
+            try:
+                row[key] = json.loads(row[key] or "[]")
+            except ValueError:
+                row[key] = []
+    return rows
+
+
+async def pageview_targets(limit: int = 200) -> list[dict]:
+    """Wikidata-matched followers whose pageviews are stale. One call each."""
+    db = await _db()
+    async with db.execute(
+        """SELECT did, wikipedia_title FROM actors a
+             JOIN follower_state fs USING (did)
+            WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
+              AND a.wikipedia_title IS NOT NULL
+              AND (a.external_fetched_at IS NULL
+                   OR julianday('now') - julianday(a.external_fetched_at) >= 7)
+            ORDER BY a.wikidata_sitelinks DESC LIMIT ?""",
+        (limit,),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def record_pageviews(did: str, views: int | None) -> None:
+    db = await _db()
+    await db.execute(
+        "UPDATE actors SET wikipedia_views_30d = ?, external_fetched_at = ? WHERE did = ?",
+        (views, utcnow(), did),
+    )
 
 
 async def relevance_targets(limit: int = 1000) -> list[str]:
