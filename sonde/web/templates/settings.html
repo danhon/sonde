@@ -115,10 +115,9 @@
   <p class="mt-3 text-sm text-amber-800">No snapshot has been taken yet.</p>
   {% endif %}
   <p class="mt-2 max-w-2xl text-xs text-slate-500">
-    The event history is the only data here that can't be re-fetched from Bluesky,
-    and Docker volumes on ubuntuplex aren't backed up. Snapshots go to a host bind
-    mount so Syncthing can replicate them off-box — if that ever becomes a named
-    volume, backups silently stop leaving the machine.
+    The event history is the only data here that can't be re-fetched from Bluesky.
+    Snapshots are <strong>on-box only</strong>: they protect against database
+    corruption or a bad migration, not against losing the host.
   </p>
   <a href="/export.csv" class="mt-3 inline-block border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs hover:border-red-800 hover:text-red-800">
     Export CSV

@@ -24,7 +24,7 @@ Non-goals for v1: posting, moderation, analytics on my own posts, multi-account 
 |---|---|---|
 | Authelia guards the web UI | 2026-07-26 | Same as every other app on ubuntuplex; `/healthz` needs its own router |
 | sonde holds a **Bluesky app password** | 2026-07-26 | Unlocks `getKnownFollowers` for exact affinity and writing to a real Bluesky list. Read-only by default |
-| Docker volumes are **not** backed up on ubuntuplex | 2026-07-26 | The event history needs an off-box path of its own — Syncthing, see [§9](#9-the-history-is-the-only-irreplaceable-data-and-nothing-on-the-box-backs-it-up) |
+| Docker volumes are **not** backed up on ubuntuplex | 2026-07-26 | Noted, and **deprioritised 2026-07-27**: off-box backup is not wanted for now, and Syncthing is not the mechanism. Snapshots stay on-box — see [§9](#9-the-history-is-the-only-irreplaceable-data-and-the-snapshots-are-on-box-only) |
 
 ---
 
@@ -229,7 +229,7 @@ APScheduler (sync)─┘
         ├─→ Bluesky AppView (public.api.bsky.app) via a rate-limited httpx client
         ├─→ Bluesky AppView, authenticated session — tier 3b only
         ├─→ SQLite (/data/sonde.db, WAL) via aiosqlite
-        └─→ nightly snapshot → /backup (host bind mount, Syncthing-replicated)
+        └─→ nightly snapshot → /backup (host bind mount, on-box only)
 ```
 
 ### The head sweep
@@ -400,34 +400,25 @@ mid-full-sweep. A single-flight asyncio lock per sync kind, with the current job
 surfaced in the job registry; a manual trigger while one is running attaches to
 the running job rather than queuing a second.
 
-### 9. The history is the only irreplaceable data, and nothing on the box backs it up
+### 9. The history is the only irreplaceable data, and the snapshots are on-box only
 
 Every other table can be re-fetched from Bluesky. `follow_events` cannot — once a
-departure is missed, it is gone. **Docker volumes on ubuntuplex are not backed
-up**, so a volume loss means losing the entire point of the app.
+departure is missed, it is gone.
 
-Syncthing already runs on ubuntuplex as a native systemd service, currently
-replicating the Calibre library Mac → ubuntuplex. Adding a second folder in the
-reverse direction gives an off-box copy with no new infrastructure:
+A nightly `VACUUM INTO /backup/sonde-YYYY-MM-DD.db` keeps 14 snapshots. `VACUUM
+INTO` rather than a file copy because it takes a consistent snapshot of a live
+WAL database without stopping the app.
 
-| | ubuntuplex | Mac |
-|---|---|---|
-| Role | Send Only | Receive Only |
-| Path | `~/sonde-backups` | `~/Backups/sonde` |
+**Stated plainly: this is not a backup against losing the host.** Docker volumes
+on ubuntuplex are not backed up, and `/backup` is a bind mount on that same host.
+What the snapshots do protect against is real but narrower — DB corruption, a bad
+migration, an accidental delete, or wanting yesterday's state back.
 
-Nightly `VACUUM INTO ~/sonde-backups/sonde-YYYY-MM-DD.db`, keeping 14. `VACUUM
-INTO` is the right call over a file copy: it takes a consistent snapshot of a
-live WAL database without stopping the app.
-
-**This requires a host bind mount, not a named volume** — Syncthing runs natively
-and cannot see Docker's internal volume storage. So `compose.yml` mounts
-`~/sonde-backups:/backup` for snapshots while the live DB stays in the named
-volume. Getting this wrong produces backups that are dutifully written and never
-replicated, which is worse than none because it looks fine.
-
-The Syncthing runbook is at
-[docs-site/docs/services/syncthing.md](../reverse-proxy/docs-site/docs/services/syncthing.md);
-this second folder should be documented there too when M4 lands.
+An earlier version of this plan proposed a Syncthing folder to replicate them off
+the machine. **That was dropped on 2026-07-27**: off-box backup is not a priority
+for this app, and Syncthing is not the mechanism the operator uses for it. The
+bind mount is kept anyway — it costs nothing, and it leaves the snapshots
+somewhere an external tool could pick them up later without touching this app.
 
 ### 10. `/healthz` will 302 unless it gets its own router
 
@@ -595,7 +586,7 @@ comparable. **Answers goal 2.**
 
 **M4 — Change over time, and the backup.** ✅ `daily_snapshots`, `/changes`,
 dashboard growth chart, `needs_review` banner with its override, nightly `VACUUM
-INTO` to the bind mount, and the Syncthing folder configured and documented.
+INTO` to the bind mount (on-box only — see §9).
 **Answers goal 3.** Don't let the backup slip past this milestone — every day
 after M1 is history that can't be reconstructed.
 
@@ -667,7 +658,7 @@ the fixtures are real captured responses, not hand-written ones.
 | 2 | Show the 1,838 `!no-unauthenticated` followers, or withhold them? | Default: show, marked "private" |
 | 3 | ~~App password?~~ | **Answered 2026-07-26 — yes, read-only by default** |
 | 4 | Email digest for notable arrivals? | Not built; M7 |
-| 5 | ~~Off-box backup?~~ | **Answered 2026-07-26 — none exists; Syncthing folder added in M4** |
+| 5 | ~~Off-box backup?~~ | **Closed 2026-07-27 — not a priority, and not via Syncthing. Snapshots remain on-box; revisit only if asked** |
 | 6 | Affinity band and source cap (150–2,000 follows, 600 sources) — set by pilot, not theory. Tier 3b's exact counts are the check | Start at 600, revisit at 6d |
 | 7 | Track a second account too? | Single account; schema is DID-keyed, so additive later |
 

@@ -1,13 +1,17 @@
 """Nightly database snapshots.
 
-`follow_events` is the only table that cannot be re-fetched from Bluesky, and
-Docker volumes on ubuntuplex are NOT backed up. Snapshots therefore go to a host
-bind mount (`/backup`) that Syncthing replicates off-box — a named volume would
-be invisible to Syncthing, producing backups that are dutifully written and
-never leave the machine, which is worse than none because it looks fine.
+`follow_events` is the only table that cannot be re-fetched from Bluesky, so it
+gets a nightly copy.
 
 `VACUUM INTO` rather than a file copy: it takes a consistent snapshot of a live
 WAL database without stopping the app.
+
+SCOPE, stated so nobody mistakes it later: this is ON-BOX ONLY. It protects
+against DB corruption, a bad migration or an accidental delete — not against
+losing the host. Off-box backup was considered and deliberately dropped
+(PLAN.md §9); it is not a priority for this app. The bind-mount target just
+leaves the files somewhere an external tool could collect them without changes
+here.
 """
 
 from __future__ import annotations

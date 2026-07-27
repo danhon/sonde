@@ -38,9 +38,9 @@ services:
     volumes:
       # Live DB in a named volume.
       - sonde-data:/data
-      # Backups go to a HOST BIND MOUNT, not a named volume — Syncthing runs as a
-      # native systemd service and cannot see Docker's internal volume storage.
-      # Getting this wrong yields backups that are written and never replicated.
+      # Snapshots go to a host bind mount rather than a named volume, so they
+      # are reachable from the host without docker cp. On-box only by choice —
+      # see PLAN.md §9; this is not disaster recovery.
       - ${BACKUP_HOST_DIR:-/home/danhon/sonde-backups}:/backup
 
 networks:

@@ -38,9 +38,14 @@ here starts failing, suspect the API changed rather than the test.
 6. **Only a complete full sweep may mark departures.** Head sweeps must never
    compute them — they deliberately don't see most of the list.
 
-## Backups
+## Backups — deliberately incomplete
 
-`follow_events` is the only table that cannot be re-fetched from Bluesky, and
-Docker volumes on ubuntuplex are **not** backed up. Snapshots go to a host bind
-mount (`/backup`) so Syncthing can replicate them off-box. If that mount is ever
-changed to a named volume, backups silently stop leaving the machine.
+`follow_events` is the only table that cannot be re-fetched from Bluesky. A
+nightly `VACUUM INTO` writes a snapshot to `/backup` (a host bind mount, 14 kept).
+
+**That is on-box only, and knowingly so.** It protects against DB corruption or a
+bad migration, not against losing the host. Docker volumes on ubuntuplex are not
+backed up, and the operator has said off-box backup is not a priority and does
+not use Syncthing for it — so don't wire one up, and don't describe the snapshots
+as off-box. If this ever becomes a priority, ask which mechanism to target rather
+than assuming.

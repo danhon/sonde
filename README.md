@@ -353,11 +353,15 @@ None are needed for the core questions; all are post-M5 and independent:
 - **Bluesky list writing** — push the top N to a real list
 - **RSS feed** of notable arrivals
 
-## Backups
+## Snapshots
 
-`follow_events` is the only data here that can't be re-fetched from Bluesky.
-Nightly `VACUUM INTO` writes a timestamped copy into the data volume, keeping
-14. That is not an off-box backup — see [open question 5](PLAN.md#open-questions).
+`follow_events` is the only data here that can't be re-fetched from Bluesky, so a
+nightly `VACUUM INTO` writes a timestamped copy to `/backup`, keeping 14. It's a
+consistent snapshot of the live database taken without stopping the app.
+
+**It is on-box only, by choice.** It guards against DB corruption or a bad
+migration, not against losing the host — off-box backup isn't a priority for this
+app. Don't read the snapshots as disaster recovery.
 
 ## Database schema
 
