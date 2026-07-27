@@ -7,6 +7,7 @@ writer plus concurrent readers fine at this scale (~10k rows).
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -1359,6 +1360,178 @@ async def rebuild_affiliations() -> dict:
 
     await db.commit()
     return {"scanned": len(rows), "affiliations": total, "people": people}
+
+
+# ------------------------------------------- M15b group discovery
+
+async def discover_group_candidates() -> dict:
+    """Propose groups from data already stored. Nothing is created here."""
+    import collections
+
+    from sonde import discovery
+
+    db = await _db()
+    targets = await group_target_dids(top_n=settings.posts_top_n)
+    if not targets:
+        return {"candidates": 0, "by_kind": {}}
+    placeholders = ",".join("?" for _ in targets)
+
+    occupations: collections.Counter = collections.Counter()
+    link_kinds: collections.Counter = collections.Counter()
+    documents: list[str] = []
+    async with db.execute(
+        f"""SELECT wikidata_occupations, link_signals, description
+              FROM actors WHERE did IN ({placeholders})""",
+        tuple(targets),
+    ) as cur:
+        for row in await cur.fetchall():
+            for occupation in json.loads(row["wikidata_occupations"] or "[]"):
+                occupations[occupation.lower()] += 1
+            for signal in json.loads(row["link_signals"] or "[]"):
+                link_kinds[signal.get("kind", "")] += 1
+            if row["description"]:
+                documents.append(row["description"])
+
+    async with db.execute(
+        f"SELECT text FROM posts WHERE did IN ({placeholders}) AND text IS NOT NULL",
+        tuple(targets),
+    ) as cur:
+        documents += [r["text"] for r in await cur.fetchall()]
+
+    covered = discovery.covered_terms()
+    orgs = await organisation_summary(min_members=discovery.MIN_MEMBERS)
+
+    candidates = (
+        discovery.occupation_candidates(occupations, covered)
+        + discovery.link_candidates(link_kinds, covered)
+        + discovery.organisation_candidates(orgs, covered)
+        + discovery.phrase_candidates(documents, covered)
+    )
+
+    now = utcnow()
+    for candidate in candidates:
+        # Existing decisions are preserved: a rejected candidate stays rejected
+        # rather than reappearing every time discovery runs.
+        await db.execute(
+            """INSERT INTO group_candidates
+                 (kind, term, label, member_count, why, first_seen_at)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT (kind, term) DO UPDATE SET
+                 member_count = excluded.member_count, why = excluded.why""",
+            (candidate["kind"], candidate["term"], candidate["label"],
+             candidate["count"], candidate["why"], now),
+        )
+    await db.commit()
+
+    by_kind: dict[str, int] = {}
+    for candidate in candidates:
+        by_kind[candidate["kind"]] = by_kind.get(candidate["kind"], 0) + 1
+    return {"candidates": len(candidates), "by_kind": by_kind}
+
+
+async def group_candidates(decided: bool | None = None,
+                           limit: int = 200) -> list[dict]:
+    db = await _db()
+    clause = "decided IS NULL" if decided is None else "decided = ?"
+    params: list = [] if decided is None else [int(decided)]
+    async with db.execute(
+        f"""SELECT * FROM group_candidates WHERE {clause}
+             ORDER BY member_count DESC, label LIMIT ?""",
+        (*params, limit),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def decide_candidate(candidate_id: int, accept: bool) -> str | None:
+    """Accepting turns a candidate into a real group and classifies at once."""
+    db = await _db()
+    async with db.execute(
+        "SELECT * FROM group_candidates WHERE id = ?", (candidate_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        return None
+
+    await db.execute(
+        "UPDATE group_candidates SET decided = ?, decided_at = ? WHERE id = ?",
+        (1 if accept else 0, utcnow(), candidate_id),
+    )
+    if not accept:
+        await db.commit()
+        return None
+
+    slug = re.sub(r"[^a-z0-9]+", "-", row["label"].lower()).strip("-")[:48]
+    await db.execute(
+        "INSERT INTO groups (slug, name, description, created_at) VALUES (?,?,?,?) "
+        "ON CONFLICT (slug) DO NOTHING",
+        (slug, row["label"], f"Discovered from {row['kind']}: {row['why']}", utcnow()),
+    )
+    await db.commit()
+    await _apply_discovered_group(slug, row["kind"], row["term"])
+    return slug
+
+
+async def _apply_discovered_group(slug: str, kind: str, term: str) -> int:
+    """Populate an accepted group using the rule that proposed it."""
+    db = await _db()
+    async with db.execute("SELECT id FROM groups WHERE slug = ?", (slug,)) as cur:
+        group = await cur.fetchone()
+    if group is None:
+        return 0
+    group_id = group["id"]
+
+    targets = await group_target_dids(top_n=settings.posts_top_n)
+    if not targets:
+        return 0
+    placeholders = ",".join("?" for _ in targets)
+
+    matched: list[tuple[str, str]] = []
+    if kind == "occupation":
+        async with db.execute(
+            f"""SELECT did, wikidata_occupations FROM actors
+                 WHERE did IN ({placeholders}) AND wikidata_occupations IS NOT NULL""",
+            tuple(targets),
+        ) as cur:
+            for row in await cur.fetchall():
+                if any(term.lower() == o.lower()
+                       for o in json.loads(row["wikidata_occupations"] or "[]")):
+                    matched.append((row["did"], f"Wikidata occupation: {term}"))
+    elif kind == "link":
+        async with db.execute(
+            f"SELECT did, link_signals FROM actors WHERE did IN ({placeholders}) "
+            f"AND link_signals IS NOT NULL",
+            tuple(targets),
+        ) as cur:
+            for row in await cur.fetchall():
+                if any(s.get("kind") == term
+                       for s in json.loads(row["link_signals"] or "[]")):
+                    matched.append((row["did"], f"self-declared {term} link"))
+    elif kind == "organisation":
+        async with db.execute(
+            "SELECT did FROM affiliations WHERE org_name = ? AND kind != 'former' "
+            "AND COALESCE(confirmed, 1) = 1", (term,),
+        ) as cur:
+            matched = [(r["did"], f"currently affiliated with {term}")
+                       for r in await cur.fetchall()]
+    elif kind == "phrase":
+        like = f"%{term}%"
+        async with db.execute(
+            f"SELECT did FROM actors WHERE did IN ({placeholders}) "
+            f"AND LOWER(COALESCE(description,'')) LIKE ?",
+            (*targets, like),
+        ) as cur:
+            matched = [(r["did"], f"bio mentions {term!r}") for r in await cur.fetchall()]
+
+    now = utcnow()
+    await db.executemany(
+        """INSERT INTO group_members
+             (group_id, did, tier, confidence, evidence, created_at)
+           VALUES (?,?,?,?,?,?)
+           ON CONFLICT (group_id, did) DO NOTHING""",
+        [(group_id, did, "discovered", 0.8, evidence, now) for did, evidence in matched],
+    )
+    await db.commit()
+    return len(matched)
 
 
 # ------------------------------------------------- M15a institutions

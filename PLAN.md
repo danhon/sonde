@@ -577,7 +577,8 @@ Sub-steps for the scoring work are sequenced in
 | M11 | Groups | ✅ done | 215 people, 325 memberships, sortable. T5 propagation moved to M15c |
 | M12 | Email digest | ✅ done | Daily 14:00 America/Los_Angeles; quiet days silent, broken days always send |
 | M15a | Institution slices | ✅ done | Sortable, kind-filtered, former separated |
-| M15b–d | Group discovery, propagation, review | ⬜ planned | All free |
+| M15b | Group discovery + review queue | ✅ done | 25 candidates proposed, none auto-created |
+| M15c | Follow-graph propagation | ⬜ planned | Needs edges stored during the affinity build |
 | M14 | Relationship score — interaction-based ranking | ⬜ planned | Separate from influence; notifications are ~190x cheaper than per-post |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
@@ -675,6 +676,20 @@ so Wikidata's "artificial intelligence researcher" and "site reliability
 engineer" matched nothing at all. T5 follow-graph propagation is still
 outstanding — it is what should find civic tech and privacy people, who are
 currently only caught by bio text.
+
+**M15a/b** `/institutions` slices the enrichment set by organisation — Wired 6,
+NYT 5, Washington Post 4 — with current and former shown separately and
+organisation weight editable and locking. Discovery proposes groups nobody
+named: 25 candidates from Wikidata occupations no group claims (blogger 9),
+link kinds with nowhere to land (organisation 22), organisations big enough to
+be groups, and bio phrases (human rights 9, trans rights 4). Nothing is created
+automatically — accepting a candidate builds the group and fills it using the
+rule that proposed it, and a rejection is permanent.
+
+Phrase extraction needed two fixes found by looking at the first output: bio
+URLs dominated the results ("Bsky Social", "App Profile", "Mastodon Social"),
+and bigrams spanned punctuation, inventing "rights human" from "digital rights,
+human dignity".
 
 **M12** Daily digest at 14:00 `America/Los_Angeles`, pinned to a real timezone
 so it does not drift an hour twice a year with daylight saving — verified to

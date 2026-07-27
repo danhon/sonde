@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Discover groups — sonde{% endblock %}
+{% block content %}
+
+<div class="flex flex-wrap items-baseline gap-4 border-b border-slate-300 pb-3">
+  <h1 class="font-mono text-xs font-semibold uppercase tracking-widest text-red-800">Discover groups</h1>
+  <a href="/groups" class="ml-auto font-mono text-xs text-slate-500 hover:text-red-800">← groups</a>
+</div>
+
+<p class="mt-4 max-w-2xl text-sm text-slate-600">
+  The twelve seeded groups were written by hand, so the interesting ones are
+  whatever nobody thought of. These are proposals drawn from data already
+  collected — Wikidata occupations no group claims, link kinds with nowhere to
+  land, organisations big enough to be groups on their own, and phrases common
+  across bios. <strong>Nothing becomes a group until you accept it</strong>: a
+  group nobody wanted makes every other count untrustworthy.
+</p>
+
+{% if not candidates %}
+<p class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center text-sm text-slate-600">
+  Nothing new to propose. Run <strong>Find new groups</strong> from settings after
+  the next enrichment pass.
+</p>
+{% else %}
+<div class="mt-6 overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-slate-300 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
+        <th class="py-2 pr-4 text-right">People</th>
+        <th class="py-2 pr-4">Proposed group</th>
+        <th class="py-2 pr-4">From</th>
+        <th class="py-2 pr-4">Why</th>
+        <th class="py-2 pr-4"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in candidates %}
+      <tr class="border-b border-slate-100 hover:bg-slate-50">
+        <td class="py-2 pr-4 text-right font-mono font-semibold tabular-nums">{{ c.member_count }}</td>
+        <td class="py-2 pr-4 font-medium">{{ c.label }}</td>
+        <td class="py-2 pr-4 font-mono text-[10px] uppercase tracking-wider text-slate-500">{{ c.kind }}</td>
+        <td class="py-2 pr-4 text-xs text-slate-500">{{ c.why }}</td>
+        <td class="py-2 pr-4">
+          <div class="flex justify-end gap-3">
+            <form method="post" action="/groups/discover/{{ c.id }}?accept=true">
+              <button type="submit" class="font-mono text-xs text-emerald-700 hover:underline">accept</button>
+            </form>
+            <form method="post" action="/groups/discover/{{ c.id }}?accept=false">
+              <button type="submit" class="font-mono text-xs text-slate-400 hover:text-red-800">reject</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% for label, rows in [('Accepted', accepted), ('Rejected', rejected)] %}
+  {% if rows %}
+  <section class="mt-8">
+    <h2 class="border-b border-slate-300 pb-2 font-mono text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+      {{ label }} ({{ rows|length }})
+    </h2>
+    <p class="mt-2 text-xs text-slate-500">
+      {{ rows | map(attribute='label') | join(' · ') }}
+    </p>
+    {% if label == 'Rejected' %}
+    <p class="mt-1 text-xs text-slate-400">
+      Rejected proposals stay rejected — discovery will not raise them again.
+    </p>
+    {% endif %}
+  </section>
+  {% endif %}
+{% endfor %}
+
+{% endblock %}

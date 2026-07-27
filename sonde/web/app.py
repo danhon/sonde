@@ -196,6 +196,29 @@ def create_app() -> FastAPI:
             },
         )
 
+    @app.get("/groups/discover", response_class=HTMLResponse)
+    async def discover(request: Request) -> HTMLResponse:
+        from sonde.db import store
+
+        return TEMPLATES.TemplateResponse(
+            request=request, name="discover.html",
+            context={
+                "candidates": await store.group_candidates(),
+                "accepted": await store.group_candidates(decided=True, limit=50),
+                "rejected": await store.group_candidates(decided=False, limit=50),
+                "settings": settings,
+            },
+        )
+
+    @app.post("/groups/discover/{candidate_id}")
+    async def decide(candidate_id: int, accept: bool = False) -> RedirectResponse:
+        from sonde.db import store
+
+        slug = await store.decide_candidate(candidate_id, accept)
+        return RedirectResponse(
+            f"/groups?slug={slug}" if slug else "/groups/discover", status_code=303
+        )
+
     @app.post("/groups/{slug}/{did}/review")
     async def review_group(slug: str, did: str, keep: bool = True) -> RedirectResponse:
         from sonde.db import store
@@ -304,6 +327,7 @@ def create_app() -> FastAPI:
             "external": external_job,
             "affiliations": store.rebuild_affiliations,
             "groups": store.classify_groups,
+            "discover": store.discover_group_candidates,
             "moderation": moderation.sync_lists,
             "follows": mutuals.sync_follows,
             "rescore": profiles.rescore,

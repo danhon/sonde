@@ -266,3 +266,17 @@ CREATE TABLE IF NOT EXISTS affiliations (
 
 CREATE INDEX IF NOT EXISTS idx_aff_did ON affiliations (did);
 CREATE INDEX IF NOT EXISTS idx_aff_unreviewed ON affiliations (confirmed, confidence DESC);
+
+-- Proposed groups awaiting a decision. Nothing here is a group until accepted.
+CREATE TABLE IF NOT EXISTS group_candidates (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT NOT NULL,     -- occupation / link / organisation / phrase / cluster
+    term        TEXT NOT NULL,
+    label       TEXT NOT NULL,
+    member_count INTEGER NOT NULL DEFAULT 0,
+    why         TEXT,
+    decided     INTEGER,           -- NULL undecided, 1 accepted, 0 rejected
+    decided_at  TEXT,
+    first_seen_at TEXT NOT NULL,
+    UNIQUE (kind, term)
+);
