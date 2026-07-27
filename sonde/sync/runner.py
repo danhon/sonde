@@ -58,6 +58,11 @@ async def _record_arrivals(
                 did, "handle_changed", detail=f"{previous_handle} → {new_handle}"
             )
 
+        # Free when authenticated: viewer.followedBy is already in the payload.
+        followed_by = (profile.get("viewer") or {}).get("followedBy")
+        if followed_by:
+            await store.record_follow_date(did, followed_by)
+
         was_absent = await store.mark_seen(did, rank, backfilled=backfilled)
         if was_absent and not backfilled:
             # Backfill is not arrival. On day one there is nothing to compare

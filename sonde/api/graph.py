@@ -39,7 +39,10 @@ async def iter_followers(
         params: dict[str, object] = {"actor": actor, "limit": settings.page_size}
         if cursor:
             params["cursor"] = cursor
-        data = await client.xrpc("app.bsky.graph.getFollowers", params)
+        # authed=True adds viewer state, which carries the AT-URI of each
+        # follower's follow of us — the rkey decodes to an exact follow date.
+        # Without a session this silently returns the same public payload.
+        data = await client.xrpc("app.bsky.graph.getFollowers", params, authed=True)
         page += 1
         yield page, data.get("followers", [])
 

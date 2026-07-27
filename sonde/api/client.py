@@ -14,9 +14,14 @@ from typing import Any
 
 import httpx
 
+from sonde.api.auth import authenticator
 from sonde.config import settings
 
 log = logging.getLogger("sonde.api")
+
+# Authenticated reads must go to the PDS/entryway, not the public AppView —
+# public.api.bsky.app ignores bearer tokens and returns no viewer state.
+AUTHED_BASE = "https://bsky.social"
 
 
 class RateLimiter:
@@ -95,16 +100,27 @@ class BlueskyClient:
 
     async def xrpc(
         self, method: str, params: dict[str, Any] | None = None,
-        *, base_url: str | None = None,
+        *, base_url: str | None = None, authed: bool = False,
     ) -> dict:
-        """GET an XRPC method, retrying on 429 and transient 5xx."""
+        """GET an XRPC method, retrying on 429 and transient 5xx.
+
+        `authed=True` asks for an authenticated read. If no session is
+        available the call silently proceeds unauthenticated — auth is an
+        enhancement, so a bad credential costs viewer state, not the sweep.
+        """
+        headers: dict[str, str] = {}
+        if authed:
+            token = await authenticator.token()
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+                base_url = base_url or AUTHED_BASE
         url = f"{(base_url or self.base_url).rstrip('/')}/xrpc/{method}"
         attempt = 0
         while True:
             await self.limiter.acquire()
             self.calls += 1
             try:
-                resp = await self._client.get(url, params=params)
+                resp = await self._client.get(url, params=params, headers=headers)
             except (httpx.TransportError, httpx.TimeoutException) as exc:
                 if attempt >= self.max_retries:
                     raise
