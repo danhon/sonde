@@ -30,7 +30,7 @@ way reach lies.
 |---|---|---|---|
 | **Reach** | 18 | `followersCount` | Already fetched |
 | **Institution** | 18 | Verification issuer, handle domain, bio text, Wikipedia | **Free** + ~3 calls/institution/month |
-| **Affinity** | 16 | Inverted follow-graph index | 1,587 calls/month |
+| **Affinity** | 16 | Inverted follow-graph index | ~4,300 calls/month |
 | **Verified affinity** | 13 | Same index, verified sources only | ~2,200 calls/month |
 | **Public profile** | 12 | Wikidata, Wikipedia pageviews, news volume | **~1 query/month** + ~120 calls/week |
 | **Selectivity** | 11 | `followersCount ÷ followsCount` | Already fetched |
@@ -123,10 +123,10 @@ means walking its entire follower list. For Bouie that is 741,720 followers —
 **7,418 API calls for one person**, before scoring anyone else.
 
 **What is affordable is sharper anyway.** sonde already builds an inverted
-follow-graph index. Restricting it to verified sources — the 147 verified
-accounts that follow me, plus verified accounts I follow — costs about 2,200
-calls monthly and covers all 10,041 followers at once rather than a top-N slice.
-It answers:
+follow-graph index (see [Choosing index sources](#choosing-index-sources)).
+Restricting it to verified sources — the 147 verified accounts that follow me,
+plus verified accounts I follow — covers all 10,041 followers at once rather
+than a top-N slice. It answers:
 
 > Of the verified accounts in my network, how many follow this person?
 
@@ -138,6 +138,73 @@ instead of an estimate dressed as a fact.
 followers gives a density estimate for one call, but the list is newest-first, so
 it samples *recent* followers — and the bias runs the wrong way, since
 established accounts collected their prestigious followers years ago.
+
+---
+
+## Choosing index sources
+
+Both affinity components depend on which accounts seed the inverted index. An
+earlier version of this document got that badly wrong, and a pilot caught it.
+
+### The mistake
+
+The original rule was "sample the most selective accounts I follow", justified
+by: an account following 200 people makes a stronger endorsement than one
+following 50,000, so the cheapest lists to fetch are also the most meaningful.
+
+The first half is true. The second does not follow. **Signal per follow is not
+total signal.** Sorting my 4,433 follows by fewest-follows-first selects accounts
+that follow 0–15 people — cheap precisely because they endorse almost nobody.
+
+### What the pilot measured
+
+| Source selection | Sources | Calls | Followers reached | Max hits |
+|---|---|---|---|---|
+| Fewest follows (0–15 each) | 200 | 200 | **77 (0.8%)** | 7 |
+| Mid-band (150–1,500 each) | **60** | 430 | **1,408 (14.0%)** | 33 |
+
+Sixty mid-band sources reached eighteen times as many followers as two hundred
+of the cheapest ones. The top of the cheap run was *me*; the top of the mid-band
+run was Anil Dash, Mike Masnick, Meredith Whittaker, Molly White, Charlie Jane
+Anders, Karen Hao, Taylor Lorenz and Eva Galperin — which is exactly the answer
+the component exists to produce.
+
+The signal separates sharply: median follower count is **18,909** for anyone
+with ≥3 hits versus **526** for those with none. And several of the top-affinity
+accounts currently score near zero on reach alone, so affinity surfaces people
+the other components miss — the whole point.
+
+### The corrected design
+
+Sources are accounts I follow whose own `followsCount` falls in a **band**,
+because both ends are useless: below the floor there is no coverage, above the
+ceiling the endorsement means little and the list is expensive to fetch.
+
+```
+AFFINITY_MIN_FOLLOWS = 150     # below this a source contributes almost nothing
+AFFINITY_MAX_FOLLOWS = 2000    # above this the endorsement is diluted and the fetch is dear
+AFFINITY_MAX_SOURCES = 600     # budget cap, cheapest-first within the band
+```
+
+Rather than discard the selectivity insight, it moves where it belongs — onto
+the **hit**, not the source list. Each hit is weighted by how selective its
+source is, so a wide-following source can still contribute coverage without its
+endorsements counting as much as a discriminating one's:
+
+```
+weight = clamp(AFFINITY_MIN_FOLLOWS / followsCount, 0.1, 1.0)
+```
+
+A source following 150 contributes 1.0 per hit; one following 1,500 contributes
+0.1. Affinity is the sum of weights, not a raw count.
+
+### Cost
+
+Measured at **7.2 calls per source** across the band. 600 sources is roughly
+4,300 calls, run monthly — about 145 calls/day amortised, against a steady state
+of ~900. The full 2,737-source band would cost ~19,600 calls; that is affordable
+monthly but the marginal coverage per call falls off, so the cap stays at 600
+until the recalibration step says otherwise.
 
 ---
 
@@ -366,7 +433,7 @@ is that disagreeing is easy and acting on the disagreement is one edit away.
 
 ## Build order
 
-Slots into [PLAN.md](PLAN.md#milestones) at M6–M7, after the core app works.
+Slots into [PLAN.md](PLAN.md#milestones) at M6 (atproto-only) and M7 (external).
 
 | Step | Work | New API cost |
 |---|---|---|

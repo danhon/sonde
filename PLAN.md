@@ -136,26 +136,33 @@ The inverse question is public. "Who does each account I follow, follow?" is
 
 | Coverage | Calls | Wall time at 3 req/s |
 |---|---|---|
-| All 4,429 accounts I follow | **62,552** | 5.8 hours |
-| The 2,000 most selective | 6,015 | 33 min |
-| **The 1,000 most selective** | **1,587** | **9 min** |
-| The 500 most selective | 500 | 3 min |
+| All 4,433 accounts I follow | **62,552** | 5.8 hours |
+| Every source in the 150–2,000 band | ~19,600 | 1.8 hours |
+| **600 band sources (the default)** | **~4,300** | **24 min** |
+| 200 sources with the fewest follows | 200 | 1 min — but only **0.8%** coverage |
 
 Full coverage is out — 62k calls on a shared IP is antisocial regardless of the
-rate limit. But sampling by *selectivity* is both the cheap option and the
-**statistically better one**: an account that follows 200 people is making a far
-stronger endorsement than one following 50,000. The cheapest lists to fetch are
-precisely the ones whose follows mean the most.
+rate limit. Sources come from a **band** of follow-list sizes instead.
 
-**So both get used, for different jobs.** The public index (1,587 calls monthly)
+An earlier draft said to take the *most selective* accounts, reasoning that an
+account following 200 endorses more meaningfully than one following 50,000. True
+per follow — but a pilot showed it collapses in practice: sorting by
+fewest-follows selects accounts following 0–15 people, which are cheap precisely
+because they endorse almost nobody. Measured, 200 such sources reached **0.8%**
+of followers, while 60 mid-band sources reached **14.0%**. The selectivity
+insight belongs on the *hit weight*, not the source list. Full detail and the
+corrected design in
+[SCORING.md](SCORING.md#choosing-index-sources).
+
+**So both get used, for different jobs.** The public index (~4,300 calls monthly)
 ranks all 10,041. The authenticated exact count (1,000 calls monthly) refines and
 displays the top slice, and doubles as a validation check on the sample — if the
 sampled ranking and the exact numbers disagree badly, the sample size is wrong
 and the settings page will show it.
 
-The sampled figure is labelled honestly wherever it appears: "how many of the
-1,000 most selective accounts you follow also follow this person", never
-presented as the true `knownFollowers` count.
+The sampled figure is labelled honestly wherever it appears: "weighted overlap
+with the 600 accounts sampled for the index", never presented as the true
+`knownFollowers` count.
 
 ### Finding 7 — liveness is public
 
@@ -249,7 +256,7 @@ calls**, while total daily traffic stays flat.
 | **0b** | Full sweep | `graph.getFollowers` + `getProfile` (self) | 116 calls | 6h | Departures, drift, verification, labels, reported total |
 | **1** | Profile hydration | `actor.getProfiles` | 1 / 25 actors | New at once; rest on a 7-day TTL | Follower / follow / post counts |
 | **2** | My own follows | `graph.getFollows` | 46 calls | Daily | Mutual flag; input to 3a |
-| **3a** | Affinity index | `graph.getFollows` × 1,000 selective accounts | 1,587 calls | Monthly | Ranks **all** 10,041 followers |
+| **3a** | Affinity index | `graph.getFollows` × 600 band sources | ~4,300 calls | Monthly | Ranks **all** 10,041 followers |
 | **3b** | Exact affinity *(authenticated)* | `graph.getKnownFollowers` | 1 / actor | Top 1,000, monthly | Exact count + validates the 3a sample |
 | **3c** | Liveness | `feed.getAuthorFeed` | 1 / actor | Top 1,000, 14-day TTL | Real last-post date |
 
@@ -257,9 +264,9 @@ calls**, while total daily traffic stays flat.
 |---|---|---|
 | Head sweep | 1–2 | <1 s |
 | Full sweep | 116 | ~39 s |
-| Affinity index rebuild | 1,587 | ~9 min, monthly |
+| Affinity index rebuild | ~4,300 | ~24 min, monthly |
 | Cold start (everything) | ~4,150 | ~23 min |
-| **Steady state, per day** | **~917** | ~5 min of traffic, spread out |
+| **Steady state, per day** | **~1,060** | ~6 min of traffic, spread out |
 
 ---
 
@@ -560,7 +567,7 @@ first thing anyone sees after M0 is an app with nothing in it.
 
 Each ends at something deployable and useful on its own.
 
-**M0 — Scaffold.** `Dockerfile`, `compose.yml` (both routers, backup bind mount,
+**M0 — Scaffold.** ✅ `Dockerfile`, `compose.yml` (both routers, backup bind mount,
 `mem_limit: 512m`), `Makefile`, `.env.example`, `pyproject.toml`, `CLAUDE.md`,
 `/healthz`. Deploy it empty; confirm `sonde.sgc.rayandhon.com` 302s to Authelia
 while `/healthz` returns 200. Do this *first* — routing gotchas are cheaper
@@ -572,19 +579,21 @@ Two house gotchas to get right at the start, both already documented in
 or the schema and templates won't be in the image; and `.gitignore` needs
 `.env*` followed by `!.env.example`.
 
-**M1 — Sync core.** Rate-limited client, cursor-only pagination, head + full
+**M1 — Sync core.** ✅ Rate-limited client, cursor-only pagination, head + full
 sweeps, `actors` / `follower_state` / `sync_runs` / `follow_events`, the
 integrity rules, single-flight lock, backfill marking, scheduler, manual trigger.
 Ends with ~10,041 rows and a bare list route.
 
-**M2 — Verified.** `/verified` with issuer grouping. Zero extra API calls — M1
+**M2 — Verified.** ✅ `/verified` with issuer grouping. Zero extra API calls — M1
 already stored it. Expect 147. **Answers goal 1.**
 
-**M3 — Influence.** Tier-1 hydration with TTL and DID-keyed mapping, `scoring.py`,
-rescore job, `/influential` with per-row breakdown, sortable `/followers`.
-Affinity contributes 0 at this stage and scores show "of 75". **Answers goal 2.**
+**M3 — Influence.** ✅ Tier-1 hydration with TTL and DID-keyed mapping,
+`scoring.py`, rescore job, `/influential` with per-row breakdown, sortable
+`/followers`. Components with no data corpus-wide are excluded from every
+denominator equally, so early scores are out of 41 rather than 100 and stay
+comparable. **Answers goal 2.**
 
-**M4 — Change over time, and the backup.** `daily_snapshots`, `/changes`,
+**M4 — Change over time, and the backup.** ✅ `daily_snapshots`, `/changes`,
 dashboard growth chart, `needs_review` banner with its override, nightly `VACUUM
 INTO` to the bind mount, and the Syncthing folder configured and documented.
 **Answers goal 3.** Don't let the backup slip past this milestone — every day
@@ -592,25 +601,30 @@ after M1 is history that can't be reconstructed.
 
 **M5 — Depth.** Tier-2 mutuals, `/followers/{did}`, search and filters, CSV export.
 
-**M6 — Affinity, reputation, and enrichment.** The scoring work, sequenced in
-[SCORING.md](SCORING.md#build-order):
+**M6 — Affinity and institutional reputation.** The scoring work that needs only
+atproto data:
 
 - **6a** — institution matching from data already stored (attested, domain,
   claimed, role seniority). Zero new API calls, largest single improvement.
 - **6b** — institution rosters via `listRecords`, monthly.
-- **6c** — tier 3a affinity index, 3b exact counts, 3c liveness, and the
-  verified-affinity index.
-- **6d** — recalibration against real output; Bouie ranking near the top is the
-  acceptance test.
+- **6c** — the affinity index over 600 band sources, the verified-affinity
+  index, and tier-3c liveness via `getAuthorFeed`.
+- **6d** — recalibration against real output; a verified institutional columnist
+  ranking near the top is the acceptance test.
 
-Also the place to test whether authenticated reads are metered per-DID rather
-than per-IP.
+**M7 — External reputation.** Everything outside atproto, sequenced in
+[SCORING.md](SCORING.md#build-order) as 7a–7e: the Wikidata bulk join,
+Wikipedia pageviews, GDELT, self-declared homepages, and the opt-in LinkedIn
+module that ships disabled.
 
-**M7 — Optional extras.** Independent, none required:
+**M8 — Optional extras.** Independent, none required:
 - Email digest of notable arrivals via Fastmail SMTP (buywanderbot pattern) —
   worth more now that arrivals surface within 15 minutes
 - Write the top N to a real Bluesky list (`ENABLE_LIST_WRITE`, off by default)
 - RSS feed of notable arrivals
+- Test whether authenticated reads are metered per-DID rather than per-IP; if so,
+  routing the authenticated tier through the session relieves contention with
+  BlueBirdNET and atproto-labeler outright
 
 ---
 
@@ -654,7 +668,7 @@ the fixtures are real captured responses, not hand-written ones.
 | 3 | ~~App password?~~ | **Answered 2026-07-26 — yes, read-only by default** |
 | 4 | Email digest for notable arrivals? | Not built; M7 |
 | 5 | ~~Off-box backup?~~ | **Answered 2026-07-26 — none exists; Syncthing folder added in M4** |
-| 6 | Affinity sample size — 1,000 selective accounts is a judgement call. Tier 3b will show whether it's enough | Start at 1,000, revisit with real data |
+| 6 | Affinity band and source cap (150–2,000 follows, 600 sources) — set by pilot, not theory. Tier 3b's exact counts are the check | Start at 600, revisit at 6d |
 | 7 | Track a second account too? | Single account; schema is DID-keyed, so additive later |
 
 ---
