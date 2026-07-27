@@ -742,6 +742,149 @@ enabling the app password.
 
 ---
 
+## M9–M11 — auth, posts, ignoring, and groups
+
+Requested 2026-07-27. Four things, planned together because they share
+machinery: the app password unlocks follow dates, posts feed both liveness and
+grouping, and the group-target set is the same ~600 accounts worth fetching
+posts for most often.
+
+---
+
+### M9 — Authenticate, and stop showing accounts I don't care about
+
+**9a — Session auth.** `BLUESKY_APP_PASSWORD` in `.env`.
+`com.atproto.server.createSession` on startup, `refreshSession` before expiry,
+held in memory so a restart just re-authenticates. Every call stays a **read**;
+`ENABLE_LIST_WRITE` remains off.
+
+What it buys, now that the public affinity index has replaced the reason it was
+originally wanted:
+
+- **Exact follow dates, free.** An authenticated sweep returns
+  `viewer.followedBy` per follower — the AT-URI of their follow of me. The rkey
+  is a TID that decodes locally to a timestamp (verified to within 0.15s). No
+  extra calls; the data is already in the response we pay for.
+- Exact `knownFollowers` as a cross-check on the sampled index.
+
+If the session fails, **every tier degrades to its unauthenticated path** rather
+than the sweep failing. Auth is an enhancement, not a dependency.
+
+**9b — Ignore accounts.** `ignored_at` on `follower_state`. Ignored accounts are
+excluded from listings, rankings, the group target set and CSV export — but
+**never deleted**, still swept, still counted in totals, and their history is
+untouched. An `/ignored` page lists them with a one-click restore. Ignoring is
+a display preference, so it must not silently corrupt the record: totals keep
+saying 10,042 with "N ignored" alongside.
+
+---
+
+### M10 — Recent posts
+
+**The ask was three recent posts for every follower on every run. That is 10,042
+calls per run** — no bulk endpoint exists, `getAuthorFeed` is one call per
+actor. At a 6-hour cadence that is 40,168 calls/day and 3.7 hours of continuous
+traffic on an IP shared with BlueBirdNET and atproto-labeler. Under quota,
+over the line on manners.
+
+Tiered instead, which delivers the same thing with fresher data where it counts:
+
+| Set | Size | Cadence | Cost |
+|---|---|---|---|
+| Top 500 by influence + all verified + new arrivals | ~600 | every full sweep (6h) | ~600 calls |
+| Everyone else | ~9,400 | rolling, once daily | ~9,400 calls |
+
+**~12,400 calls/day, 1.4% of the daily budget**, spread out rather than in one
+burst. Every follower still gets three recent posts refreshed daily; the ones
+that matter refresh four times as often.
+
+Stored per post: URI, text, `indexedAt`, like/repost/reply counts, and whether
+it is a repost. Three kept per follower, replaced wholesale on each fetch.
+
+**This retires the liveness proxy.** Liveness currently falls back to a lifetime
+posts-per-day average — flattering to accounts that died in 2024. Real
+`indexedAt` from the newest post replaces it for everyone covered, which is
+everyone.
+
+---
+
+### M11 — Groups
+
+Group the **top 500 by influence plus all 147 verified** (~600 distinct), into
+overlapping groups: journalists, writers, novelists, newsletter writers,
+technologists, designers, developers, Apple, Google, Microsoft, civic tech,
+privacy activists, academics, politicians. Membership is many-to-many.
+
+The requirement was *efficient and accurate*. Efficiency is easy — every signal
+below is either already stored or arrives with M10. Accuracy is the real
+problem, and the groups differ enormously in how hard they are.
+
+**Tiers, strongest evidence first. Each membership records its tier, its
+evidence, and a confidence — same discipline as affiliations.**
+
+| Tier | Method | Cost | Precision | Best for |
+|---|---|---|---|---|
+| **T1** | Affiliation → group (org kind and identity) | free | very high | Apple, Google, Microsoft, journalists |
+| **T2** | Wikidata `P106` occupation, `P39` position | free (bulk) | very high, ~1% coverage | novelists, politicians, academics |
+| **T3** | Handle domain (`.edu`, `substack.com`, `.gov`) | free | high | academics, newsletter writers |
+| **T4** | Bio + post-text rules, reusing M6a's past/product/consumption rejections | free | moderate | developers, designers, journalists |
+| **T5** | Label propagation over the existing affinity index | free | moderate | the fuzzy ones |
+| **T6** | Human confirm / reject | — | exact | everything |
+
+**T5 is the interesting one, and it costs nothing.** The affinity index already
+records, for each follower, which of ~600 sampled accounts follow them. Two
+followers with similar source-sets are similar people — that is a real
+similarity signal sitting in a table we already built. Seed each group from
+T1–T3 members, then propagate: a follower whose source-set overlaps heavily
+with a group's seeds is a candidate for that group. It is guilt-by-association,
+so it is proposed-not-asserted and always lands in the review queue.
+
+This matters because rules will not find "civic tech" or "privacy activist".
+Those are communities, not job titles, and they are legible in *who follows
+whom* long before they are legible in bio text.
+
+**What is deliberately not proposed:** LLM classification. It would be the most
+accurate approach for the fuzzy groups and it is not free, not deterministic,
+and not something to add to this app's dependencies without being asked. If the
+review queue proves tedious, that is the moment to reconsider — not before.
+
+**Measuring accuracy rather than assuming it.** After the first pass, hand-check
+a random 50 per group and record precision in the eval. A group that cannot
+reach 80% precision gets its rules tightened or is demoted to
+propagation-only-with-review. Numbers, not vibes.
+
+---
+
+### Sequencing
+
+| Step | Work | New API cost |
+|---|---|---|
+| 9a | Session auth, graceful degradation | none |
+| 9b | Ignore / restore | none |
+| 9c | Follow dates from `viewer.followedBy` TIDs | none |
+| 10a | `posts` table, tiered fetch, scheduler wiring | ~12.4k/day |
+| 10b | Real liveness replaces the lifetime-average proxy | none |
+| 11a | `groups` + `group_members`, seeded definitions | none |
+| 11b | T1–T4 classification | none |
+| 11c | T5 label propagation | none |
+| 11d | Review queue and group pages | none |
+| 11e | Precision eval on a hand-checked sample | none |
+
+Only 10a costs anything. Everything else reuses data already paid for.
+
+### Improvements made to this plan before starting
+
+| First draft | Problem | Revised |
+|---|---|---|
+| Posts for all followers every run | 40k calls/day on a shared IP | Tiered: ~600 every 6h, the rest daily |
+| Auth as a prerequisite | One bad credential breaks all syncing | Every tier degrades to its public path |
+| Ignore = exclude everywhere | Silently changes totals and history | Excluded from *listings*; totals show "N ignored" |
+| Groups from bio rules alone | Cannot find civic tech or privacy activists | T5 propagation over the follow graph already built |
+| Trust the classifier | No idea if it works | Hand-checked precision per group, 80% floor |
+| Store posts forever | Unbounded growth for a display feature | Three per follower, replaced wholesale |
+
+---
+
 ## Testing
 
 `pytest` + `pytest-asyncio`, matching the buywanderbot layout. Priority goes to
