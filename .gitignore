@@ -21,3 +21,4 @@ sonde-backups/
 
 # Artifact preview scratch
 .clearance-rendered-preview-*/
+evals/last_run.json

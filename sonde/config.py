@@ -51,6 +51,11 @@ class Settings:
 
     # Cadence
     head_sweep_minutes: int = field(default_factory=lambda: _int("HEAD_SWEEP_MINUTES", 15))
+    # Hard ceiling on the head sweep. It normally stops after 1 page, but on an
+    # empty database — or if the known-DID set is ever wrong — every page looks
+    # new and it would walk all 115. At a 15-minute cadence that is ~11k calls a
+    # day on a shared IP. The full sweep picks up whatever the cap leaves.
+    head_sweep_max_pages: int = field(default_factory=lambda: _int("HEAD_SWEEP_MAX_PAGES", 10))
     full_sweep_hours: int = field(default_factory=lambda: _int("FULL_SWEEP_HOURS", 6))
     profile_ttl_days: int = field(default_factory=lambda: _int("PROFILE_TTL_DAYS", 7))
 

@@ -176,6 +176,20 @@ async def bump_missed(dids: Iterable[str]) -> list[str]:
         return [r["did"] for r in await cur.fetchall()]
 
 
+async def pending_departures() -> list[str]:
+    """Followers already past the miss threshold, without incrementing anything.
+
+    Used by the operator override on a halted sweep — re-incrementing there
+    would penalise people a second time for the same absence.
+    """
+    db = await _db()
+    async with db.execute(
+        "SELECT did FROM follower_state WHERE is_current = 1 AND missed_sweeps >= ?",
+        (settings.departure_confirm_sweeps,),
+    ) as cur:
+        return [r["did"] for r in await cur.fetchall()]
+
+
 async def mark_departed(dids: Sequence[str], reason: str) -> None:
     db = await _db()
     now = utcnow()
