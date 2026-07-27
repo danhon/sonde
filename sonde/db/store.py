@@ -528,6 +528,59 @@ async def finish_run(run_id: int, **fields: Any) -> None:
     await db.commit()
 
 
+async def reconcile_orphaned_runs() -> int:
+    """Close out runs left `running` by a restart.
+
+    Nothing else resolves them, so without this a container restart mid-sweep
+    leaves a job that appears to run forever. They are marked `interrupted`
+    rather than `failed`: they did not fail, and conflating the two would make
+    real failures harder to spot. No data risk either way — only a *complete*
+    sweep computes departures, so an interrupted one is inert.
+    """
+    db = await _db()
+    cur = await db.execute(
+        "UPDATE sync_runs SET status = 'interrupted', ended_at = ?, "
+        "error = COALESCE(error, 'interrupted by restart') "
+        "WHERE status = 'running'",
+        (utcnow(),),
+    )
+    await db.commit()
+    return cur.rowcount or 0
+
+
+async def record_progress(run_id: int, *, pages: int | None = None,
+                          actors: int | None = None, hydrated: int | None = None,
+                          calls: int | None = None) -> None:
+    """Persist partial progress so an interrupted run shows how far it reached."""
+    sets, params = [], []
+    for column, value in (("pages_fetched", pages), ("actors_seen", actors),
+                          ("profiles_hydrated", hydrated), ("api_calls", calls)):
+        if value is not None:
+            sets.append(f"{column} = ?")
+            params.append(value)
+    if not sets:
+        return
+    db = await _db()
+    await db.execute(f"UPDATE sync_runs SET {', '.join(sets)} WHERE id = ?", (*params, run_id))
+    await db.commit()
+
+
+async def last_sync_age_seconds() -> float | None:
+    db = await _db()
+    async with db.execute(
+        "SELECT ended_at FROM sync_runs WHERE status = 'ok' AND ended_at IS NOT NULL "
+        "ORDER BY id DESC LIMIT 1"
+    ) as cur:
+        row = await cur.fetchone()
+    if not row or not row["ended_at"]:
+        return None
+    try:
+        ended = datetime.fromisoformat(row["ended_at"])
+    except ValueError:
+        return None
+    return round((datetime.now(timezone.utc) - ended).total_seconds(), 1)
+
+
 async def recent_runs(limit: int = 8) -> list[dict]:
     db = await _db()
     async with db.execute(
@@ -540,7 +593,7 @@ async def last_sync_summary() -> dict | None:
     db = await _db()
     async with db.execute(
         "SELECT kind, started_at, status, actors_seen FROM sync_runs "
-        "WHERE status != 'running' ORDER BY id DESC LIMIT 1"
+        "WHERE status NOT IN ('running', 'interrupted') ORDER BY id DESC LIMIT 1"
     ) as cur:
         row = await cur.fetchone()
     return dict(row) if row else None

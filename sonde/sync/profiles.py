@@ -18,6 +18,7 @@ from sonde.api.client import BlueskyClient
 from sonde.api.graph import batched, get_profiles
 from sonde.config import settings
 from sonde.db import store
+from sonde.jobs import registry
 
 log = logging.getLogger("sonde.hydrate")
 
@@ -42,7 +43,11 @@ async def hydrate(
         log.info("hydrating %d actors in %d batches",
                  len(dids), -(-len(dids) // settings.profiles_batch))
 
-        for batch in batched(dids, settings.profiles_batch):
+        batches = batched(dids, settings.profiles_batch)
+        for index, batch in enumerate(batches, 1):
+            registry.progress(
+                "hydrate", index, len(batches), "batches", f"{hydrated:,} profiles"
+            )
             by_did, missing = await get_profiles(client, batch)
             for did, profile in by_did.items():
                 await store.apply_detailed_profile(did, profile)
@@ -52,6 +57,10 @@ async def hydrate(
                 # blocking. That absence is the cleanest "gone" marker available.
                 await store.mark_unservable(missing)
                 unservable += len(missing)
+            if index % 10 == 0:
+                await store.record_progress(
+                    run_id, hydrated=hydrated, calls=client.calls
+                )
 
         # Hydration can switch a whole component on for the first time (the
         # first follower counts make reach and selectivity live), so the corpus

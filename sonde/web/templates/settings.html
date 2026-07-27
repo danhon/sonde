@@ -142,7 +142,7 @@
         <tr class="border-b border-slate-100">
           <td class="py-2 pr-4 font-mono text-xs">{{ r.kind }}</td>
           <td class="py-2 pr-4 font-mono text-xs text-slate-500">{{ r.started_at[:16].replace("T"," ") }}</td>
-          <td class="py-2 pr-4 font-mono text-xs {% if r.status == 'ok' %}text-emerald-700{% elif r.status == 'running' %}text-slate-500{% else %}text-red-700{% endif %}">{{ r.status }}</td>
+          <td class="py-2 pr-4 font-mono text-xs {% if r.status == 'ok' %}text-emerald-700{% elif r.status in ('running', 'interrupted') %}text-slate-500{% else %}text-red-700{% endif %}">{{ r.status }}</td>
           <td class="py-2 pr-4 text-right font-mono tabular-nums">{{ r.pages_fetched }}</td>
           <td class="py-2 pr-4 text-right font-mono tabular-nums">{{ r.actors_seen }}</td>
           <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">{{ r.api_calls }}</td>

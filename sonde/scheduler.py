@@ -99,9 +99,17 @@ def attach_scheduler(app: FastAPI) -> AsyncIOScheduler:
         id="nightly", max_instances=1, coalesce=True, misfire_grace_time=7200,
     )
 
+    # The status endpoint needs next_run_time, so the scheduler has to be
+    # reachable from the request handlers.
+    app.state.scheduler = scheduler
+
     @app.on_event("startup")
     async def _startup() -> None:
         await store.connect()
+        # A restart mid-job leaves rows stuck at `running` forever.
+        orphaned = await store.reconcile_orphaned_runs()
+        if orphaned:
+            log.info("marked %d interrupted run(s) left by a restart", orphaned)
         scheduler.start()
         log.info(
             "scheduler started — head every %dm, full every %dh",
@@ -111,6 +119,10 @@ def attach_scheduler(app: FastAPI) -> AsyncIOScheduler:
         # up to FULL_SWEEP_HOURS for the first run.
         if not await store.known_dids():
             scheduler.add_job(run_full, id="bootstrap", replace_existing=True)
+        else:
+            # Otherwise the app looks dead for HEAD_SWEEP_MINUTES after every
+            # deploy. A head sweep is 1-2 calls.
+            scheduler.add_job(run_head, id="startup-head", replace_existing=True)
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:

@@ -619,6 +619,86 @@ module that ships disabled.
 
 ---
 
+## M7.5 — Show what the app is doing
+
+Reported from production 2026-07-27: *"there is no progress indicator so I can't
+tell if it's working properly or if it's running anything in the background."*
+
+The complaint is a feature gap, but probing production and reproducing locally
+turned up four genuine bugs behind it. Every item below was reproduced, not
+inferred.
+
+### What is actually wrong
+
+**1. Orphaned `running` rows never resolve.** A restart mid-job leaves
+`sync_runs.status = 'running'` with `ended_at = NULL` forever — nothing
+reconciles them. Production restarted 6 minutes before this was written, so it
+very likely has one now. No data risk (only a *complete* sweep computes
+departures, so an interrupted one is inert), but the UI shows a job that will
+never finish.
+
+**2. The dashboard renders `running` as a failure.** `index.html` styles status
+as `ok ? green : red`, so an in-flight job is indistinguishable from a crash.
+`settings.html` got this right; the dashboard did not.
+
+**3. Two sources of truth that disagree.** Live state lives in the in-memory
+`JobRegistry`; durable state lives in `sync_runs`. After a restart the registry
+is empty while the table still says `running`, so `/settings` shows nothing
+running next to a table row claiming otherwise.
+
+**4. `asyncio.create_task` without keeping a reference.** In `trigger_sync` the
+task can be garbage-collected mid-execution, and any exception it raises is
+swallowed. A manual trigger can silently do nothing.
+
+**5. No progress, no schedule, no refresh.** `Job.detail` exists and is never
+written. Nothing reports how far through a sweep is, when the next run is due,
+or that anything is scheduled at all — and the page is static, so catching a
+40-second sweep means reloading at the right second. After a deploy the app sits
+apparently dead for 15 minutes before the first head sweep fires.
+
+### Design
+
+**Progress belongs to the job, liveness belongs to the page.**
+
+- `JobRegistry` gains `(current, total, unit)` progress plus elapsed time.
+  Sweeps report pages, hydration reports batches, affinity reports sources.
+  Head sweeps are too short to bother.
+- Progress is **throttled into `sync_runs`** as it goes, so an interrupted job
+  leaves a record of how far it reached rather than a blank.
+- `GET /api/status` returns running jobs with progress, next scheduled run
+  times, and last-sync age. Small, JSON, no follower data.
+- A **status strip in the nav bar on every page**, not just `/settings` — the
+  complaint was that you cannot tell *from anywhere* whether it is working.
+- Polling **adapts**: 3s while a job runs, 15s when idle. A static page cannot
+  show a 40-second sweep; a 2s poll when nothing is happening is waste.
+- The poll must survive an **expired Authelia session** — the fetch will get a
+  redirect to the login page rather than JSON. Detect it, stop polling, and say
+  the session expired instead of rendering nothing or garbage.
+
+### Improvements over the first draft
+
+The first pass had the indicator only on `/settings`, a fixed 2-second poll, and
+no persistence. Revised after arguing with it:
+
+| First draft | Problem | Revised |
+|---|---|---|
+| Indicator on `/settings` | The user asked how to tell it is working *at all* — the dashboard is where you look | Nav strip on every page |
+| Fixed 2s poll | Wasteful when idle, which is almost always | 3s running / 15s idle |
+| Progress in memory only | An interrupted job leaves no trace of how far it got | Throttled writes to `sync_runs` |
+| Mark orphans `failed` | They did not fail, they were interrupted — and conflating the two makes real failures harder to spot | New `interrupted` status |
+| Nothing on startup | 15 minutes of apparent silence after every deploy | Immediate head sweep (1–2 calls) |
+| `/healthz` unchanged | The watchdog cannot see a stalled scheduler | Add job count, scheduler state, last-sync age |
+
+Elapsed time is shown alongside progress, so a job that hangs on a network stall
+is visible as such rather than looking like slow progress.
+
+### Scope
+
+`/healthz` stays free of follower data — job kinds, counts and ages only. No new
+API calls beyond one head sweep per restart.
+
+---
+
 ## Testing
 
 `pytest` + `pytest-asyncio`, matching the buywanderbot layout. Priority goes to

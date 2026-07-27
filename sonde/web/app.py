@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -41,12 +41,48 @@ def create_app() -> FastAPI:
             "uptime_seconds": round(time.time() - STARTED_AT, 1),
             "build": settings.build_sha,
         }
+        # Job kinds and ages only — never follower data. This is the one
+        # surface Authelia does not guard.
+        payload["jobs_running"] = registry.running()
+        payload["scheduler"] = bool(
+            getattr(app.state, "scheduler", None)
+            and app.state.scheduler.running
+        )
         try:
             payload["last_sync"] = await store.last_sync_summary()
+            payload["last_sync_age_seconds"] = await store.last_sync_age_seconds()
         except Exception:
             # A missing or unopened DB must not make the container look dead.
             payload["last_sync"] = None
+            payload["last_sync_age_seconds"] = None
         return JSONResponse(payload)
+
+    @app.get("/api/status")
+    async def api_status(request: Request) -> JSONResponse:
+        """Live job state for the nav strip. Polled; keep it cheap."""
+        from sonde.db import store
+
+        scheduler = getattr(request.app.state, "scheduler", None)
+        upcoming = []
+        if scheduler is not None:
+            for job in scheduler.get_jobs():
+                if job.next_run_time:
+                    upcoming.append({
+                        "id": job.id,
+                        "next_run": job.next_run_time.isoformat(),
+                        "in_seconds": max(
+                            round((job.next_run_time - datetime.now(timezone.utc))
+                                  .total_seconds()), 0,
+                        ),
+                    })
+            upcoming.sort(key=lambda j: j["in_seconds"])
+
+        return JSONResponse({
+            "running": registry.snapshot(),
+            "scheduled": upcoming,
+            "scheduler": scheduler is not None and scheduler.running,
+            "last_sync_age_seconds": await store.last_sync_age_seconds(),
+        })
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request) -> HTMLResponse:
@@ -133,7 +169,9 @@ def create_app() -> FastAPI:
         }
         if kind not in jobs:
             raise HTTPException(status_code=404, detail="unknown job")
-        asyncio.create_task(registry.run(kind, jobs[kind]))
+        # spawn() keeps a strong reference; bare create_task lets the event
+        # loop drop the task mid-flight and swallow its exception.
+        registry.spawn(kind, jobs[kind])
         return RedirectResponse("/settings", status_code=303)
 
     @app.post("/settings/accept-departures")

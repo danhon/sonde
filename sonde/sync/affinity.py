@@ -21,6 +21,7 @@ from sonde.api.client import BlueskyClient
 from sonde.api.graph import iter_follows
 from sonde.config import settings
 from sonde.db import store
+from sonde.jobs import registry
 
 log = logging.getLogger("sonde.affinity")
 
@@ -72,7 +73,11 @@ async def build_index(client: BlueskyClient | None = None, *, cap: int | None = 
             len(sources), sources[0]["follows_count"], sources[-1]["follows_count"],
         )
 
-        for source in sources:
+        for index, source in enumerate(sources, 1):
+            registry.progress(
+                "affinity", index, len(sources), "sources",
+                f"{len(scores):,} followers reached",
+            )
             weight = source_weight(source["follows_count"])
             is_verified = source.get("verified_status") == "valid"
             pages = 0
@@ -91,6 +96,10 @@ async def build_index(client: BlueskyClient | None = None, *, cap: int | None = 
                 log.debug("affinity source %s failed", source["did"], exc_info=True)
                 continue
             sources_used += 1
+            if index % 25 == 0:
+                await store.record_progress(
+                    run_id, pages=sources_used, actors=len(scores), calls=client.calls
+                )
             await store.record_affinity_source(
                 source["did"], source["handle"], source["follows_count"],
                 weight, is_verified, pages,

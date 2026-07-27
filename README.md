@@ -12,7 +12,7 @@ ones are **influential** — with a score it can explain.
 > matching. Still to come — M7 (external reputation: Wikidata, Wikipedia, GDELT)
 > and M8 (digest, list writing, RSS). See [Milestones](PLAN.md#milestones).
 >
-> 195 unit tests pass. Live evals against `@danhon.com` reproduce every measured
+> 217 unit tests pass. Live evals against `@danhon.com` reproduce every measured
 > number: 115 pages, 10,042 followers, 147 verified across 7 issuers, 2,170
 > mutuals, mean page yield 87.3, newest-first ordering confirmed.
 
@@ -62,9 +62,12 @@ Authelia 2FA at `sonde.sgc.rayandhon.com`.
 | `/influential` | Leaderboard — **by reach** or **by relevance to you** — each row decomposed |
 | `/verified` | The 147, grouped by issuing verifier |
 | `/changes` | Arrival/departure timeline |
-| `/healthz` | Unauthenticated liveness probe |
+| `/api/status` | Live job progress, next scheduled runs, last-sync age (polled by the nav strip) |
+| `/healthz` | Unauthenticated liveness probe — also reports running jobs and scheduler state |
 
-`/followers/{did}` and `/settings` arrive in M5.
+Every page carries a live activity strip showing what is running, how far
+through it is, and when the next job is due — polling every 3s while a job runs
+and every 15s when idle.
 
 ## How the influence score works
 
@@ -165,7 +168,7 @@ Unit tests prove the logic is self-consistent; the evals prove it agrees with
 Bluesky. They make real API calls, so they're deliberately outside `pytest`.
 
 ```bash
-uv run pytest                                   # 195 unit tests
+uv run pytest                                   # 217 unit tests
 uv run python -m evals.live_sweep               # full sweep vs measured baseline
 uv run python -m evals.live_sweep --head        # head sweep cost
 uv run python -m evals.verified_check           # issuer distribution

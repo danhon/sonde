@@ -106,7 +106,7 @@
           <td class="py-2 pr-4 font-mono">{{ r.kind }}</td>
           <td class="py-2 pr-4 text-slate-600">{{ r.started_at }}</td>
           <td class="py-2 pr-4">
-            <span class="font-mono text-xs {% if r.status == 'ok' %}text-emerald-700{% else %}text-red-700{% endif %}">{{ r.status }}</span>
+            <span class="font-mono text-xs {% if r.status == 'ok' %}text-emerald-700{% elif r.status in ('running', 'interrupted') %}text-slate-500{% else %}text-red-700{% endif %}">{{ r.status }}</span>
           </td>
           <td class="py-2 pr-4 text-right font-mono tabular-nums">{{ r.actors_seen }}</td>
           <td class="py-2 pr-4 text-right font-mono tabular-nums">{{ r.new_followers }}</td>

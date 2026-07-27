@@ -29,11 +29,28 @@ def test_healthz_needs_no_database(client):
 
 
 def test_healthz_leaks_no_follower_data(client):
+    """An exact allowlist: /healthz is the one surface Authelia does not guard.
+
+    Job kinds, counts and ages are fine. Handles and DIDs are not. This asserts
+    the key set exactly so a new field cannot leak in unnoticed.
+    """
     body = client.get("/healthz").json()
-    assert set(body) <= {"status", "uptime_seconds", "build", "last_sync"}
+    assert set(body) <= {
+        "status", "uptime_seconds", "build", "last_sync",
+        "last_sync_age_seconds", "jobs_running", "scheduler",
+    }
     blob = repr(body)
     assert "did:" not in blob
     assert "bsky.social" not in blob
+    assert "handle" not in blob
+
+
+def test_healthz_reports_job_and_scheduler_state(client):
+    """So the watchdog can see a stalled scheduler, not just a live process."""
+    body = client.get("/healthz").json()
+    assert body["jobs_running"] == []
+    assert body["scheduler"] is False, "no scheduler attached in web-only mode"
+    assert "last_sync_age_seconds" in body
 
 
 def test_dashboard_renders_empty_state(client):

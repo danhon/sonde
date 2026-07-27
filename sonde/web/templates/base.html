@@ -18,9 +18,123 @@
       <span class="ml-auto font-mono text-xs uppercase tracking-widest text-slate-400">{{ settings.actor }}</span>
       <span class="font-mono text-xs text-slate-400">{{ settings.build_sha }}</span>
     </div>
+
+    {# Live activity. Present on every page: the question is "is it doing
+       anything", and you shouldn't have to be on /settings to answer it. #}
+    <div id="activity" class="border-t border-slate-200 bg-slate-50">
+      <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-1 px-6 py-2">
+        <span id="activity-dot" class="h-2 w-2 shrink-0 rounded-full bg-slate-300"></span>
+        <span id="activity-text" class="font-mono text-xs text-slate-500">checking…</span>
+        <span id="activity-bar" class="hidden h-1 w-32 shrink-0 overflow-hidden rounded-sm bg-slate-200">
+          <span id="activity-fill" class="block h-full bg-red-800 transition-all duration-500" style="width:0%"></span>
+        </span>
+        <span id="activity-next" class="ml-auto font-mono text-[10px] uppercase tracking-widest text-slate-400"></span>
+      </div>
+    </div>
   </nav>
   <main class="mx-auto max-w-6xl px-6 py-10">
     {% block content %}{% endblock %}
   </main>
+
+  <script>
+  (function () {
+    const dot  = document.getElementById("activity-dot");
+    const text = document.getElementById("activity-text");
+    const bar  = document.getElementById("activity-bar");
+    const fill = document.getElementById("activity-fill");
+    const next = document.getElementById("activity-next");
+
+    // 3s while something runs, 15s when idle. A static page can't show a
+    // 40-second sweep; a 3s poll when nothing is happening is just waste.
+    const BUSY = 3000, IDLE = 15000;
+    let timer = null;
+
+    const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+    function humanise(seconds) {
+      if (seconds == null) return "";
+      if (seconds < 60) return `${Math.round(seconds)}s`;
+      if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+      if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
+      return `${Math.round(seconds / 86400)}d`;
+    }
+
+    function idle(status) {
+      dot.className = "h-2 w-2 shrink-0 rounded-full bg-emerald-500";
+      bar.classList.add("hidden");
+      const age = status.last_sync_age_seconds;
+      text.textContent = age == null
+        ? "Idle — nothing has run yet"
+        : `Idle — last sync ${humanise(age)} ago`;
+      if (!status.scheduler) {
+        dot.className = "h-2 w-2 shrink-0 rounded-full bg-amber-500";
+        text.textContent += " · scheduler not running";
+      }
+    }
+
+    function busy(jobs) {
+      dot.className = "h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-700";
+      const job = jobs[0];
+      let label = `Running ${job.kind}`;
+      if (job.total) {
+        label += ` — ${job.current}/${job.total} ${job.unit}`;
+        bar.classList.remove("hidden");
+        fill.style.width = `${job.pct}%`;
+      } else {
+        bar.classList.add("hidden");
+      }
+      if (job.detail) label += ` · ${job.detail}`;
+      label += ` · ${humanise(job.elapsed)}`;
+      if (jobs.length > 1) label += ` (+${plural(jobs.length - 1, "other")})`;
+      text.textContent = label;
+    }
+
+    function stopped(message) {
+      dot.className = "h-2 w-2 shrink-0 rounded-full bg-amber-500";
+      text.textContent = message;
+      bar.classList.add("hidden");
+      next.textContent = "";
+      if (timer) clearTimeout(timer);
+    }
+
+    async function poll() {
+      let status;
+      try {
+        const resp = await fetch("/api/status", {
+          headers: { "Accept": "application/json" },
+          redirect: "error",   // an Authelia redirect must not be followed
+        });
+        if (!resp.ok) throw new Error(resp.status);
+        status = await resp.json();
+      } catch (err) {
+        // Most likely the Authelia session expired, so /api/status answered
+        // with a redirect to the login page rather than JSON. Say so instead
+        // of silently showing nothing.
+        stopped("Session expired — reload to sign in again");
+        return;
+      }
+
+      const jobs = status.running || [];
+      if (jobs.length) busy(jobs); else idle(status);
+
+      const soonest = (status.scheduled || [])[0];
+      next.textContent = soonest
+        ? `next: ${soonest.id} in ${humanise(soonest.in_seconds)}`
+        : "";
+
+      timer = setTimeout(poll, jobs.length ? BUSY : IDLE);
+    }
+
+    poll();
+    // Don't poll a tab nobody is looking at; refresh the moment it returns.
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        if (timer) clearTimeout(timer);
+      } else {
+        poll();
+      }
+    });
+  })();
+  </script>
 </body>
 </html>

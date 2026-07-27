@@ -27,6 +27,11 @@ from sonde.api.client import BlueskyClient
 from sonde.api.graph import get_profile, iter_followers
 from sonde.config import settings
 from sonde.db import store
+from sonde.jobs import registry
+
+# A full sweep of @danhon.com is 115 pages; used only to show a percentage
+# before the real total is known, which it never is until the cursor runs out.
+EXPECTED_FULL_SWEEP_PAGES = 115
 
 log = logging.getLogger("sonde.sync")
 
@@ -160,6 +165,16 @@ async def full_sweep(client: BlueskyClient | None = None) -> dict:
             )
             arrivals += a
             returns += r
+            registry.progress(
+                "full", page, EXPECTED_FULL_SWEEP_PAGES, "pages",
+                f"{seen:,} followers seen",
+            )
+            # Throttled: an interrupted sweep should leave a record of how far
+            # it reached, without a write per page.
+            if page % 10 == 0:
+                await store.record_progress(
+                    run_id, pages=page, actors=seen, calls=client.calls
+                )
         completed = True
 
         # Trend the reported-vs-tracked gap; 1 extra call.
