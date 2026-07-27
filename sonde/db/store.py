@@ -29,7 +29,13 @@ def set_db_path(path: str | None) -> None:
 
 
 def utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    """Millisecond precision on purpose.
+
+    A full sweep imports ~10,000 followers in under 40 seconds, so second
+    precision collides heavily and "newest arrival first" stops meaning
+    anything. SQLite's julianday() parses the fractional form fine.
+    """
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
 async def connect(path: str | None = None) -> aiosqlite.Connection:
@@ -174,6 +180,208 @@ async def bump_missed(dids: Iterable[str]) -> list[str]:
         (settings.departure_confirm_sweeps,),
     ) as cur:
         return [r["did"] for r in await cur.fetchall()]
+
+
+async def commit() -> None:
+    db = await _db()
+    await db.commit()
+
+
+# ------------------------------------------------------- tier 1 hydration
+
+async def stale_actor_dids(limit: int | None = None) -> list[str]:
+    """Current followers needing a profile refresh, newest arrivals first.
+
+    Never-hydrated actors sort ahead of merely-stale ones, and actors already
+    known to be unservable are skipped — re-requesting them every cycle burns
+    calls to learn nothing new.
+    """
+    db = await _db()
+    sql = """
+        SELECT a.did
+          FROM actors a
+          JOIN follower_state fs USING (did)
+         WHERE fs.is_current = 1
+           AND a.unservable_since IS NULL
+           AND (a.profile_fetched_at IS NULL
+                OR julianday('now') - julianday(a.profile_fetched_at) >= ?)
+         ORDER BY (a.profile_fetched_at IS NOT NULL),
+                  COALESCE(fs.list_rank, 2147483647) ASC,
+                  fs.first_seen_at DESC
+    """
+    # list_rank, not first_seen_at, is the authoritative recency signal: it is
+    # the live position in a newest-follow-first list, rewritten on every
+    # sighting, so rank 0 is always the most recent follower. Timestamps can't
+    # do this job — a sweep imports 10,000 rows in 38 seconds and they collide.
+    params: list = [settings.profile_ttl_days]
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    async with db.execute(sql, params) as cur:
+        return [r["did"] for r in await cur.fetchall()]
+
+
+async def apply_detailed_profile(did: str, profile: dict) -> None:
+    """Write profileViewDetailed fields, then rescore that actor."""
+    db = await _db()
+    verification = profile.get("verification") or {}
+    await db.execute(
+        """UPDATE actors
+              SET handle             = COALESCE(?, handle),
+                  display_name       = ?,
+                  description        = ?,
+                  avatar_url         = ?,
+                  followers_count    = ?,
+                  follows_count      = ?,
+                  posts_count        = ?,
+                  verified_status    = ?,
+                  trusted_verifier_status = ?,
+                  verifications      = ?,
+                  labels             = ?,
+                  account_created_at = COALESCE(?, account_created_at),
+                  profile_fetched_at = ?,
+                  unservable_since   = NULL
+            WHERE did = ?""",
+        (
+            profile.get("handle"),
+            profile.get("displayName"),
+            profile.get("description"),
+            profile.get("avatar"),
+            profile.get("followersCount"),
+            profile.get("followsCount"),
+            profile.get("postsCount"),
+            verification.get("verifiedStatus", "none"),
+            verification.get("trustedVerifierStatus", "none"),
+            json.dumps(verification.get("verifications") or []),
+            _labels_of(profile),
+            profile.get("createdAt"),
+            utcnow(),
+            did,
+        ),
+    )
+    await _rescore_did(did)
+
+
+async def mark_unservable(dids: Sequence[str]) -> None:
+    """Requested from getProfiles but not returned — the 'gone' marker."""
+    db = await _db()
+    now = utcnow()
+    await db.executemany(
+        "UPDATE actors SET unservable_since = COALESCE(unservable_since, ?) WHERE did = ?",
+        [(now, d) for d in dids],
+    )
+
+
+# ------------------------------------------------------------- scoring
+
+async def active_score_components() -> set[str]:
+    """Which score components the corpus actually has data for."""
+    from sonde import scoring
+
+    db = await _db()
+    coverage: dict[str, int] = {}
+    probes = {
+        "reach": "followers_count IS NOT NULL",
+        "selectivity": "followers_count IS NOT NULL AND follows_count IS NOT NULL",
+        "liveness": "last_post_at IS NOT NULL OR posts_count IS NOT NULL",
+        "affinity": "affinity_sampled IS NOT NULL OR affinity_exact IS NOT NULL",
+    }
+    for key, predicate in probes.items():
+        async with db.execute(f"SELECT COUNT(*) FROM actors WHERE {predicate}") as cur:
+            coverage[key] = int((await cur.fetchone())[0] or 0)
+    return scoring.active_components(coverage)
+
+
+async def _rescore_did(did: str, active: set[str] | None = None) -> None:
+    from sonde import scoring
+
+    db = await _db()
+    async with db.execute("SELECT * FROM actors WHERE did = ?", (did,)) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        return
+    score = scoring.score_actor(dict(row), active=active)
+    await db.execute(
+        "UPDATE actors SET influence_score = ?, score_components = ? WHERE did = ?",
+        (score.normalised, score.as_json(), did),
+    )
+
+
+async def rescore_all() -> int:
+    from sonde import scoring
+
+    db = await _db()
+    active = await active_score_components()
+    async with db.execute(
+        "SELECT a.* FROM actors a JOIN follower_state fs USING (did) WHERE fs.is_current = 1"
+    ) as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+    updates = []
+    for row in rows:
+        score = scoring.score_actor(row, active=active)
+        updates.append((score.normalised, score.as_json(), row["did"]))
+    await db.executemany(
+        "UPDATE actors SET influence_score = ?, score_components = ? WHERE did = ?", updates
+    )
+    return len(updates)
+
+
+async def ranked_followers(
+    limit: int = 50, offset: int = 0, *, order: str = "influence",
+    verified_only: bool = False, min_followers: int | None = None,
+    query: str | None = None,
+) -> list[dict]:
+    order_sql = {
+        "influence": "a.influence_score DESC NULLS LAST, a.followers_count DESC",
+        "followers": "a.followers_count DESC NULLS LAST",
+        "recent": "fs.first_seen_at DESC",
+        "handle": "a.handle ASC",
+    }.get(order, "a.influence_score DESC NULLS LAST")
+
+    where = ["fs.is_current = 1"]
+    params: list = []
+    if verified_only:
+        where.append("a.verified_status = 'valid'")
+    if min_followers is not None:
+        where.append("COALESCE(a.followers_count, 0) >= ?")
+        params.append(min_followers)
+    if query:
+        where.append(
+            "(a.handle LIKE ? OR COALESCE(a.display_name,'') LIKE ? "
+            "OR COALESCE(a.description,'') LIKE ?)"
+        )
+        params += [f"%{query}%"] * 3
+    if settings.respect_no_unauthenticated:
+        where.append("COALESCE(a.labels,'') NOT LIKE '%no-unauthenticated%'")
+
+    db = await _db()
+    sql = (
+        "SELECT a.*, fs.first_seen_at, fs.list_rank FROM actors a "
+        "JOIN follower_state fs USING (did) "
+        f"WHERE {' AND '.join(where)} ORDER BY {order_sql} LIMIT ? OFFSET ?"
+    )
+    async with db.execute(sql, (*params, limit, offset)) as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+    for row in rows:
+        row["components"] = json.loads(row["score_components"] or "{}").get("components", [])
+        row["is_private"] = "no-unauthenticated" in (row.get("labels") or "")
+    return rows
+
+
+async def hydration_progress() -> dict:
+    total = await _scalar("SELECT COUNT(*) FROM follower_state WHERE is_current = 1")
+    done = await _scalar(
+        "SELECT COUNT(*) FROM actors a JOIN follower_state fs USING (did) "
+        "WHERE fs.is_current = 1 AND a.profile_fetched_at IS NOT NULL"
+    )
+    unservable = await _scalar(
+        "SELECT COUNT(*) FROM actors a JOIN follower_state fs USING (did) "
+        "WHERE fs.is_current = 1 AND a.unservable_since IS NOT NULL"
+    )
+    return {
+        "total": total, "hydrated": done, "unservable": unservable,
+        "pct": round(done / total * 100, 1) if total else 0.0,
+    }
 
 
 async def pending_departures() -> list[str]:

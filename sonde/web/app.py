@@ -50,6 +50,47 @@ def create_app() -> FastAPI:
             request=request, name="index.html", context={"stats": stats, "settings": settings}
         )
 
+    @app.get("/influential", response_class=HTMLResponse)
+    async def influential(request: Request, page: int = 1, order: str = "influence") -> HTMLResponse:
+        from sonde.db import store
+        from sonde.scoring import WEIGHTS
+
+        per_page = 50
+        rows = await store.ranked_followers(
+            limit=per_page, offset=(max(page, 1) - 1) * per_page, order=order
+        )
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="influential.html",
+            context={
+                "rows": rows, "page": max(page, 1), "order": order,
+                "weights": WEIGHTS, "progress": await store.hydration_progress(),
+                "settings": settings,
+            },
+        )
+
+    @app.get("/followers", response_class=HTMLResponse)
+    async def followers(
+        request: Request, page: int = 1, order: str = "influence",
+        q: str | None = None, verified: bool = False, min_followers: int | None = None,
+    ) -> HTMLResponse:
+        from sonde.db import store
+
+        per_page = 100
+        rows = await store.ranked_followers(
+            limit=per_page, offset=(max(page, 1) - 1) * per_page, order=order,
+            verified_only=verified, min_followers=min_followers, query=q,
+        )
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="followers.html",
+            context={
+                "rows": rows, "page": max(page, 1), "order": order, "q": q or "",
+                "verified": verified, "min_followers": min_followers,
+                "counts": await store.counts(), "settings": settings,
+            },
+        )
+
     @app.get("/verified", response_class=HTMLResponse)
     async def verified(request: Request) -> HTMLResponse:
         from sonde.db import store
