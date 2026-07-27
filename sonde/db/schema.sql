@@ -280,3 +280,15 @@ CREATE TABLE IF NOT EXISTS group_candidates (
     first_seen_at TEXT NOT NULL,
     UNIQUE (kind, term)
 );
+
+-- Follow-graph edges: which sampled source follows which follower. The affinity
+-- build already computes these and threw them away, keeping only the weighted
+-- sum. Propagation needs the edges themselves — two followers with similar
+-- source sets are similar people.
+CREATE TABLE IF NOT EXISTS affinity_edges (
+    source_did TEXT NOT NULL,
+    did        TEXT NOT NULL,
+    PRIMARY KEY (source_did, did)
+);
+
+CREATE INDEX IF NOT EXISTS idx_edges_did ON affinity_edges (did);

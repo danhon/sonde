@@ -47,6 +47,9 @@ async def build_index(client: BlueskyClient | None = None, *, cap: int | None = 
 
     scores: dict[str, float] = {}
     verified_hits: dict[str, int] = {}
+    # Edges are kept this time: the weighted sum alone cannot tell you that two
+    # followers are followed by the same people, which is what propagation needs.
+    edges: list[tuple[str, str]] = []
     sources_used = failed = 0
 
     try:
@@ -88,6 +91,7 @@ async def build_index(client: BlueskyClient | None = None, *, cap: int | None = 
                         did = a.get("did")
                         if did in followers:
                             scores[did] = scores.get(did, 0.0) + weight
+                            edges.append((source["did"], did))
                             if is_verified:
                                 verified_hits[did] = verified_hits.get(did, 0) + 1
             except Exception:
@@ -106,6 +110,7 @@ async def build_index(client: BlueskyClient | None = None, *, cap: int | None = 
             )
 
         await store.store_affinity(scores, verified_hits)
+        await store.store_affinity_edges(edges)
         await store.rescore_all()
         await store.commit()
     except Exception as exc:  # noqa: BLE001
@@ -125,7 +130,8 @@ async def build_index(client: BlueskyClient | None = None, *, cap: int | None = 
         "status": "ok", "kind": "affinity", "sources": sources_used,
         "failed_sources": failed, "reached": reached,
         "coverage_pct": round(reached / max(len(followers), 1) * 100, 1),
-        "verified_reached": len(verified_hits), "api_calls": client.calls,
+        "verified_reached": len(verified_hits), "edges": len(edges),
+        "api_calls": client.calls,
     }
 
 

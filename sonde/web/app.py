@@ -328,6 +328,7 @@ def create_app() -> FastAPI:
             "affiliations": store.rebuild_affiliations,
             "groups": store.classify_groups,
             "discover": store.discover_group_candidates,
+            "propagate": store.propagate_groups,
             "moderation": moderation.sync_lists,
             "follows": mutuals.sync_follows,
             "rescore": profiles.rescore,

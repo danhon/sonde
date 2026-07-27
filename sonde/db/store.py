@@ -2081,6 +2081,101 @@ async def affinity_agreement() -> dict | None:
     }
 
 
+async def store_affinity_edges(edges: list[tuple[str, str]]) -> int:
+    db = await _db()
+    await db.execute("DELETE FROM affinity_edges")
+    await db.executemany(
+        "INSERT INTO affinity_edges (source_did, did) VALUES (?,?) "
+        "ON CONFLICT DO NOTHING", edges,
+    )
+    await db.commit()
+    return len(edges)
+
+
+async def propagate_groups(min_seeds: int = 3, min_overlap: float = 0.30,
+                           min_shared: int = 2) -> dict:
+    """T5 — guilt by association over the follow graph.
+
+    Rules cannot find "civic tech" or "privacy activist": those are communities,
+    not job titles, and they are legible in who follows whom long before they
+    appear in a bio. For each group with enough confident members, find
+    followers whose set of index sources overlaps heavily with the group's.
+
+    Everything produced here is a *proposal* — low confidence, its own tier, and
+    it never overrides stronger evidence.
+    """
+    from sonde.groups import PROPAGATION
+
+    db = await _db()
+    async with db.execute("SELECT COUNT(*) FROM affinity_edges") as cur:
+        if not (await cur.fetchone())[0]:
+            return {"skipped": "no follow-graph edges — rebuild the affinity index",
+                    "proposed": 0}
+
+    async with db.execute("SELECT did, source_did FROM affinity_edges") as cur:
+        sources_of: dict[str, set[str]] = {}
+        for row in await cur.fetchall():
+            sources_of.setdefault(row["did"], set()).add(row["source_did"])
+
+    async with db.execute(
+        """SELECT g.id, g.slug, m.did FROM group_members m
+             JOIN groups g ON g.id = m.group_id
+            WHERE COALESCE(m.confirmed, 1) = 1 AND m.tier != 'propagation'"""
+    ) as cur:
+        members: dict[str, tuple[int, set[str]]] = {}
+        for row in await cur.fetchall():
+            entry = members.setdefault(row["slug"], (row["id"], set()))
+            entry[1].add(row["did"])
+
+    candidates = await group_target_dids(top_n=settings.posts_top_n)
+    now = utcnow()
+    proposed = 0
+    by_group: dict[str, int] = {}
+
+    for slug, (group_id, seed_dids) in members.items():
+        seeds = [sources_of.get(d, set()) for d in seed_dids]
+        seeds = [s for s in seeds if s]
+        if len(seeds) < min_seeds:
+            continue
+        # How often each source follows a member of this group.
+        seed_sources: dict[str, int] = {}
+        for source_set in seeds:
+            for source in source_set:
+                seed_sources[source] = seed_sources.get(source, 0) + 1
+        # Sources that follow a meaningful share of the group characterise it.
+        signature = {s for s, n in seed_sources.items() if n / len(seeds) >= min_overlap}
+        if len(signature) < min_shared:
+            continue
+
+        for did in candidates:
+            if did in seed_dids:
+                continue
+            mine = sources_of.get(did)
+            if not mine:
+                continue
+            shared = len(mine & signature)
+            if shared < min_shared:
+                continue
+            overlap = shared / len(signature)
+            if overlap < min_overlap:
+                continue
+            await db.execute(
+                """INSERT INTO group_members
+                     (group_id, did, tier, confidence, evidence, created_at)
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT (group_id, did) DO NOTHING""",
+                (group_id, did, "propagation", round(PROPAGATION * overlap, 3),
+                 f"followed by {shared} of the {len(signature)} accounts that "
+                 f"characterise this group", now),
+            )
+            proposed += 1
+            by_group[slug] = by_group.get(slug, 0) + 1
+
+    await db.commit()
+    return {"proposed": proposed, "by_group": dict(
+        sorted(by_group.items(), key=lambda kv: -kv[1]))}
+
+
 async def affinity_source_count() -> int:
     return await _scalar("SELECT COUNT(*) FROM affinity_sources")
 

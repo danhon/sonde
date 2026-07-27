@@ -91,7 +91,10 @@
     <tbody>
       {% for v in p.verification_records %}
       <tr class="border-b border-slate-100">
-        <td class="py-2 pr-4 font-mono text-xs">{{ v.issuerHandle or v.issuer }}</td>
+        <td class="py-2 pr-4">
+          <a class="font-mono text-xs text-red-800 hover:underline"
+             href="/verified">{{ v.issuerHandle or v.issuer }}</a>
+        </td>
         <td class="py-2 pr-4 text-slate-600">{{ v.issuerDisplayName or "" }}</td>
         <td class="py-2 pr-4 font-mono text-xs text-slate-500">{{ (v.createdAt or "")[:10] }}</td>
         <td class="py-2 font-mono text-xs {% if v.isValid %}text-emerald-700{% else %}text-red-700{% endif %}">
@@ -173,10 +176,13 @@
       <span class="rounded-sm bg-slate-100 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-slate-600">
         {{ a.kind.replace('_', ' ') }}
       </span>
+      {# Sonde first: the institution page shows everyone else there. The
+         external site is still reachable, as a secondary arrow. #}
+      <a class="text-sm text-red-800 hover:underline"
+         href="/institutions?name={{ a.org_name | urlencode }}">{{ a.org_name }}</a>
       {% if a.url %}
-        <a class="text-sm text-red-800 hover:underline" href="{{ a.url }}" target="_blank" rel="noopener">{{ a.org_name }}</a>
-      {% else %}
-        <span class="text-sm font-medium">{{ a.org_name }}</span>
+      <a class="text-slate-400 hover:text-red-800" title="{{ a.org_name }} on the web"
+         href="{{ a.url }}" target="_blank" rel="noopener">↗</a>
       {% endif %}
       {% if a.role %}<span class="text-sm text-slate-600">{{ a.role }}</span>{% endif %}
       <span class="ml-auto font-mono text-[10px] uppercase tracking-widest text-slate-400">
@@ -225,7 +231,14 @@
     {% if values %}
     <p class="mt-2 text-sm">
       <span class="font-mono text-[10px] uppercase tracking-widest text-slate-500">{{ label }}</span>
-      <span class="ml-2 text-slate-700">{{ values | join(", ") }}</span>
+      {% for v in values %}
+        {%- if label == 'Employer' %}
+        <a class="ml-2 text-red-800 hover:underline"
+           href="/institutions?name={{ v | urlencode }}">{{ v }}</a>{% if not loop.last %},{% endif %}
+        {%- else %}
+        <span class="ml-2 text-slate-700">{{ v }}{% if not loop.last %},{% endif %}</span>
+        {%- endif %}
+      {% endfor %}
     </p>
     {% endif %}
   {% endfor %}
@@ -245,8 +258,9 @@
   <ul class="mt-3 space-y-1 text-sm">
     {% for l in p.moderation_lists %}
     <li class="flex items-baseline gap-3">
-      <span class="{% if not l.enabled %}text-slate-400 line-through{% endif %}">{{ l.name }}</span>
-      <span class="font-mono text-xs text-slate-500">{{ l.curator }}</span>
+      <a href="/ignored" class="{% if not l.enabled %}text-slate-400 line-through{% else %}text-red-800 hover:underline{% endif %}">{{ l.name }}</a>
+      <a class="font-mono text-xs text-red-800 hover:underline"
+         href="/followers?q={{ l.curator }}">{{ l.curator }}</a>
       {% if not l.enabled %}<span class="font-mono text-[10px] uppercase tracking-wider text-slate-400">not applied</span>{% endif %}
     </li>
     {% endfor %}
