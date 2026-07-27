@@ -228,6 +228,7 @@ def create_app() -> FastAPI:
         """Manual trigger. Single-flight: a second request attaches to the run."""
         from fastapi import HTTPException
 
+        from sonde.db import store
         from sonde.external import wikidata, wikipedia
         from sonde.notify import digest
 

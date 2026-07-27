@@ -301,3 +301,15 @@ async def test_most_recent_sorts_newest_first(client):
         await store.mark_seen(did, i)   # rank 0 = most recent follower
     rows = await store.ranked_followers(order="recent", direction="desc")
     assert rows[0]["did"] == "did:plc:new"
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["head", "full", "hydrate", "follows", "rescore", "backup",
+     "posts", "relevance", "digest", "external", "affiliations", "moderation"],
+)
+async def test_every_manual_trigger_resolves(client, kind):
+    """A missing import in the handler makes the button 500, and only the two
+    kinds that happened to be tested would have caught it."""
+    r = client.post(f"/settings/sync/{kind}", follow_redirects=False)
+    assert r.status_code == 303, kind
