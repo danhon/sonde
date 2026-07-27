@@ -41,3 +41,36 @@ def test_dashboard_renders_empty_state(client):
     assert r.status_code == 200
     assert "No data yet" in r.text
     assert "Followers tracked" in r.text
+
+
+def test_changes_route_renders_empty_state(client):
+    r = client.get("/changes")
+    assert r.status_code == 200
+    assert "Nothing recorded yet" in r.text
+
+
+def test_changes_route_accepts_an_event_filter(client):
+    r = client.get("/changes?event=departed")
+    assert r.status_code == 200
+
+
+def test_influential_route_renders_empty_state(client):
+    r = client.get("/influential")
+    assert r.status_code == 200
+    assert "Nothing ranked yet" in r.text
+
+
+def test_followers_route_renders_empty_state(client):
+    r = client.get("/followers")
+    assert r.status_code == 200
+    assert "run a sweep" in r.text
+
+
+def test_followers_route_accepts_filters(client):
+    r = client.get("/followers?q=test&verified=true&min_followers=100&order=followers")
+    assert r.status_code == 200
+
+
+def test_every_route_survives_an_empty_database(client):
+    for path in ("/", "/followers", "/influential", "/verified", "/changes", "/healthz"):
+        assert client.get(path).status_code == 200, path

@@ -1,0 +1,45 @@
+{# Growth sparkline. Area fill, faint baseline, emphasised endpoint. #}
+{% if growth and growth|length > 1 %}
+{% set values = growth | map(attribute='followers_tracked') | select('!=', None) | list %}
+{% if values | length > 1 %}
+{% set lo = values | min %}
+{% set hi = values | max %}
+{% set span = (hi - lo) if (hi - lo) > 0 else 1 %}
+{% set w = 720 %}
+{% set h = 120 %}
+{% set step = w / ((values | length) - 1) %}
+<figure class="mt-4">
+  <svg viewBox="0 0 {{ w }} {{ h + 16 }}" class="w-full" role="img"
+       aria-label="Followers tracked over the last {{ values|length }} days, {{ lo }} to {{ hi }}">
+    <line x1="0" y1="{{ h }}" x2="{{ w }}" y2="{{ h }}" stroke="#cbd5e1" stroke-width="1"/>
+    {% set pts = [] %}
+    {% for v in values %}
+      {% set x = loop.index0 * step %}
+      {% set y = h - ((v - lo) / span * (h - 12)) %}
+      {% set _ = pts.append('%.1f,%.1f' % (x, y)) %}
+    {% endfor %}
+    <polygon points="0,{{ h }} {{ pts | join(' ') }} {{ w }},{{ h }}" fill="#b4123c" opacity="0.10"/>
+    <polyline points="{{ pts | join(' ') }}" fill="none" stroke="#b4123c" stroke-width="2"
+              stroke-linejoin="round" stroke-linecap="round"/>
+    {% set last = pts[-1].split(',') %}
+    <circle cx="{{ last[0] }}" cy="{{ last[1] }}" r="3.5" fill="#b4123c"/>
+    <text x="{{ w }}" y="{{ h + 14 }}" text-anchor="end"
+          class="fill-slate-400" style="font-size:10px; font-family:ui-monospace,monospace">
+      {{ "{:,}".format(values[-1]) }}
+    </text>
+    <text x="0" y="{{ h + 14 }}"
+          class="fill-slate-400" style="font-size:10px; font-family:ui-monospace,monospace">
+      {{ growth[0].day }}
+    </text>
+  </svg>
+  <figcaption class="mt-1 text-xs text-slate-500">
+    Followers tracked, {{ values | length }} day(s). Range {{ "{:,}".format(lo) }}–{{ "{:,}".format(hi) }}.
+  </figcaption>
+</figure>
+{% endif %}
+{% else %}
+<p class="mt-4 text-sm text-slate-500">
+  Growth needs at least two daily snapshots — the chart appears after the app has
+  been running a couple of days.
+</p>
+{% endif %}

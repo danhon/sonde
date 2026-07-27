@@ -31,6 +31,60 @@
 </div>
 {% endif %}
 
+{% if not stats.empty %}
+<section class="mt-10">
+  <h2 class="border-b border-slate-300 pb-3 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">Growth</h2>
+  {% with growth = stats.growth %}{% include "_growth.html" %}{% endwith %}
+</section>
+
+<div class="mt-10 grid gap-10 lg:grid-cols-2">
+  <section>
+    <h2 class="border-b border-slate-300 pb-3 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+      Ranked by influence
+    </h2>
+    {% if stats.top %}
+    <ol class="mt-3 space-y-1">
+      {% for row in stats.top %}
+      <li class="flex items-baseline gap-3 text-sm">
+        <span class="w-5 shrink-0 text-right font-mono text-xs text-slate-400">{{ loop.index }}</span>
+        <a class="font-mono text-xs text-red-800 hover:underline" href="https://bsky.app/profile/{{ row.handle }}"
+           target="_blank" rel="noopener">{{ row.handle }}</a>
+        <span class="truncate text-slate-600">{{ row.display_name or "" }}</span>
+        <span class="ml-auto font-mono text-xs tabular-nums">{{ row.influence_score if row.influence_score is not none else "—" }}</span>
+      </li>
+      {% endfor %}
+    </ol>
+    <a href="/influential" class="mt-3 inline-block font-mono text-xs text-red-800 hover:underline">all rankings →</a>
+    {% else %}
+    <p class="mt-3 text-sm text-slate-500">Needs profile hydration.</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2 class="border-b border-slate-300 pb-3 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+      Recent changes
+    </h2>
+    {% if stats.recent_changes %}
+    <ul class="mt-3 space-y-1">
+      {% for e in stats.recent_changes %}
+      <li class="flex items-baseline gap-3 text-sm">
+        {% set colour = {'followed':'text-emerald-700','departed':'text-red-700',
+                         'returned':'text-sky-700','handle_changed':'text-slate-500'} %}
+        <span class="w-20 shrink-0 font-mono text-[10px] uppercase tracking-wider {{ colour.get(e.event,'text-slate-500') }}">{{ e.event }}</span>
+        <a class="truncate font-mono text-xs text-red-800 hover:underline" href="https://bsky.app/profile/{{ e.handle }}"
+           target="_blank" rel="noopener">{{ e.handle or e.did }}</a>
+        <span class="ml-auto shrink-0 font-mono text-[10px] text-slate-400">{{ e.detected_at[:10] }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    <a href="/changes" class="mt-3 inline-block font-mono text-xs text-red-800 hover:underline">full timeline →</a>
+    {% else %}
+    <p class="mt-3 text-sm text-slate-500">No changes since the initial backfill.</p>
+    {% endif %}
+  </section>
+</div>
+{% endif %}
+
 <section class="mt-10">
   <h2 class="border-b border-slate-300 pb-3 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
     Recent sweeps

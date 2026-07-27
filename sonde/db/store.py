@@ -596,6 +596,76 @@ async def verified_summary() -> dict:
     }
 
 
+async def record_daily_snapshot() -> dict:
+    """One rollup row per day. Gained/lost come from events, not from diffing."""
+    db = await _db()
+    day = datetime.now(timezone.utc).date().isoformat()
+    c = await counts()
+    mutuals = await _scalar(
+        "SELECT COUNT(*) FROM follower_state fs JOIN my_follows mf USING (did) "
+        "WHERE fs.is_current = 1"
+    )
+    gained = await _scalar(
+        "SELECT COUNT(*) FROM follow_events WHERE event IN ('followed','returned') "
+        "AND substr(detected_at, 1, 10) = ?", (day,)
+    )
+    lost = await _scalar(
+        "SELECT COUNT(*) FROM follow_events WHERE event = 'departed' "
+        "AND substr(detected_at, 1, 10) = ?", (day,)
+    )
+    await db.execute(
+        """INSERT INTO daily_snapshots
+             (day, followers_tracked, followers_reported, verified_total,
+              mutuals_total, gained, lost)
+           VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT (day) DO UPDATE SET
+             followers_tracked  = excluded.followers_tracked,
+             followers_reported = excluded.followers_reported,
+             verified_total     = excluded.verified_total,
+             mutuals_total      = excluded.mutuals_total,
+             gained             = excluded.gained,
+             lost               = excluded.lost""",
+        (day, c["tracked"], c["reported"], c["verified"], mutuals, gained, lost),
+    )
+    await db.commit()
+    return {"day": day, "tracked": c["tracked"], "gained": gained, "lost": lost}
+
+
+async def growth_series(days: int = 90) -> list[dict]:
+    db = await _db()
+    async with db.execute(
+        "SELECT * FROM daily_snapshots ORDER BY day DESC LIMIT ?", (days,)
+    ) as cur:
+        return [dict(r) for r in reversed(await cur.fetchall())]
+
+
+async def recent_changes(limit: int = 100, event: str | None = None) -> list[dict]:
+    db = await _db()
+    sql = (
+        "SELECT e.*, a.handle, a.display_name, a.followers_count, a.verified_status "
+        "FROM follow_events e LEFT JOIN actors a USING (did) "
+    )
+    params: list = []
+    if event:
+        sql += "WHERE e.event = ? "
+        params.append(event)
+    sql += "ORDER BY e.detected_at DESC, e.id DESC LIMIT ?"
+    params.append(limit)
+    async with db.execute(sql, params) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def change_totals() -> dict:
+    return {
+        "followed": await _scalar("SELECT COUNT(*) FROM follow_events WHERE event = 'followed'"),
+        "departed": await _scalar("SELECT COUNT(*) FROM follow_events WHERE event = 'departed'"),
+        "returned": await _scalar("SELECT COUNT(*) FROM follow_events WHERE event = 'returned'"),
+        "renamed": await _scalar(
+            "SELECT COUNT(*) FROM follow_events WHERE event = 'handle_changed'"
+        ),
+    }
+
+
 async def dashboard_stats() -> dict:
     c = await counts()
     runs = await recent_runs()
@@ -617,4 +687,7 @@ async def dashboard_stats() -> dict:
         "recent_syncs": runs,
         "empty": c["tracked"] == 0,
         "needs_review": int(needs_review) if needs_review else None,
+        "growth": await growth_series(60),
+        "recent_changes": await recent_changes(12),
+        "top": await ranked_followers(limit=10),
     }

@@ -23,6 +23,24 @@ async def run_full() -> dict:
     return await registry.run("full", runner.full_sweep)
 
 
+async def run_hydrate() -> dict:
+    from sonde.sync import profiles
+
+    return await registry.run("hydrate", lambda: profiles.hydrate(limit=1000))
+
+
+async def run_nightly() -> dict:
+    """Daily rollup then snapshot, in that order so the backup includes it."""
+    from sonde.sync import backup
+
+    async def job() -> dict:
+        snap = await store.record_daily_snapshot()
+        result = await backup.snapshot()
+        return {**result, "snapshot": snap}
+
+    return await registry.run("nightly", job)
+
+
 def attach_scheduler(app: FastAPI) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="UTC")
 
@@ -33,6 +51,19 @@ def attach_scheduler(app: FastAPI) -> AsyncIOScheduler:
     scheduler.add_job(
         run_full, "interval", hours=settings.full_sweep_hours,
         id="full", max_instances=1, coalesce=True, misfire_grace_time=1800,
+    )
+    # Hydration is TTL-driven, so running hourly just tops up whatever has
+    # aged out rather than doing bulk work each time.
+    scheduler.add_job(
+        run_hydrate, "interval", hours=1,
+        id="hydrate", max_instances=1, coalesce=True, misfire_grace_time=1800,
+    )
+    # Rollup + snapshot. follow_events cannot be re-fetched from Bluesky and
+    # Docker volumes on ubuntuplex are not backed up, so this is the only thing
+    # standing between a volume loss and losing the point of the app.
+    scheduler.add_job(
+        run_nightly, "cron", hour=3, minute=17,
+        id="nightly", max_instances=1, coalesce=True, misfire_grace_time=7200,
     )
 
     @app.on_event("startup")

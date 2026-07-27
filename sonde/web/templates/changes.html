@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Changes — sonde{% endblock %}
+{% block content %}
+
+<div class="flex flex-wrap items-baseline gap-4 border-b border-slate-300 pb-3">
+  <h1 class="font-mono text-xs font-semibold uppercase tracking-widest text-red-800">Changes</h1>
+  <div class="ml-auto flex flex-wrap gap-3 font-mono text-[10px] uppercase tracking-widest">
+    <a href="/changes" class="{% if not event %}text-red-800 underline{% else %}text-slate-500 hover:text-slate-900{% endif %}">All</a>
+    {% for value, label, total in [
+        ('followed','Arrivals',totals.followed),
+        ('departed','Departures',totals.departed),
+        ('returned','Returns',totals.returned),
+        ('handle_changed','Renames',totals.renamed)] %}
+    <a href="/changes?event={{ value }}"
+       class="{% if event == value %}text-red-800 underline{% else %}text-slate-500 hover:text-slate-900{% endif %}">
+      {{ label }} <span class="tabular-nums">{{ total }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+
+{% include "_growth.html" %}
+
+<p class="mt-6 max-w-2xl text-sm text-slate-600">
+  Departures are labelled <strong>gone</strong> rather than unfollowed when the cause
+  can't be told apart — deactivation, deletion, suspension and blocks all look
+  identical from outside. A departure is only recorded after two consecutive
+  complete sweeps miss someone.
+</p>
+
+{% if not events %}
+<div class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center">
+  <p class="font-mono text-sm uppercase tracking-widest text-slate-500">Nothing recorded yet</p>
+  <p class="mx-auto mt-3 max-w-md text-sm text-slate-600">
+    The first sweep imports everyone as backfill, deliberately without arrival
+    events — otherwise the timeline would open with a cliff that never happened.
+    Changes appear from the second sweep onward.
+  </p>
+</div>
+{% else %}
+<div class="mt-6 overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-slate-300 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
+        <th class="py-2 pr-4">When</th>
+        <th class="py-2 pr-4">Event</th>
+        <th class="py-2 pr-4">Handle</th>
+        <th class="py-2 pr-4">Name</th>
+        <th class="py-2 pr-4 text-right">Followers</th>
+        <th class="py-2 pr-4">Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in events %}
+      <tr class="border-b border-slate-100">
+        <td class="py-2 pr-4 font-mono text-xs text-slate-500">{{ e.detected_at[:16].replace('T',' ') }}</td>
+        <td class="py-2 pr-4">
+          {% set colour = {'followed':'text-emerald-700','departed':'text-red-700',
+                           'returned':'text-sky-700','handle_changed':'text-slate-600'} %}
+          <span class="font-mono text-xs {{ colour.get(e.event,'text-slate-600') }}">{{ e.event }}</span>
+          {% if e.reason and e.reason != 'unknown' %}<span class="text-xs text-slate-400">/{{ e.reason }}</span>{% endif %}
+        </td>
+        <td class="py-2 pr-4">
+          <a class="font-mono text-xs text-red-800 hover:underline"
+             href="https://bsky.app/profile/{{ e.handle }}" target="_blank" rel="noopener">{{ e.handle or e.did }}</a>
+          {% if e.verified_status == 'valid' %}<span class="ml-1 text-sky-700" title="verified">✓</span>{% endif %}
+        </td>
+        <td class="py-2 pr-4">{{ e.display_name or "" }}</td>
+        <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">
+          {% if e.followers_count is not none %}{{ "{:,}".format(e.followers_count) }}{% else %}—{% endif %}
+        </td>
+        <td class="py-2 pr-4 text-xs text-slate-500">{{ e.detail or "" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% endblock %}

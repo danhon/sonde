@@ -61,6 +61,20 @@ async def _run_rescore() -> int:
         await store.close()
 
 
+async def _run_backup() -> int:
+    from sonde.db import store
+    from sonde.sync import backup
+
+    await store.connect()
+    try:
+        await store.record_daily_snapshot()
+        result = await backup.snapshot()
+        log.info("backup finished: %s", result)
+        return 0
+    finally:
+        await store.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sonde", description="Bluesky follower tracker")
     parser.add_argument("--once", action="store_true", help="run one full sweep and exit")
@@ -68,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hydrate", action="store_true", help="hydrate stale profiles and exit")
     parser.add_argument("--rescore", action="store_true", help="recompute all scores and exit")
     parser.add_argument("--limit", type=int, default=None, help="cap actors hydrated")
+    parser.add_argument("--backup", action="store_true", help="write a snapshot and exit")
     parser.add_argument("--schedule", action="store_true", help="web UI plus scheduled sweeps")
     args = parser.parse_args(argv)
 
@@ -79,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_run_hydrate(args.limit))
     if args.rescore:
         return asyncio.run(_run_rescore())
+    if args.backup:
+        return asyncio.run(_run_backup())
 
     from sonde.web.app import app
 

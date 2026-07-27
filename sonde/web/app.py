@@ -50,6 +50,22 @@ def create_app() -> FastAPI:
             request=request, name="index.html", context={"stats": stats, "settings": settings}
         )
 
+    @app.get("/changes", response_class=HTMLResponse)
+    async def changes(request: Request, event: str | None = None) -> HTMLResponse:
+        from sonde.db import store
+
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="changes.html",
+            context={
+                "events": await store.recent_changes(200, event=event),
+                "totals": await store.change_totals(),
+                "growth": await store.growth_series(90),
+                "event": event,
+                "settings": settings,
+            },
+        )
+
     @app.get("/influential", response_class=HTMLResponse)
     async def influential(request: Request, page: int = 1, order: str = "influence") -> HTMLResponse:
         from sonde.db import store
