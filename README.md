@@ -12,9 +12,10 @@ ones are **influential** — with a score it can explain.
 
 ## What it does
 
-- **Sweeps the follower list** every 6 hours via the public Bluesky AppView — 115 requests, ~38 seconds
-- **Shows verified followers** — currently 147 of them — with who verified them and when. This data rides along with the follower list at no extra API cost
-- **Ranks influential followers** on an explainable 0–100 score built from reach, selectivity, verification, liveness, and (optionally) overlap with your own network. Every row shows exactly what produced its number
+- **Spots new followers within 15 minutes** for about two API calls, because the follower list is ordered newest-first
+- **Sweeps the whole list** every 6 hours — 115 requests, ~39 seconds — to catch departures, which can only be proven by absence
+- **Shows verified followers** — currently 147 — with who verified them and when. This data rides along with the follower list at no extra API cost
+- **Ranks influential followers** on an explainable 0–100 score built from reach, relevance, selectivity, output, and verification. Every row shows exactly what produced its number
 - **Tracks change over time** — arrivals, departures, returns, handle changes, and a daily growth chart, with guards so a failed sync can never masquerade as a mass unfollow
 - **Flags mutuals** by cross-referencing your own follow list
 - **Needs no credentials.** Everything above runs unauthenticated. An app password is optional and only unlocks the [extras](#optional-extras)
@@ -61,25 +62,42 @@ Authelia 2FA at `sonde.sgc.rayandhon.com`.
 ## How the influence score works
 
 Follower count answers "who is famous", which isn't quite the question. The
-score blends five signals, all computed locally:
+score blends seven signals, all computed locally:
 
 | Component | Weight | What it captures |
 |---|---|---|
-| Reach | 35 | Follower count, log-scaled — the distribution is a power law |
-| Selectivity | 20 | Followers ÷ following, ignored below 500 followers. Separates a 5k account following 200 from one following 5k |
-| Verification | 10 | Trusted verifier > verified > neither |
-| Liveness | 15 | Posting rate. A dormant 50k account isn't influential today |
-| Relevance | 20 | How many accounts *you* follow also follow them (optional, needs auth) |
+| Reach | 18 | Follower count, log-scaled — the distribution is a power law |
+| Institution | 18 | Where they work — verification issuer, handle domain, bio, Wikipedia |
+| Affinity | 16 | How many selective accounts *you* follow also follow them |
+| Verified affinity | 13 | How many verified accounts in your network follow them |
+| Public profile | 12 | Wikidata notability, Wikipedia pageviews, news volume |
+| Selectivity | 11 | Followers ÷ following, ignored below 500 followers |
+| Liveness | 7 | Days since last post |
+| Verification | 5 | Trusted verifier > verified > neither |
 
-The selectivity gate is load-bearing: ungated, an account with 5 followers and 1
-follow out-scores a working journalist with 20k followers who follows 8k.
+→ **[SCORING.md](SCORING.md)** — the full design: evidence, confidence tiers,
+worked examples, and what it deliberately refuses to do.
 
-Weights live in one dict in `sonde/scoring.py` and are shown read-only on
-`/settings`, so the ranking is always auditable against what produced it.
-Changing them enqueues a rescore.
+The short version of why it looks like this. A Bluesky-verified NYT columnist and
+a 741k-follower engagement farm have the same reach; this score puts about 61
+points between them. Getting there needed four findings from the live data:
 
-**It's a sorting aid, not a verdict.** Reach and selectivity are both gameable
-and both correlate with account age. The UI says "ranked by", not "top".
+- Only **10% of verified followers are verified by their institution** (the rest
+  by Bluesky, which says nothing about employer), so affiliation comes mostly
+  from bio text — trusted far more when something else corroborates it.
+- Counting an account's verified followers globally would cost **7,418 API calls
+  for one person**, so sonde reports a network-scoped count and says so.
+- Wikidata has a **Bluesky handle property**, so external reputation is one bulk
+  query — 10,563 pairs in under six seconds — rather than a lookup per follower.
+- Every component with a cheap approximation and an expensive truth **marks which
+  one it used** instead of blending them silently.
+
+Weights and the institution table are editable on `/settings`; changing either
+enqueues a rescore.
+
+**It's a sorting aid, not a verdict.** Reach and selectivity are gameable, bio
+text is self-reported, and all of it correlates with account age. The UI says
+"ranked by", not "top".
 
 ## Configuration
 
@@ -98,7 +116,8 @@ API_RATE_LIMIT_PER_SECOND=3        # cap is 3000 req / 5 min / IP, shared house-
                                    # with BlueBirdNET and atproto-labeler — hence 3, not 5
 
 # Sync cadence
-SYNC_INTERVAL_HOURS=6              # also sets unfollow-detection latency: 2 syncs = 12h
+HEAD_SWEEP_MINUTES=15              # cheap check for new followers (1–2 calls)
+FULL_SWEEP_HOURS=6                 # whole list; also sets unfollow latency: 2 sweeps = 12h
 PROFILE_TTL_DAYS=7                 # how often to re-fetch each follower's counts
 
 # Display policy for followers who turned off logged-out visibility (1,838 of them).
@@ -123,7 +142,7 @@ TZ=America/Los_Angeles
 # Web UI only — sync manually from /settings
 uv run sonde
 
-# Single sync and exit
+# Single full sync and exit
 uv run sonde --once
 
 # Web UI + scheduled syncs (production mode)
@@ -204,15 +223,15 @@ sonde/
 ├── sonde/
 │   ├── main.py            # Entry point — --once, --schedule, or web-only
 │   ├── config.py          # Settings from .env
-│   ├── scheduler.py       # APScheduler — sync every SYNC_INTERVAL_HOURS
+│   ├── scheduler.py       # APScheduler — head sweep, full sweep, hydration, backup
 │   ├── scoring.py         # Influence score — weights and components in one place
-│   ├── jobs.py            # In-memory job progress for the UI
+│   ├── jobs.py            # In-memory job progress + single-flight sync locks
 │   ├── api/
 │   │   ├── client.py      # httpx + token-bucket rate limiter, 429 backoff
 │   │   └── graph.py       # getFollowers / getProfiles / getFollows — cursor-only paging
 │   ├── sync/
-│   │   ├── followers.py   # Tier 0 — list sweep, diff, departure rules
-│   │   ├── profiles.py    # Tier 1 — TTL-driven profile hydration
+│   │   ├── followers.py   # Head + full sweeps, diff, departure rules
+│   │   ├── profiles.py    # Tier 1 — TTL hydration, DID-keyed result mapping
 │   │   ├── mutuals.py     # Tier 2 — my own follow list
 │   │   └── enrich.py      # Tier 3 — knownFollowers + last-post (optional, auth)
 │   ├── db/
@@ -235,46 +254,62 @@ sonde/
 
 ## Technical approach
 
-Bluesky's AppView exposes everything needed through three read-only XRPC
-endpoints on the CDN-cached public host, no credentials required. Data is
-fetched in **tiers**, because cost and volatility differ by an order of magnitude:
+Bluesky's AppView exposes everything needed through read-only XRPC endpoints on
+the CDN-cached public host, no credentials required. Data is fetched in **tiers**,
+because cost and volatility differ by an order of magnitude.
+
+The key insight is that **the follower list is ordered newest-follow-first**
+(verified — page 115 contains no account created after Aug 2023, while page 1 has
+one created two days ago). So arrivals and departures have completely different
+costs and shouldn't share a schedule: a new follower is always on page 1, while a
+departure is an *absence* that can only be proven by walking all 115 pages.
 
 | Tier | Endpoint | Cost | Cadence | Buys |
 |---|---|---|---|---|
-| 0 | `app.bsky.graph.getFollowers` | 115 calls | 6h | Membership, arrivals, departures, **verification**, labels |
-| 1 | `app.bsky.actor.getProfiles` | 402 calls (full) | New immediately, rest on a 7d TTL | Follower/follow/post counts |
-| 2 | `app.bsky.graph.getFollows` | 46 calls | Daily | Mutual flag |
-| 3 | `app.bsky.graph.getKnownFollowers` | 1 call/actor | Top 500, 30d TTL | Overlap with your own network |
+| 0a | `graph.getFollowers` (head) | 1–2 calls | 15 min | Arrivals, fast |
+| 0b | `graph.getFollowers` (full) | 116 calls | 6h | Departures, drift, verification, labels |
+| 1 | `actor.getProfiles` | 402 calls (full) | New at once, rest on a 7d TTL | Follower / follow / post counts |
+| 2 | `graph.getFollows` | 46 calls | Daily | Mutual flag |
+| 3 | `graph.getKnownFollowers` | 1 call/actor | Top 500, 30d TTL | Overlap with your own network |
 
-A cold start is ~563 calls (~3 min at 3 req/s); steady state is ~173 calls
-(~58 s), about 700 calls/day. The limit is 3,000 requests per 5 minutes **per
-IP** — shared with BlueBirdNET and atproto-labeler on the same box, which is why
-the default is 3 req/s rather than the 5 the arithmetic alone would allow.
+Steady state is about **760 calls a day**. The limit is 3,000 requests per 5
+minutes **per IP** — shared with BlueBirdNET and atproto-labeler on the same box,
+which is why the default is 3 req/s rather than the 5 the arithmetic allows. The
+binding constraint is politeness to a shared IP, not the cap.
 
-The one non-obvious detail driving all of this: **verification data is attached
-to every profile view, including the lightweight ones in the follower list, but
-follower counts are not.** So "who is verified" is free with the sweep, while
-"who is influential" needs a second pass over every follower in batches of 25.
+The other non-obvious detail: **verification data is attached to every profile
+view, including the lightweight ones in the follower list, but follower counts are
+not.** So "who is verified" is free with the sweep, while "who is influential"
+needs a second pass over every follower in batches of 25.
 
 ### Data integrity
 
 Absence from the follower list is how an unfollow is detected, which makes a
-half-finished sync dangerous. Four rules keep the history honest:
+half-finished sync dangerous. These rules keep the history honest — each one
+exists because probing the real API showed it was needed:
 
 1. **The cursor is the only end-of-list signal.** Pages come back short — mean
-   87.3 of a requested 100, and only 5 of 115 pages full. Stopping when a page
-   is under-full would have ended the sweep on page 1 and recorded 90 followers
-   as the complete list.
-2. Only a sync that reaches the final cursor may compute departures.
-3. A follower is marked lost after **two consecutive complete syncs** miss them
-   — which also absorbs the page skips that happen when the list shifts during
-   pagination. The cost is 12 hours of latency on unfollow detection.
-4. A sync that would mark more than 2% of followers lost halts, records
-   `needs_review`, and shows a banner instead of writing events.
+   87.3 of a requested 100, only 5 of 115 full. Stopping when a page is
+   under-full would have ended the sweep on page 1 and recorded 90 followers as
+   the complete list.
+2. **Hydration maps results by DID, never by array position.** `getProfiles`
+   returns HTTP 200 with unresolvable actors silently omitted, so zipping the
+   request list against the response list assigns follower counts to the wrong
+   people — no error, anywhere. That omission is also the cleanest available
+   signal that an account is gone rather than merely unfollowed.
+3. Only a **full** sweep reaching the final cursor may compute departures. The
+   head sweep deliberately doesn't see most of the list, so it can never mark
+   anyone lost.
+4. A follower is marked lost after **two consecutive complete full sweeps** miss
+   them — which also absorbs page skips when the list shifts during pagination.
+   The cost is 12 hours of latency on unfollow detection.
+5. A sweep that would mark more than 2% of followers lost halts, records
+   `needs_review`, and shows a banner. The banner carries an **"accept this
+   sweep"** override, so a genuine mass departure can't wedge the app forever.
 
 Departures are labelled "gone" rather than "unfollowed" when the cause can't be
-distinguished — deactivation, deletion, suspension, and blocks all look
-identical to an unfollow from outside.
+distinguished — deactivation, deletion, suspension, and blocks all look identical
+to an unfollow from outside.
 
 Handle changes are recorded as events, not as a departure and an arrival: every
 table keys on DID, because handles churn and DIDs don't.
@@ -285,8 +320,9 @@ None are needed for the core questions; all are post-M5 and independent:
 
 - **Tier-3 relevance** — needs an app password. Adds "how many accounts you
   follow also follow this person", a better influence signal for your purposes
-  than raw fame
-- **Email digest** of notable new followers via Fastmail SMTP (buywanderbot pattern)
+  than raw fame, plus genuine last-post recency
+- **Email digest** of notable new followers via Fastmail SMTP (buywanderbot
+  pattern) — more useful now that arrivals surface within 15 minutes
 - **Bluesky list writing** — push the top N to a real list
 - **RSS feed** of notable arrivals
 

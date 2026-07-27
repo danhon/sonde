@@ -1,0 +1,23 @@
+# Env — .env.example must stay tracked (see troubleshooting.md)
+.env*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Local data
+*.db
+*.db-wal
+*.db-shm
+sonde-backups/
+
+# Editor / OS
+.DS_Store
+
+# Artifact preview scratch
+.clearance-rendered-preview-*/

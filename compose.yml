@@ -1,0 +1,51 @@
+services:
+  app:
+    build:
+      context: .
+      args:
+        - GIT_SHA
+        - BUILD_TIME
+    env_file: .env
+    networks: [traefik_default]
+    restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 128m
+    labels:
+      - "traefik.enable=true"
+
+      # Main router — Authelia-guarded
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${SERVICE_HOST}`)"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=websecure"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls.certresolver=le"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.middlewares=authelia@file"
+      - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=8090"
+
+      # Health router — no Authelia, higher priority. Authelia attaches to the
+      # ROUTER, not the path: on a single router /healthz 302s to the login page
+      # and the watchdog reads the app as down. /healthz exposes liveness only.
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-health.rule=Host(`${SERVICE_HOST}`) && Path(`/healthz`)"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-health.entrypoints=websecure"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-health.tls.certresolver=le"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-health.priority=100"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-health.service=${COMPOSE_PROJECT_NAME}"
+
+      - "homepage.group=Applications"
+      - "homepage.name=sonde"
+      - "homepage.icon=mdi-radar"
+      - "homepage.href=https://${SERVICE_HOST}"
+      - "homepage.description=Bluesky follower tracker"
+      - "homepage.instance=my-docker"
+    volumes:
+      # Live DB in a named volume.
+      - sonde-data:/data
+      # Backups go to a HOST BIND MOUNT, not a named volume — Syncthing runs as a
+      # native systemd service and cannot see Docker's internal volume storage.
+      # Getting this wrong yields backups that are written and never replicated.
+      - ${BACKUP_HOST_DIR:-/home/danhon/sonde-backups}:/backup
+
+networks:
+  traefik_default:
+    external: true
+
+volumes:
+  sonde-data:

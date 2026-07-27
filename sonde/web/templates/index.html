@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if stats.needs_review %}
+<div class="mb-8 border-l-4 border-red-700 bg-red-50 px-5 py-4">
+  <p class="font-semibold text-red-900">Sweep held for review</p>
+  <p class="mt-1 text-sm text-red-800">
+    The last full sweep would have marked {{ stats.needs_review }} followers as
+    departed — above the safety threshold. No events were written.
+  </p>
+</div>
+{% endif %}
+
+<section class="grid grid-cols-2 gap-px border border-slate-300 bg-slate-300 sm:grid-cols-4">
+  {% for label, value, note in stats.tiles %}
+  <div class="bg-white px-5 py-5">
+    <span class="block font-mono text-[10px] uppercase tracking-widest text-slate-500">{{ label }}</span>
+    <span class="mt-2 block font-mono text-3xl font-semibold tabular-nums tracking-tight">{{ value }}</span>
+    {% if note %}<span class="mt-2 block text-xs text-slate-500">{{ note }}</span>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+
+{% if stats.empty %}
+<div class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center">
+  <p class="font-mono text-sm uppercase tracking-widest text-slate-500">No data yet</p>
+  <p class="mx-auto mt-3 max-w-md text-sm text-slate-600">
+    Nothing has been swept. Run <code class="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs">uv run sonde --once</code>
+    to pull the follower list for the first time.
+  </p>
+</div>
+{% endif %}
+
+<section class="mt-10">
+  <h2 class="border-b border-slate-300 pb-3 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+    Recent sweeps
+  </h2>
+  {% if stats.recent_syncs %}
+  <div class="overflow-x-auto">
+    <table class="mt-4 w-full text-sm">
+      <thead>
+        <tr class="border-b border-slate-300 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
+          <th class="py-2 pr-4">Kind</th><th class="py-2 pr-4">Started</th>
+          <th class="py-2 pr-4">Status</th><th class="py-2 pr-4 text-right">Seen</th>
+          <th class="py-2 pr-4 text-right">New</th><th class="py-2 pr-4 text-right">Lost</th>
+          <th class="py-2 pr-4 text-right">Calls</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in stats.recent_syncs %}
+        <tr class="border-b border-slate-200">
+          <td class="py-2 pr-4 font-mono">{{ r.kind }}</td>
+          <td class="py-2 pr-4 text-slate-600">{{ r.started_at }}</td>
+          <td class="py-2 pr-4">
+            <span class="font-mono text-xs {% if r.status == 'ok' %}text-emerald-700{% else %}text-red-700{% endif %}">{{ r.status }}</span>
+          </td>
+          <td class="py-2 pr-4 text-right font-mono tabular-nums">{{ r.actors_seen }}</td>
+          <td class="py-2 pr-4 text-right font-mono tabular-nums">{{ r.new_followers }}</td>
+          <td class="py-2 pr-4 text-right font-mono tabular-nums">{{ r.lost_followers }}</td>
+          <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">{{ r.api_calls }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="mt-4 text-sm text-slate-500">No sweeps recorded yet.</p>
+  {% endif %}
+</section>
+
+{% endblock %}
