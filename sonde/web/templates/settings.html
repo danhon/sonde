@@ -41,7 +41,9 @@
         ('affiliations','Rebuild affiliations','no API calls'),
         ('groups','Reclassify groups','no API calls'),
         ('discover','Find new groups','no API calls'),
-        ('propagate','Propagate groups','no API calls')] %}
+        ('propagate','Propagate groups','no API calls'),
+        ('interactions','Sync interactions','~500 calls'),
+        ('rescore-relationships','Rescore relationships','no API calls')] %}
     <form method="post" action="/settings/sync/{{ kind }}">
       <button type="submit" title="{{ note }}"
               class="border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs hover:border-red-800 hover:text-red-800

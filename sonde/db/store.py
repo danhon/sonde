@@ -1398,8 +1398,13 @@ async def record_interactions(rows: list[dict]) -> int:
              (did, direction, kind, uri, subject, thread, occurred_at)
            VALUES (?,?,?,?,?,?,?)
            ON CONFLICT (did, direction, kind, uri) DO NOTHING""",
-        [(r["did"], r["direction"], r["kind"], r.get("uri"), r.get("subject"),
-          r.get("thread"), r["occurred_at"]) for r in rows],
+        # A NULL uri would defeat the UNIQUE constraint — SQLite treats NULLs
+        # as distinct — so an interaction without one would re-insert on every
+        # sync. Notifications always carry a uri, but that should not be what
+        # the deduplication depends on.
+        [(r["did"], r["direction"], r["kind"],
+          r.get("uri") or f"synthetic:{r['did']}:{r['kind']}:{r['occurred_at']}",
+          r.get("subject"), r.get("thread"), r["occurred_at"]) for r in rows],
     )
     await db.commit()
     return len(rows)

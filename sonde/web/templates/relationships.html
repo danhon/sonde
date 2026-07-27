@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% from "_sort.html" import qs, th, who %}
+{% set base = {'order': order, 'direction': direction, 'page': page} %}
+{% block title %}Relationships — sonde{% endblock %}
+{% block content %}
+
+<div class="flex flex-wrap items-baseline gap-4 border-b border-slate-300 pb-3">
+  <h1 class="font-mono text-xs font-semibold uppercase tracking-widest text-red-800">Relationships</h1>
+  <span class="text-xs text-slate-500">who I actually talk to</span>
+</div>
+
+<p class="mt-4 max-w-2xl text-sm text-slate-600">
+  A different question from influence. Influence asks whether someone matters;
+  this asks whether we know each other — so a 700k-follower columnist I have
+  never spoken to ranks low, and a friend with 400 followers ranks high.
+  Weighted by what an interaction costs to give: a conversation counts for a
+  lot, a like for almost nothing, and interactions in both directions count for
+  more than a stream in one.
+</p>
+
+{% if not rows %}
+<div class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center">
+  <p class="font-mono text-sm uppercase tracking-widest text-slate-500">No interactions captured yet</p>
+  <p class="mx-auto mt-3 max-w-lg text-sm text-slate-600">
+    Run <strong>Sync interactions</strong> from settings. It needs the app
+    password. Notifications are only retained by Bluesky for a while, so sonde
+    keeps its own copy from now on and this gets better the longer it runs.
+  </p>
+</div>
+{% else %}
+<div class="mt-6 overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-slate-300 text-left">
+        {{ th(base, 'handle', 'Handle') }}
+        <th class="py-2 pr-4 font-mono text-[10px] uppercase tracking-widest text-slate-500">Name</th>
+        {{ th(base, 'relationship', 'Relationship', 'right') }}
+        {{ th(base, 'influence', 'Influence', 'right') }}
+        {{ th(base, 'followers', 'Followers', 'right') }}
+        <th class="py-2 pr-4 font-mono text-[10px] uppercase tracking-widest text-slate-500">Interaction</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      {% set r = row.relationship %}
+      <tr class="border-b border-slate-100 hover:bg-slate-50">
+        <td class="py-2 pr-4">{{ who(row) }}</td>
+        <td class="py-2 pr-4">{{ row.display_name or "" }}</td>
+        <td class="py-2 pr-4 text-right font-mono font-semibold tabular-nums">{{ row.relationship_score }}</td>
+        <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-400">
+          {{ row.influence_score if row.influence_score is not none else "—" }}
+        </td>
+        <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">
+          {% if row.followers_count is not none %}{{ "{:,}".format(row.followers_count) }}{% else %}—{% endif %}
+        </td>
+        <td class="py-2 pr-4 text-xs text-slate-500">
+          {{ r.outbound }}→ {{ r.inbound }}←
+          {%- if r.conversations %} · {{ r.conversations }} conversation{{ '' if r.conversations == 1 else 's' }}{% endif %}
+          {%- if r.days_active %} · {{ r.days_active }} day{{ '' if r.days_active == 1 else 's' }}{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="mt-6 flex items-baseline gap-4 font-mono text-xs">
+  {% if page > 1 %}<a class="text-red-800 hover:underline" href="{{ qs(base, {'page': page - 1}) }}">← previous</a>{% endif %}
+  <span class="text-slate-400">page {{ page }}</span>
+  {% if rows|length == 100 %}<a class="text-red-800 hover:underline" href="{{ qs(base, {'page': page + 1}) }}">next →</a>{% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

@@ -579,7 +579,7 @@ Sub-steps for the scoring work are sequenced in
 | M15a | Institution slices | ✅ done | Sortable, kind-filtered, former separated |
 | M15b | Group discovery + review queue | ✅ done | 25 candidates proposed, none auto-created |
 | M15c | Follow-graph propagation | ✅ done | 194 proposals over 11,038 real edges; found Whittaker for privacy |
-| M14 | Relationship score — interaction-based ranking | ⬜ planned | Separate from influence; notifications are ~190x cheaper than per-post |
+| M14 | Relationship score | ✅ done | Separate from influence; notifications ~190x cheaper than per-post |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
 ### Detail on what is done
@@ -700,6 +700,19 @@ now has to follow a group *disproportionately* (lift against the baseline rate),
 and nobody is proposed for more than their two best-matching groups. 194
 proposals across 113 people, and it surfaces what rules cannot: Meredith
 Whittaker for privacy, which no bio rule caught.
+
+**M14** A relationship score, kept deliberately separate from influence:
+influence asks whether someone matters, this asks whether we know each other.
+Built from `listNotifications` (inbound) and my own author feed (outbound),
+which is ~190x cheaper than reconstructing the same thing by walking 23,602
+posts. Interactions are stored append-only as observed, because the
+notification retention window is finite and undocumented — so the score
+improves the longer it runs.
+
+Weighted by what an interaction costs the giver, not by volume: a reply is worth
+ten likes, a thread we both posted in more than once carries a bonus, everything
+decays, reciprocity multiplies rather than adds, and interacting across many
+separate days beats one argument.
 
 **M12** Daily digest at 14:00 `America/Los_Angeles`, pinned to a real timezone
 so it does not drift an hour twice a year with daylight saving — verified to

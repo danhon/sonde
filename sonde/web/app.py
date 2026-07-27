@@ -120,6 +120,7 @@ def create_app() -> FastAPI:
         person["moderation_lists"] = await store.lists_matching(did)
         person["affiliations"] = await store.affiliations_for(did)
         person["groups"] = await store.groups_for(did)
+        person["interactions"] = await store.interactions_for(did)
         return TEMPLATES.TemplateResponse(
             request=request, name="detail.html",
             context={"p": person, "settings": settings},
@@ -148,6 +149,27 @@ def create_app() -> FastAPI:
             iter([buffer.getvalue()]),
             media_type="text/csv",
             headers={"Content-Disposition": 'attachment; filename="sonde-followers.csv"'},
+        )
+
+    @app.get("/relationships", response_class=HTMLResponse)
+    async def relationships(
+        request: Request, order: str = "relationship", direction: str = "desc",
+        page: str | None = None,
+    ) -> HTMLResponse:
+        from sonde.db import store
+
+        per_page = 100
+        page_num = max(_as_int(page) or 1, 1)
+        direction = "asc" if direction == "asc" else "desc"
+        return TEMPLATES.TemplateResponse(
+            request=request, name="relationships.html",
+            context={
+                "rows": await store.ranked_relationships(
+                    limit=per_page, offset=(page_num - 1) * per_page,
+                    order=order, direction=direction),
+                "order": order, "direction": direction, "page": page_num,
+                "settings": settings,
+            },
         )
 
     @app.get("/institutions", response_class=HTMLResponse)
@@ -314,7 +336,8 @@ def create_app() -> FastAPI:
                     "pageviews": await wikipedia.refresh()}
 
         from sonde.sync import (
-            backup, moderation, mutuals, posts, profiles, relevance, runner,
+            backup, interactions, moderation, mutuals, posts, profiles,
+            relevance, runner,
         )
 
         jobs = {
@@ -329,6 +352,8 @@ def create_app() -> FastAPI:
             "groups": store.classify_groups,
             "discover": store.discover_group_candidates,
             "propagate": store.propagate_groups,
+            "interactions": interactions.sync,
+            "rescore-relationships": store.score_relationships,
             "moderation": moderation.sync_lists,
             "follows": mutuals.sync_follows,
             "rescore": profiles.rescore,

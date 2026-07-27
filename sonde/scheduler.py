@@ -84,6 +84,12 @@ async def run_external() -> dict:
     return await registry.run("external", job)
 
 
+async def run_interactions() -> dict:
+    from sonde.sync import interactions
+
+    return await registry.run("interactions", interactions.sync)
+
+
 async def run_digest() -> dict:
     from sonde.notify import digest
 
@@ -112,6 +118,7 @@ CATCH_UP: dict[str, tuple[str, int]] = {
     "follows": ("follows", 24 * 3600),
     "posts": ("posts", 2 * 3600),
     "moderation": ("moderation", 12 * 3600),
+    "interactions": ("interactions", 6 * 3600),
 }
 
 
@@ -187,6 +194,11 @@ def attach_scheduler(app: FastAPI) -> AsyncIOScheduler:
     scheduler.add_job(
         run_external, "cron", day=4, hour=5, minute=10,
         id="external", max_instances=1, coalesce=True, misfire_grace_time=21600,
+    )
+    # Interactions: incremental after the first run, so a few dozen calls.
+    scheduler.add_job(
+        run_interactions, "interval", hours=6,
+        id="interactions", max_instances=1, coalesce=True, misfire_grace_time=3600,
     )
     # Daily digest, pinned to a real timezone rather than a UTC hour — a UTC
     # cron would drift by an hour twice a year with daylight saving.
