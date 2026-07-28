@@ -40,8 +40,19 @@ def utcnow() -> str:
 
 
 async def connect(path: str | None = None) -> aiosqlite.Connection:
-    """Open (once) and migrate the database."""
-    global _conn, _db_path
+    """Open (once) and migrate the database.
+
+    An explicit `path` is remembered as the override. Without that, this
+    function set `_db_path` but not `_override_path`, so the *next* no-argument
+    call — which is every `_db()` — resolved to `settings.db_path` instead,
+    saw a different target, and quietly closed the open database to reopen the
+    default one. Tests that connected to a tmp file were therefore writing to
+    the real `./sonde.db` from their first query onwards, sharing one file
+    between every test and polluting the working copy.
+    """
+    global _conn, _db_path, _override_path
+    if path is not None:
+        _override_path = path
     target = path or _override_path or settings.db_path
     if _conn is not None and _db_path == target:
         return _conn
@@ -1797,7 +1808,9 @@ async def organisation_summary(*, order: str = "members", direction: str = "desc
                    COUNT(DISTINCT CASE WHEN a.kind = 'former' THEN a.did END) AS former
               FROM organisations o
               JOIN affiliations a ON a.org_id = o.id
+              JOIN follower_state fs ON fs.did = a.did
              WHERE {' AND '.join(where)} AND COALESCE(a.confirmed, 1) = 1
+               AND fs.is_current = 1 AND fs.ignored_at IS NULL
              GROUP BY o.id
             HAVING members + former >= ?
              ORDER BY {column} {arrow} NULLS LAST, o.name ASC""",
@@ -1807,21 +1820,40 @@ async def organisation_summary(*, order: str = "members", direction: str = "desc
 
 
 async def organisation_members(name: str) -> dict:
-    """Everyone affiliated with one organisation, current and former apart."""
+    """Everyone affiliated with one organisation, current and former apart.
+
+    Matched `COLLATE NOCASE`. The index links with the stored capitalisation, so
+    exact matching works from a click — but `?name=eventbrite` typed by hand
+    returned an empty page against a stored "Eventbrite", with nothing to say
+    why. A name is an identifier here, not data, so case should not decide it.
+
+    Restricted to current, non-hidden followers, which the summary counts also
+    do. Without it a departed follower keeps padding an organisation's roster.
+    """
     db = await _db()
     async with db.execute(
         """SELECT act.did, act.handle, act.display_name, act.avatar_url,
                   act.followers_count, act.influence_score, act.verified_status,
                   a.kind, a.role, a.method, a.confidence, a.note, a.source_url
-             FROM affiliations a JOIN actors act USING (did)
-            WHERE a.org_name = ? AND COALESCE(a.confirmed, 1) = 1
+             FROM affiliations a
+             JOIN actors act USING (did)
+             JOIN follower_state fs USING (did)
+            WHERE a.org_name = ? COLLATE NOCASE
+              AND COALESCE(a.confirmed, 1) = 1
+              AND fs.is_current = 1 AND fs.ignored_at IS NULL
             ORDER BY (a.kind = 'former'), act.influence_score DESC NULLS LAST""",
         (name,),
     ) as cur:
         rows = [dict(r) for r in await cur.fetchall()]
-    async with db.execute("SELECT * FROM organisations WHERE name = ?", (name,)) as cur:
+    async with db.execute(
+        "SELECT * FROM organisations WHERE name = ? COLLATE NOCASE", (name,)
+    ) as cur:
         org = await cur.fetchone()
     return {
+        # `found` lets the page say "no such organisation" rather than render an
+        # empty, identical-looking shell — which is how this bug presented.
+        "found": org is not None or bool(rows),
+        "requested": name,
         "organisation": dict(org) if org else {"name": name},
         "current": [r for r in rows if r["kind"] != "former"],
         "former": [r for r in rows if r["kind"] == "former"],

@@ -22,48 +22,29 @@
 </div>
 {% endif %}
 
-{% if not orgs %}
-<p class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center text-sm text-slate-600">
-  No organisations yet — run <strong>Rebuild affiliations</strong> from settings.
-</p>
-{% else %}
-<div class="mt-6 overflow-x-auto">
-  <table class="w-full text-sm">
-    <thead>
-      <tr class="border-b border-slate-300 text-left">
-        {{ th(base, 'name', 'Organisation') }}
-        {{ th(base, 'kind', 'Kind') }}
-        {{ th(base, 'members', 'People', 'right') }}
-        {{ th(base, 'notability', 'Wikipedia editions', 'right') }}
-        {{ th(base, 'weight', 'Weight', 'right') }}
-      </tr>
-    </thead>
-    <tbody>
-      {% for o in orgs %}
-      <tr class="border-b border-slate-100 hover:bg-slate-50 {% if o.name == name %}bg-red-50{% endif %}">
-        <td class="py-2 pr-4">
-          <a class="text-red-800 hover:underline" href="{{ qs(base, {'name': o.name}) }}">{{ o.name }}</a>
-        </td>
-        <td class="py-2 pr-4 font-mono text-xs text-slate-500">{{ o.kind or "—" }}</td>
-        <td class="py-2 pr-4 text-right font-mono tabular-nums">
-          {{ o.members }}{% if o.former %}<span class="text-slate-400"> +{{ o.former }} former</span>{% endif %}
-        </td>
-        <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">{{ o.sitelinks if o.sitelinks is not none else "—" }}</td>
-        <td class="py-2 pr-4 text-right font-mono tabular-nums">
-          {{ "%.2f"|format(o.weight) }}{% if o.weight_locked %}<span class="text-emerald-700" title="set by you">*</span>{% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-{% endif %}
-
-{% if detail %}
-<section class="mt-10">
+{#- The detail sits ABOVE the index. It used to render after the
+    76-row table, so clicking an organisation reloaded the page at
+    scroll-top showing an identical index — the detail was there,
+    far below the fold, and the click looked like it did nothing. -#}
+{% if detail and not detail.found %}
+<section class="mt-6 border border-dashed border-slate-400 px-6 py-8 text-center">
+  <p class="text-sm text-slate-600">
+    No organisation called <strong>{{ detail.requested }}</strong>. Names are
+    matched without regard to case, so this one is genuinely not tracked.
+  </p>
+  <a href="{{ qs(base, {'name': None}) }}"
+     class="mt-3 inline-block font-mono text-xs text-red-800 hover:underline">← all institutions</a>
+</section>
+{% elif detail %}
+<section class="mt-6 border-l-2 border-red-800 pl-4">
   <h2 class="flex flex-wrap items-baseline gap-3 border-b border-slate-300 pb-2">
     <span class="font-mono text-sm font-semibold tracking-tight text-red-800">{{ detail.organisation.name }}</span>
     {% if detail.organisation.kind %}<span class="font-mono text-xs text-slate-500">{{ detail.organisation.kind }}</span>{% endif %}
+    <span class="font-mono text-[10px] uppercase tracking-widest text-slate-400">
+      {{ detail.current|length }} current{% if detail.former %} · {{ detail.former|length }} former{% endif %}
+    </span>
+    <a href="{{ qs(base, {'name': None}) }}"
+       class="font-mono text-[10px] uppercase tracking-widest text-slate-400 hover:text-red-800">clear</a>
     <form method="post" action="/institutions/{{ detail.organisation.name | urlencode }}/weight" class="ml-auto flex items-center gap-2">
       <label class="font-mono text-[10px] uppercase tracking-widest text-slate-500">weight</label>
       <input type="number" name="weight" step="0.05" min="0" max="1"
@@ -72,6 +53,13 @@
       <button type="submit" class="font-mono text-xs text-red-800 hover:underline">set</button>
     </form>
   </h2>
+
+  {% if not detail.current and not detail.former %}
+  <p class="mt-4 text-sm text-slate-600">
+    Tracked as an organisation, but nobody currently following you is affiliated
+    with it. Affiliations for departed or hidden followers are not counted.
+  </p>
+  {% endif %}
 
   {% for label, rows in [('Current', detail.current), ('Formerly', detail.former)] %}
     {% if rows %}
@@ -102,5 +90,43 @@
   {% endfor %}
 </section>
 {% endif %}
+
+{% if not orgs %}
+<p class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center text-sm text-slate-600">
+  No organisations yet — run <strong>Rebuild affiliations</strong> from settings.
+</p>
+{% else %}
+<div class="mt-6 overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-slate-300 text-left">
+        {{ th(base, 'name', 'Organisation') }}
+        {{ th(base, 'kind', 'Kind') }}
+        {{ th(base, 'members', 'People', 'right') }}
+        {{ th(base, 'notability', 'Wikipedia editions', 'right') }}
+        {{ th(base, 'weight', 'Weight', 'right') }}
+      </tr>
+    </thead>
+    <tbody>
+      {% for o in orgs %}
+      <tr class="border-b border-slate-100 hover:bg-slate-50 {% if name and o.name|lower == name|lower %}bg-red-50{% endif %}">
+        <td class="py-2 pr-4">
+          <a class="text-red-800 hover:underline" href="{{ qs(base, {'name': o.name}) }}">{{ o.name }}</a>
+        </td>
+        <td class="py-2 pr-4 font-mono text-xs text-slate-500">{{ o.kind or "—" }}</td>
+        <td class="py-2 pr-4 text-right font-mono tabular-nums">
+          {{ o.members }}{% if o.former %}<span class="text-slate-400"> +{{ o.former }} former</span>{% endif %}
+        </td>
+        <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">{{ o.sitelinks if o.sitelinks is not none else "—" }}</td>
+        <td class="py-2 pr-4 text-right font-mono tabular-nums">
+          {{ "%.2f"|format(o.weight) }}{% if o.weight_locked %}<span class="text-emerald-700" title="set by you">*</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
 
 {% endblock %}

@@ -585,6 +585,8 @@ Sub-steps for the scoring work are sequenced in
 | M18 | Game industry group | ✅ done | 84 members; validation pass killed 18 of the first 105 |
 | M19 | Mobile responsiveness | ✅ done | 767px of sideways scroll at 320px, fixed |
 | M19b | Nav regression fix | ✅ done | M19 removed the desktop menu entirely; eval was rect-based and missed it |
+| M20 | Institutions page fixes | ✅ done | Detail rendered below a 76-row table; name lookup case-sensitive; counts included departed followers |
+| M20b | Test isolation | ✅ done | `db`-fixture tests were writing to the real `./sonde.db` |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
 ### Detail on what is done
@@ -817,6 +819,49 @@ wrapper left the suite green. It now walks the actual ancestor stack, and
 The eval also found `/groups/discover` — the route list in the first draft said
 `/discover`, which 404s. A test that checks the wrong URL passes for the wrong
 reason.
+
+### M20 — Institutions
+
+Reported: clicking an organisation "simply leads to the institution index page",
+and the numbers look off.
+
+**The click did work.** The detail section rendered *after* the 76-row index
+table, so the browser reloaded at scroll-top showing an identical page with the
+answer far below the fold. It now renders above the table, with the member
+count, a `clear` link, and a rule down the side so it cannot be mistaken for the
+index. Nothing had ever tested the detail path.
+
+**`?name=eventbrite` really did return nothing.** The lookup was
+`org_name = ?`, case-sensitive, against a stored `Eventbrite`. Names are
+identifiers here, not data, so both lookups are now `COLLATE NOCASE` and the
+page shows the stored capitalisation. An unknown name now says so instead of
+rendering an empty shell that looks like a loading failure.
+
+**The counts included people who are no longer followers.** Neither the index
+nor the detail filtered on `follower_state`, so a departed or hidden follower
+kept padding a roster. Both do now, and a test asserts the two agree — they were
+computed by different keys, the index by `org_id` and the detail by `org_name`,
+which is exactly how a row can claim six people and its page show none.
+
+Still open: Wikidata employers with no end date read as current. Simon Willison
+is listed at Eventbrite, which he left years ago. That is the same defect M8
+fixed for group membership, not yet applied to the institutions roster.
+
+### M20b — tests were writing to the real database
+
+Found while adding the tests above, and worth more than the feature.
+
+`_db()` calls `connect()` with no argument, which resolves
+`_override_path or settings.db_path`. The `db` fixture passed its tmp path
+*positionally*, which set `_db_path` but not `_override_path` — so the first
+`_db()` inside any test saw a different target, closed the tmp database, and
+reopened `./sonde.db`. Every fixture-based test shared one file, tests collided
+with each other through it, and nine rows of fixtures were sitting in the
+working copy.
+
+`connect(path)` now remembers an explicit path as the override, the fixture
+clears it, and an autouse fixture fails any test that ends up connected to the
+configured production database.
 
 ### M19b — the nav regression, and why the eval missed it
 
