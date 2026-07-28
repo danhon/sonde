@@ -590,6 +590,7 @@ Sub-steps for the scoring work are sequenced in
 | M21 | Latent group discovery | ✅ done | 75 clusters proposed; rediscovers Game industry at 67% overlap without being told it exists |
 | M22 | Interaction leaderboards | ✅ done | One tab per kind, inbound by default; fixed `by_kind` conflating directions |
 | M23 | One-click follow-back | ✅ done | The first write to Bluesky; guarded, reversible, logged |
+| M24 | Five visualisations | 📋 planned | On branch `viz`. Two candidate charts killed by measurement |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
 ### Detail on what is done
