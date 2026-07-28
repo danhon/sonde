@@ -1,0 +1,141 @@
+{#- Chart primitives, server-rendered SVG.
+
+    No charting library: sonde has no build step and loads Tailwind from a CDN,
+    so a dependency here would be its first. The geometry is computed in
+    `sonde/charts.py`, where it can be tested without rendering.
+
+    Every chart takes a `caption` (what it measures) and a `coverage` line (how
+    much of the population it covers), because a chart that hides its
+    denominator is the same defect as a count that hides its window. Hover is a
+    native <title>, which needs no JavaScript. -#}
+
+{%- macro frame(title, caption, coverage) -%}
+<figure class="mt-6">
+  <figcaption class="flex flex-wrap items-baseline gap-3 border-b border-slate-200 pb-2">
+    <span class="font-mono text-[10px] font-semibold uppercase tracking-widest text-red-800">{{ title }}</span>
+    <span class="text-xs text-slate-600">{{ caption }}</span>
+    {% if coverage %}
+    <span class="ml-auto font-mono text-[10px] uppercase tracking-widest text-slate-400">{{ coverage }}</span>
+    {% endif %}
+  </figcaption>
+  {{ caller() }}
+</figure>
+{%- endmacro -%}
+
+
+{#- Columns over an ordered axis. Bars carry a 2px surface gap so adjacent
+    months read as separate marks, and data-ends are rounded at the top only,
+    anchored to the baseline. -#}
+{%- macro column_chart(plot, unit='', every=6) -%}
+<div class="overflow-x-auto">
+  <svg viewBox="0 0 {{ plot.box.width }} {{ plot.box.height }}" class="mt-3 w-full"
+       role="img" style="min-width: 420px"
+       aria-label="{{ plot.bars|length }} columns, maximum {{ plot.max }}">
+    {% for t in plot.ticks %}
+    <line x1="{{ plot.box.left }}" y1="{{ t.y }}" x2="{{ plot.box.width - plot.box.right }}" y2="{{ t.y }}"
+          stroke="#e2e8f0" stroke-width="1"/>
+    <text x="{{ plot.box.left - 6 }}" y="{{ t.y + 3 }}" text-anchor="end"
+          fill="#94a3b8" style="font-size:9px;font-family:ui-monospace,monospace">{{ t.label }}</text>
+    {% endfor %}
+    {% for b in plot.bars %}
+    <rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.width }}" height="{{ b.height }}"
+          rx="1.5" fill="#b4123c">
+      <title>{{ b.label }} — {{ "{:,}".format(b.value) }} {{ unit }}</title>
+    </rect>
+    {% if loop.index0 % every == 0 %}
+    <text x="{{ b.x + b.width / 2 }}" y="{{ plot.box.height - 8 }}" text-anchor="middle"
+          fill="#94a3b8" style="font-size:9px;font-family:ui-monospace,monospace">{{ b.label }}</text>
+    {% endif %}
+    {% endfor %}
+  </svg>
+</div>
+{%- endmacro -%}
+
+
+{#- Log–log scatter. Marks get a 2px surface ring so overlapping points stay
+    countable rather than merging into one shape. -#}
+{#- The x-axis title used to sit at the right of the tick row and overlapped the
+    last tick — "accountsd0key follow". The caption names both axes, so the
+    in-SVG title is gone rather than nudged. -#}
+{%- macro scatter_chart(plot, x_label, y_label, highlights=[]) -%}
+<div class="overflow-x-auto">
+  <svg viewBox="0 0 {{ plot.box.width }} {{ plot.box.height }}" class="mt-3 w-full"
+       role="img" style="min-width: 420px"
+       aria-label="{{ plot.points|length }} followers plotted by {{ x_label }} against {{ y_label }}">
+    {% for t in plot.y_ticks %}
+    <line x1="{{ plot.box.left }}" y1="{{ t.y }}" x2="{{ plot.box.width - plot.box.right }}" y2="{{ t.y }}"
+          stroke="#e2e8f0" stroke-width="1"/>
+    <text x="{{ plot.box.left - 6 }}" y="{{ t.y + 3 }}" text-anchor="end"
+          fill="#94a3b8" style="font-size:9px;font-family:ui-monospace,monospace">{{ t.label }}</text>
+    {% endfor %}
+    {% for t in plot.x_ticks %}
+    <text x="{{ t.x }}" y="{{ plot.box.height - 8 }}" text-anchor="middle"
+          fill="#94a3b8" style="font-size:9px;font-family:ui-monospace,monospace">{{ t.label }}</text>
+    {% endfor %}
+    {% for p in plot.points %}
+    <circle cx="{{ p.cx }}" cy="{{ p.cy }}" r="{{ 3.5 if p.notable else 2.2 }}"
+            fill="{{ '#b4123c' if p.notable else '#2a78d6' }}"
+            fill-opacity="{{ '0.95' if p.notable else '0.28' }}"
+            stroke="#ffffff" stroke-width="{{ '1.5' if p.notable else '0' }}">
+      <title>{{ p.handle }} — {{ "{:,}".format(p.followers) }} followers, follows {{ "{:,}".format(p.follows) }}</title>
+    </circle>
+    {% endfor %}
+    {#- Selective direct labels: the few that make the region legible, never
+        a label on every point. -#}
+    {% for p in highlights %}
+    <text x="{{ p.cx + 6 }}" y="{{ p.cy + 3 }}" fill="#0f172a"
+          style="font-size:9px;font-family:ui-monospace,monospace">{{ p.handle.split('.')[0][:16] }}</text>
+    {% endfor %}
+  </svg>
+</div>
+{%- endmacro -%}
+
+
+{#- Small multiples: one panel per series, each with its own scale.
+
+    This is the sanctioned alternative to a second y-axis, not a dual axis in
+    disguise — which is only true because every panel prints its own maximum.
+    Sharing an axis here would flatten replies to zero against likes. -#}
+{%- macro small_multiples(panels, months) -%}
+<div class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+  {% for p in panels %}
+  <div class="border border-slate-200 px-3 py-2">
+    <div class="flex items-baseline justify-between">
+      <span class="font-mono text-[10px] uppercase tracking-widest text-slate-600">{{ p.kind }}s</span>
+      <span class="font-mono text-[10px] tabular-nums text-slate-400">peak {{ "{:,}".format(p.spark.max|int) }}/mo</span>
+    </div>
+    <svg viewBox="0 0 {{ p.spark.width }} {{ p.spark.height }}" class="mt-1 w-full"
+         role="img" aria-label="{{ p.kind }}s per month, peak {{ p.spark.max|int }}">
+      <polygon points="{{ p.spark.area }}" fill="{{ p.colour }}" opacity="0.12"/>
+      <polyline points="{{ p.spark.path }}" fill="none" stroke="{{ p.colour }}"
+                stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      {% if p.spark.last %}
+      <circle cx="{{ p.spark.last[0] }}" cy="{{ p.spark.last[1] }}" r="3"
+              fill="{{ p.colour }}" stroke="#ffffff" stroke-width="1.5"/>
+      {% endif %}
+    </svg>
+    <div class="flex items-baseline justify-between font-mono text-[9px] text-slate-400">
+      <span>{{ months[0] if months else "" }}</span><span>{{ months[-1] if months else "" }}</span>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{%- endmacro -%}
+
+
+{#- Horizontal bars. Direct-labelled, so the contrast warning on the lighter
+    hues never leaves a value unreadable. -#}
+{%- macro bar_list(rows, unit='') -%}
+<div class="mt-3 space-y-1">
+  {% for r in rows %}
+  <div class="flex items-center gap-3">
+    <span class="w-24 shrink-0 truncate font-mono text-[10px] uppercase tracking-wider text-slate-600 sm:w-40"
+          title="{{ r.label }}">{{ r.label }}</span>
+    <span class="h-3 min-w-0 flex-1">
+      <span class="block h-3 rounded-sm" style="width: {{ r.percent }}%; background: #b4123c"></span>
+    </span>
+    <span class="w-12 shrink-0 text-right font-mono text-xs tabular-nums text-slate-500">{{ "{:,}".format(r.value) }}{{ unit }}</span>
+  </div>
+  {% endfor %}
+</div>
+{%- endmacro -%}

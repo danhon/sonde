@@ -38,6 +38,53 @@ def _as_int(value: str | int | None) -> int | None:
 STARTED_AT = time.time()
 
 
+def _attention_scatter(points: list[dict]) -> dict:
+    """The M17 region picked out: real reach, few follows."""
+    from sonde import attention, charts
+
+    for p in points:
+        p["notable"] = attention.raw(p.get("followers"), p.get("follows")) > 0.25
+    plot = charts.scatter(points, charts.Box(height=260),
+                          x_key="follows", y_key="followers")
+    # Direct labels, but only where they can be read. The first version took
+    # the top six by reach and drew "mattbors", "wiswell" and
+    # "tylerfromtheinte" on top of each other. A label that overlaps another
+    # label is worse than no label, so a candidate is skipped when it lands
+    # within 14px vertically of one already placed.
+    notable = sorted((p for p in plot["points"] if p.get("notable")),
+                     key=lambda p: -(p.get("followers") or 0))
+    placed: list[dict] = []
+    for point in notable:
+        if any(abs(point["cy"] - other["cy"]) < 14
+               and abs(point["cx"] - other["cx"]) < 150 for other in placed):
+            continue
+        placed.append(point)
+        if len(placed) == 5:
+            break
+    plot["highlights"] = placed
+    return plot
+
+
+def _interaction_panels(series: dict) -> dict:
+    """One panel per kind, each with its own scale — never stacked."""
+    from sonde import charts
+
+    panels = []
+    for index, (kind, values) in enumerate(series["series"].items()):
+        panels.append({
+            "kind": kind, "colour": charts.SERIES[index % len(charts.SERIES)],
+            "spark": charts.sparkline(values),
+        })
+    return {"panels": panels, "months": series["months"]}
+
+
+def _composition_bars(data: dict) -> dict:
+    from sonde import charts
+
+    data["bars"] = charts.bars([(g["name"], g["n"]) for g in data["groups"]])
+    return data
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="sonde", docs_url=None, redoc_url=None)
 
@@ -103,9 +150,19 @@ def create_app() -> FastAPI:
     async def dashboard(request: Request) -> HTMLResponse:
         from sonde.db import store
 
+        from sonde import charts
+
         stats = await store.dashboard_stats()
+        cohorts = await store.account_cohorts()
         return TEMPLATES.TemplateResponse(
-            request=request, name="index.html", context={"stats": stats, "settings": settings}
+            request=request, name="index.html",
+            context={
+                "stats": stats, "settings": settings,
+                "cohorts": cohorts,
+                "cohort_plot": charts.columns(
+                    [(r["month"], r["n"]) for r in cohorts],
+                    charts.Box(height=180)),
+            },
         )
 
     @app.get("/followers/{did:path}", response_class=HTMLResponse)
@@ -169,6 +226,7 @@ def create_app() -> FastAPI:
         return TEMPLATES.TemplateResponse(
             request=request, name="relationships.html",
             context={
+                "scatter": _attention_scatter(await store.attention_points()),
                 "rows": await store.ranked_relationships(
                     limit=per_page, offset=(page_num - 1) * per_page,
                     order=order, direction=direction),
@@ -193,6 +251,8 @@ def create_app() -> FastAPI:
                     kind, direction=direction, days=days,
                     order=order, sort_direction=sort),
                 "totals": await store.interaction_totals(days=days),
+                "panels": _interaction_panels(
+                    await store.interaction_series(direction=direction)),
                 "window": await store.interaction_window(),
                 "kinds": store.INTERACTION_KINDS,
                 "kind": kind, "direction": direction, "days": days,
@@ -239,6 +299,7 @@ def create_app() -> FastAPI:
         return TEMPLATES.TemplateResponse(
             request=request, name="groups.html",
             context={
+                "composition": _composition_bars(await store.composition()),
                 "summary": await store.group_summary(),
                 "slug": slug, "order": order, "direction": direction,
                 "members": await store.group_members(
@@ -582,6 +643,7 @@ def create_app() -> FastAPI:
             request=request,
             name="verified.html",
             context={
+                "reach": await store.verification_reach(),
                 "v": summary,
                 "notices": await store.active_notices(),
                 "settings": settings,

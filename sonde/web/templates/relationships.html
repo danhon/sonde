@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_charts.html" import frame, column_chart, scatter_chart, small_multiples, bar_list with context %}
 {% from "_sort.html" import qs, th, who with context %}
 {% set base = {'order': order, 'direction': direction, 'page': page} %}
 {% block title %}Relationships — sonde{% endblock %}
@@ -28,6 +29,21 @@
   choice. That registers even with nothing said. It is capped low enough that it
   can lift a quiet follower into view but never outrank an actual conversation.
 </p>
+
+{% if scatter and scatter.points|length > 10 %}
+{% call frame("Attention scarcity",
+              "each hydrated follower: how many they follow against how many follow them",
+              "{:,} measured".format(scatter.points|length)) %}
+  {{ scatter_chart(scatter, "accounts they follow", "their followers", scatter.highlights) }}
+  <p class="mt-2 max-w-2xl text-xs text-slate-500">
+    Both axes are logarithmic. Highlighted accounts are the ones with real reach
+    who follow very few people — a slot in their list is scarce, which is what
+    the attention component of the relationship score measures.
+    {% if scatter.dropped %}{{ scatter.dropped }} follower(s) with a zero count
+    cannot be placed on a log axis and are not shown.{% endif %}
+  </p>
+{% endcall %}
+{% endif %}
 
 {% if not rows %}
 <div class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center">

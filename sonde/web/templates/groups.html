@@ -1,8 +1,25 @@
 {% extends "base.html" %}
+{% from "_charts.html" import frame, column_chart, scatter_chart, small_multiples, bar_list with context %}
 {% from "_sort.html" import qs, th, who with context %}
 {% set base = {'slug': slug, 'order': order, 'direction': direction} %}
 {% block title %}Groups — sonde{% endblock %}
 {% block content %}
+{% if composition and composition.groups %}
+{% call frame("What your audience is made of",
+              "named groups by size",
+              "{:,} of {:,} in scope".format(composition.people_in_a_group, composition.in_scope)) %}
+  {{ bar_list(composition.bars) }}
+  <p class="mt-2 max-w-2xl text-xs text-slate-500">
+    Counted over the grouping set — the top {{ settings.posts_top_n }} by
+    influence, every verified follower, and anyone a precise rule pulled into
+    scope — not the whole follower list.{% if composition.clusters_proposed %}
+    {{ composition.clusters_proposed }} latent communities are
+    <a href="/groups/discover" class="text-red-800 hover:underline">waiting for review</a>
+    and are not counted here.{% endif %}
+  </p>
+{% endcall %}
+{% endif %}
+
 
 <div class="flex flex-wrap items-baseline gap-4 border-b border-slate-300 pb-3">
   <h1 class="font-mono text-xs font-semibold uppercase tracking-widest text-red-800">Groups</h1>

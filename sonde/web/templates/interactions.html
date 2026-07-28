@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_charts.html" import frame, column_chart, scatter_chart, small_multiples, bar_list with context %}
 {% from "_sort.html" import who with context %}
 {% set base = {'kind': kind, 'direction': direction, 'days': days} %}
 {% macro link(overrides) -%}
@@ -72,6 +73,20 @@
      class="{% if d == days %}text-red-800 underline{% else %}text-slate-500 hover:text-red-800{% endif %}">{{ dlabel }}</a>
   {% endfor %}
 </div>
+
+{% if panels and panels.panels %}
+{% call frame("Each kind over time",
+              "monthly totals, one panel per kind",
+              "%s"|format(direction)) %}
+  {{ small_multiples(panels.panels, panels.months) }}
+  <p class="mt-2 max-w-2xl text-xs text-slate-500">
+    Separate panels with separate scales, deliberately: likes so outnumber
+    replies that a shared axis would draw replies as a flat line at zero. Each
+    panel prints its own peak, so the shapes are comparable and the heights are
+    not.
+  </p>
+{% endcall %}
+{% endif %}
 
 {% if not rows %}
 <div class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center">

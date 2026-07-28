@@ -59,6 +59,20 @@ Turn it all off with `ENABLE_FOLLOW_WRITE=false`.
 `settings`, so the follow button silently never renders. Every import of
 `_sort.html` carries `with context`, and a test enforces it.
 
+## Point the mobile eval at a POPULATED database
+
+The env var is `DB_PATH`, not `SONDE_DB_PATH`. Getting it wrong starts the
+server on a fresh empty `./sonde.db`, every page renders its empty state, and
+the eval passes while testing nothing. Four real overflow bugs were sitting
+behind that mistake — the dashboard tiles, both dashboard lists, and the
+chart bar rows — none of which can overflow when there are no rows to render.
+
+    DB_PATH=/path/to/real.db uv run --with playwright python -m evals.mobile_check
+
+A grid or flex item defaults to `min-width: auto` and will not shrink below its
+content however much its children truncate. `min-w-0` on the item is the fix;
+truncating the children is not.
+
 ## Mobile: the static tests cannot prove a page fits
 
 `tests/test_responsive.py` checks structure — tables wrapped, nav collapsing,

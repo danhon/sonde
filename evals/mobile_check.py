@@ -63,11 +63,21 @@ OVERFLOW_JS = """() => {
     const over = d.scrollWidth - d.clientWidth;
     if (over <= 0) return null;
     // Name the widest offender, so a failure is actionable rather than just
-    // "something is too wide".
+    // "something is too wide" — but skip anything already inside a horizontal
+    // scroll container. A wide table in an overflow-x-auto box is clipped and
+    // is NOT what is widening the page; reporting it sends you to fix the one
+    // thing that was already correct.
+    const clipped = (el) => {
+        for (let p = el.parentElement; p; p = p.parentElement) {
+            const o = getComputedStyle(p).overflowX;
+            if (o === "auto" || o === "scroll" || o === "hidden") return true;
+        }
+        return false;
+    };
     let worst = null, worstRight = 0;
     for (const el of document.querySelectorAll("body *")) {
         const r = el.getBoundingClientRect();
-        if (r.width === 0) continue;
+        if (r.width === 0 || clipped(el)) continue;
         if (r.right > worstRight) {
             worstRight = r.right;
             worst = el.tagName.toLowerCase()

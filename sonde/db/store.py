@@ -1653,6 +1653,115 @@ async def record_follow_failure(did: str, error: str, *, undo: bool) -> None:
     await db.commit()
 
 
+# ------------------------------------------------------------- M24 charts
+
+async def account_cohorts() -> list[dict]:
+    """When current followers' accounts were created, by month."""
+    db = await _db()
+    async with db.execute(
+        """SELECT substr(a.account_created_at, 1, 7) AS month, COUNT(*) AS n
+             FROM actors a JOIN follower_state fs USING (did)
+            WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
+              AND a.account_created_at IS NOT NULL
+            GROUP BY month ORDER BY month"""
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def attention_points(limit: int = 2000) -> list[dict]:
+    """Hydrated followers as (follows, followers) for the scarcity scatter."""
+    db = await _db()
+    async with db.execute(
+        """SELECT a.did, a.handle, a.followers_count AS followers,
+                  a.follows_count AS follows, a.relationship_score,
+                  a.influence_score
+             FROM actors a JOIN follower_state fs USING (did)
+            WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
+              AND a.followers_count IS NOT NULL AND a.follows_count IS NOT NULL
+            ORDER BY a.followers_count DESC LIMIT ?""",
+        (limit,),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def interaction_series(*, direction: str = "inbound") -> dict:
+    """Monthly counts per kind. Separate series, never summed."""
+    direction = "outbound" if direction == "outbound" else "inbound"
+    db = await _db()
+    async with db.execute(
+        """SELECT kind, substr(occurred_at, 1, 7) AS month, COUNT(*) AS n
+             FROM interactions WHERE direction = ?
+            GROUP BY kind, month ORDER BY month""",
+        (direction,),
+    ) as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+    months = sorted({r["month"] for r in rows})
+    series = {}
+    for kind in INTERACTION_KINDS:
+        by_month = {r["month"]: r["n"] for r in rows if r["kind"] == kind}
+        if by_month:
+            series[kind] = [by_month.get(m, 0) for m in months]
+    return {"months": months, "series": series, "direction": direction}
+
+
+async def composition() -> dict:
+    """Named groups by size, and how much of the audience they cover."""
+    db = await _db()
+    async with db.execute(
+        """SELECT g.slug, g.name, COUNT(DISTINCT m.did) AS n
+             FROM groups g JOIN group_members m ON m.group_id = g.id
+             JOIN follower_state fs ON fs.did = m.did
+            WHERE COALESCE(m.confirmed, 1) = 1
+              AND fs.is_current = 1 AND fs.ignored_at IS NULL
+            GROUP BY g.id HAVING n > 0 ORDER BY n DESC"""
+    ) as cur:
+        groups = [dict(r) for r in await cur.fetchall()]
+    grouped = await _scalar(
+        """SELECT COUNT(DISTINCT m.did) FROM group_members m
+             JOIN follower_state fs ON fs.did = m.did
+            WHERE COALESCE(m.confirmed, 1) = 1
+              AND fs.is_current = 1 AND fs.ignored_at IS NULL""")
+    clustered = await _scalar(
+        "SELECT COUNT(*) FROM group_candidates WHERE kind = 'cluster' "
+        "AND decided IS NULL")
+    return {"groups": groups, "people_in_a_group": grouped,
+            "clusters_proposed": clustered,
+            "in_scope": len(await group_target_dids(top_n=settings.posts_top_n))}
+
+
+async def verification_reach() -> dict:
+    """Verified followers by issuer, with the reach of each cohort."""
+    db = await _db()
+    async with db.execute(
+        """SELECT a.verifications, a.followers_count
+             FROM actors a JOIN follower_state fs USING (did)
+            WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
+              AND a.verified_status = 'valid'"""
+    ) as cur:
+        rows = await cur.fetchall()
+    by_issuer: dict[str, list[int]] = {}
+    for row in rows:
+        try:
+            records = json.loads(row["verifications"] or "[]")
+        except (ValueError, TypeError):
+            records = []
+        for record in records:
+            issuer = record.get("issuerHandle") or record.get("issuer") or "unknown"
+            by_issuer.setdefault(issuer, []).append(row["followers_count"] or 0)
+    unverified = await _scalar(
+        """SELECT COUNT(*) FROM actors a JOIN follower_state fs USING (did)
+            WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
+              AND COALESCE(a.verified_status, 'none') != 'valid'""")
+    return {
+        "issuers": sorted(
+            ({"issuer": k, "n": len(v),
+              "median_followers": sorted(v)[len(v) // 2] if v else 0}
+             for k, v in by_issuer.items()),
+            key=lambda d: -d["n"]),
+        "verified_total": len(rows), "unverified_total": unverified,
+    }
+
+
 async def interaction_window() -> dict:
     """What period these counts actually cover — **per direction**.
 
