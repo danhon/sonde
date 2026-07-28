@@ -582,6 +582,7 @@ Sub-steps for the scoring work are sequenced in
 | M14 | Relationship score | ✅ done | Separate from influence; notifications ~190x cheaper than per-post |
 | M16 | Job batches on /settings | ✅ done | Five ordered batches; individual jobs collapsed |
 | M17 | Attention scarcity in the relationship score | ✅ done | 388 of 1,500 score; the ratio's top score is this one's zero |
+| M18 | Game industry group | 📋 planned | Target-set mismatch is the real problem: only 6% of matches are in it |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
 ### Detail on what is done
@@ -733,6 +734,88 @@ happened" email trains you to ignore the one that matters; but health problems
 send regardless, because silence is otherwise ambiguous between "nothing
 happened" and "the app died". Reports stale sweeps, held sweeps, failed runs and
 an app password that is set but not authenticating.
+
+### M18 — Game industry (planned)
+
+Requested 2026-07-27, with [Cat Manning](https://bsky.app/profile/catacalypto.bsky.social)
+— "narrative director at Firaxis" — as the worked example.
+
+Adding a thirteenth entry to `GROUPS` is a five-line change. It would also find
+**eleven people and miss a hundred and eighty-seven**, so almost none of this
+plan is about the group definition.
+
+**Finding 1 — the target set is the problem, not the rules.** Groups run over
+the top 500 by influence plus every verified follower: 559 people. Across the
+full 10,041 followers, 198 bios carry a game-industry term. Only **11 of those
+198 (6%) are inside the target set.** Cat Manning is not: influence 10.4 against
+a cutoff of 15.9, unverified, never hydrated.
+
+That is not bad luck. Game industry people are not prominent the way journalists
+and academics are — a senior designer at a major studio has a few thousand
+followers, and every component of the influence score reads reach. Any group
+whose members are systematically less famous than the corpus average is invisible
+to a top-N target set, so this is a **general defect** that game developers
+happen to expose. Other likely victims: civic tech, librarians, translators.
+
+The fix is general, not a game-specific escape hatch: extend the target set to
+`top 500 ∪ verified ∪ anyone carrying strong (T1–T3) group evidence`. Detection
+costs nothing — 7,974 of 10,041 followers already have a `description` on disk,
+because `getFollowers` returns it with the sweep. No new API calls to *find*
+anyone; only ranking them needs hydration.
+
+**Finding 2 — fans outnumber practitioners two to one, so precision is the
+whole job.** Splitting the matches by what they actually claim:
+
+| Signal | People | Example |
+|---|---|---|
+| Studio named | 14 | "principal ux @ Riot Games" |
+| Role stated | 70 | "Senior Writer @ Failbetter Games" |
+| Tool / platform | 8 | an `itch.io` link |
+| **Plays games only** | **164** | "I read a lot. I play videogames." |
+
+"Gamer", "video games", "board game", "TTRPG" and "roguelike" are *fandom*.
+164 people would join a game-industry group on those terms and none of them
+belong. **Making games is the criterion; playing them is not.** Fan vocabulary
+is excluded outright rather than given a low tier, because at 164-vs-92 even a
+weak tier would make the group majority-wrong.
+
+**Finding 3 — `unity` is a trap.** Fourteen bios contain the string and **every
+single one** is `community` or `impunity`. Not one refers to the engine. Only
+`unity3d` and `unity engine` may match; bare `unity` never does, word boundary
+or not. Godot and Unreal have no such collision.
+
+**Tiers**, mapped onto the existing machinery:
+
+| Tier | Source | Evidence | Confidence |
+|---|---|---|---|
+| T1 | affiliation | a resolved studio org | 0.95 |
+| T2 | wikidata | `video game developer`, `game designer`, `game artist` (2 people today) | 0.95 |
+| T3 | domain | `itch.io`, `gamejolt`, `store.steampowered.com` in link signals | 0.9 |
+| T4a | studio name | a named studio in the bio | 0.9 |
+| T4b | role text | "game designer", "narrative director", "level designer", "technical artist", "game writer/artist/producer/audio" | 0.65 |
+| T5 | propagation | overlap with confirmed seeds in the follow graph | 0.5 |
+
+T4a is given its own confidence above ordinary text because a studio name is a
+checkable fact, not a self-description. T4b keeps M6a's rejection rules — "I want
+to get into games" and "ex-Ubisoft" are not current jobs. T5 should be
+productive here: game developers follow each other densely, and it is how the
+people whose bios say only "she/her • cats • currently shipping something" get
+found at all.
+
+**Naming.** Proposed slug `game-industry`, name **Game industry**, not "Game
+developers". The measured members are a narrative director, a producer on Diablo
+IV, a localization writer at Nintendo and a principal UX designer at Riot — none
+is a developer in the sense the word normally carries, and all four are exactly
+who was meant. One line to change if "Game developers" is preferred.
+
+**Validation before shipping**, as with propagation: hand-check the full T4b
+list, report precision, and only then let it create memberships. The bar is that
+no fan-only account appears; a missing practitioner is recoverable, a group that
+is one-third wrong makes every group count untrustworthy.
+
+**Cost**: zero API calls for detection. T5 reuses the affinity index already
+built. Hydrating the ~190 newly-in-scope people for ranking is ~2 calls at
+`getProfiles`' batch size of 25.
 
 ### M17 — Attention scarcity
 
