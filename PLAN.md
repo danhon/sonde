@@ -587,6 +587,7 @@ Sub-steps for the scoring work are sequenced in
 | M19b | Nav regression fix | ✅ done | M19 removed the desktop menu entirely; eval was rect-based and missed it |
 | M20 | Institutions page fixes | ✅ done | Detail rendered below a 76-row table; name lookup case-sensitive; counts included departed followers |
 | M20b | Test isolation | ✅ done | `db`-fixture tests were writing to the real `./sonde.db` |
+| M21 | Latent group discovery | 📋 planned | Prototyped: the follow graph rediscovers game-industry unprompted and finds 5 unseeded groups |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
 ### Detail on what is done
@@ -819,6 +820,94 @@ wrapper left the suite green. It now walks the actual ancestor stack, and
 The eval also found `/groups/discover` — the route list in the first draft said
 `/discover`, which 404s. A test that checks the wrong URL passes for the wrong
 reason.
+
+### M21 — Latent groups (planned)
+
+Requested 2026-07-28: the thirteen groups were supplied by hand; find the ones
+nobody thought to name. Free sources only.
+
+**The current discovery looks in the wrong place.** M15b ranks *vocabulary by
+frequency* — bigrams and occupations that appear often. On the live data that
+produced "Send Tips", "Personal Account", "Dog Lover", "Born Ppm" and "Rights
+Human" (a mirror-pair bug fixed in code but still sitting in stored rows). Of 25
+candidates, the only sound ones are organisations — Wired, NYT, WaPo — and those
+already have a page at `/institutions`. **A phrase being common is not evidence
+that a community exists.** Boilerplate is the most common text of all.
+
+**The asset is the follow graph, and it is barely used.** 11,038 edges from 187
+sources are already on disk, collected for the affinity score and read for
+nothing else. A community is a shape in that graph, not a word in a bio.
+
+**Prototyped end to end before planning.** Follower×follower cosine similarity
+over IDF-weighted shared sources, a symmetric k-nearest-neighbour graph at K=5,
+then label propagation:
+
+| | |
+|---|---|
+| Placeable followers (≥3 sources) | 967 |
+| Clusters of 4–120 | **79** |
+| People placed in one | **927 of 967** |
+| Largest cluster | 67 |
+
+**It rediscovers a known-true group unprompted.** A 25-person cluster names
+itself *narrative / game / games / designer* — the game industry, which M18
+built independently from bio rules. Two methods with no shared inputs agreeing
+is the strongest validation available here.
+
+And it finds groups nobody seeded: **law professors** (37), **futures and
+foresight** (14), **data journalism** (17, distinct from journalists), **comics**
+(7), **science + queer** (8).
+
+**Two failure modes, measured, recorded so they are not reintroduced:**
+
+1. **Label propagation on a global top-weight edge list collapses.** The first
+   run produced one 465-node hairball, a 67 and a 5 — useless. The kNN
+   construction is what makes it work, because it stops hub followers from
+   swallowing the graph. Not a tuning detail.
+2. **Naming fails where clustering succeeds.** About 20 of 58 clusters have no
+   distinctive vocabulary at all. The cluster may be real and the label absent.
+
+**So naming gets its own tiers**, cheapest and most authoritative first:
+
+| Tier | Source | Have it? |
+|---|---|---|
+| N1 | resolved affiliations and institutions of members | yes |
+| N2 | Wikidata occupation, plus `P101` field of work and `P463` member of | 99 of 967 |
+| N3 | link-signal kinds and hosts | 1,248 actors |
+| N4 | bio and post vocabulary **by lift**, never frequency | yes |
+| N5 | human-authored names — starter packs containing members | see below |
+
+**Free external sources, assessed rather than assumed:**
+
+- **Wikidata SPARQL** — already wired, extend the property set. Free, no key.
+- **Wikipedia categories** — free API; "American science fiction writers" is a
+  ready-made group name. Only the 107 matched actors.
+- **Bluesky starter packs** — `getActorStarterPacks` verified working
+  unauthenticated today. Human-curated *and* human-named: Molly White publishes
+  "Indie publications" and "Independent writers". But measured hit rate is low —
+  4 packs across 5 probes, 3 of them from one person — so this is a naming aid
+  and a supplementary source, not a primary one. ~3 minutes for the top 500 plus
+  verified; 56 minutes for all 10,042, which is not worth it yet.
+- **Considered and rejected**: GitHub (60 unauthenticated requests/hour cannot
+  cover 1,248 link holders), OpenAlex (academics only), anything paid.
+
+**Coverage is the binding constraint, and the cheapest fix.** Only 967 of 10,042
+followers carry ≥3 affinity sources, because only 187 of the configured 600
+sources have been indexed. Finishing that is ~4,300 calls, about 24 minutes at
+3 req/s, and should roughly triple the placeable population before any of this
+is tuned further. **Do that first.**
+
+**Guardrails, all learned the hard way earlier in this build:**
+
+- Nothing auto-creates a group. Candidates are proposed for review, as M15b and
+  M15c already do — a group nobody wanted makes every other count untrustworthy.
+- Lift, never raw frequency (M15c proposed 329 memberships before this rule).
+- Cap a person's clusters, as propagation caps at two groups.
+- `log()` what was dropped: silent truncation reads as full coverage.
+
+**Acceptance:** hand-check a sample of proposed clusters and report precision
+before any of them can create memberships, exactly as M18 did — that pass killed
+18 of the first 105 memberships and is the reason the group is trustworthy.
 
 ### M20 — Institutions
 
