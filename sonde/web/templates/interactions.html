@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% from "_sort.html" import who %}
+{% set base = {'kind': kind, 'direction': direction, 'days': days} %}
+{% macro link(overrides) -%}
+  {%- set p = {'kind': kind, 'direction': direction, 'days': days} -%}
+  {%- set _ = p.update(overrides) -%}
+  {%- set parts = [] -%}
+  {%- for k, v in p.items() %}{% if v %}{% set _ = parts.append(k ~ '=' ~ v) %}{% endif %}{% endfor -%}
+  /interactions?{{ parts | join('&') }}
+{%- endmacro %}
+{% set VERB = {'reply': 'replied to you', 'quote': 'quoted you',
+               'repost': 'reposted you', 'like': 'liked your posts',
+               'mention': 'mentioned you'} %}
+{% set VERB_OUT = {'reply': 'you replied to', 'quote': 'you quoted',
+                   'repost': 'you reposted', 'like': 'you liked',
+                   'mention': 'you mentioned'} %}
+{% block title %}Interactions — sonde{% endblock %}
+{% block content %}
+
+<div class="flex flex-wrap items-baseline gap-4 border-b border-slate-300 pb-3">
+  <h1 class="font-mono text-xs font-semibold uppercase tracking-widest text-red-800">Interactions</h1>
+  <span class="text-xs text-slate-500">ranked one kind at a time</span>
+  <a href="/relationships" class="ml-auto font-mono text-xs text-red-800 hover:underline">relationship score →</a>
+</div>
+
+<p class="mt-4 max-w-2xl text-sm text-slate-600">
+  Each kind is ranked on its own, because they are not comparable: a like costs
+  nothing to give and a reply costs real attention, so a combined table would
+  just be a like leaderboard wearing a disguise. The
+  <a href="/relationships" class="text-red-800 hover:underline">relationship score</a>
+  is the version that weighs them against each other.
+</p>
+
+{# One tab per kind. Counts are for the current direction, so switching
+   direction re-labels the tabs rather than leaving stale numbers. #}
+<div class="mt-6 flex flex-wrap gap-x-5 gap-y-2 border-b border-slate-200 pb-2 font-mono text-xs uppercase tracking-widest">
+  {% for k in kinds %}
+  {% set n = (totals.get(k, {}).get(direction, {}).get('n')) or 0 %}
+  <a href="{{ link({'kind': k}) }}"
+     class="flex items-baseline gap-1.5 py-1 {% if k == kind %}text-red-800 underline{% else %}text-slate-500 hover:text-red-800{% endif %}">
+    {{ k }}s<span class="tabular-nums {% if not n %}text-slate-300{% endif %}">{{ "{:,}".format(n) }}</span>
+  </a>
+  {% endfor %}
+</div>
+
+<div class="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 font-mono text-[10px] uppercase tracking-widest">
+  <span class="text-slate-400">direction</span>
+  {% for d, dlabel in [('inbound', 'to me'), ('outbound', 'from me')] %}
+  <a href="{{ link({'direction': d}) }}"
+     class="{% if d == direction %}text-red-800 underline{% else %}text-slate-500 hover:text-red-800{% endif %}">{{ dlabel }}</a>
+  {% endfor %}
+  <span class="ml-4 text-slate-400">window</span>
+  {% for d, dlabel in [(None, 'all'), (30, '30d'), (90, '90d'), (365, '1y')] %}
+  <a href="{{ link({'days': d}) }}"
+     class="{% if d == days %}text-red-800 underline{% else %}text-slate-500 hover:text-red-800{% endif %}">{{ dlabel }}</a>
+  {% endfor %}
+</div>
+
+{% if not rows %}
+<div class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center">
+  <p class="font-mono text-sm uppercase tracking-widest text-slate-500">
+    No {{ kind }}s recorded {{ 'to you' if direction == 'inbound' else 'from you' }}
+  </p>
+  <p class="mx-auto mt-3 max-w-lg text-sm text-slate-600">
+    {% if not window.events %}
+    Nothing has been captured yet. Run <strong>Sync interactions</strong> from
+    settings — it needs the app password.
+    {% else %}
+    {{ "{:,}".format(window.events) }} interactions are stored, but none of this
+    kind in this direction and window.
+    {% endif %}
+  </p>
+</div>
+{% else %}
+<div class="mt-6 overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-slate-300 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
+        <th class="py-2 pr-4 text-right">#</th>
+        <th class="py-2 pr-4">Handle</th>
+        <th class="py-2 pr-4">Name</th>
+        <th class="py-2 pr-4 text-right">{{ kind }}s</th>
+        <th class="py-2 pr-4 text-right" title="the same kind of interaction in the other direction">Back</th>
+        <th class="py-2 pr-4 text-right">Days</th>
+        <th class="py-2 pr-4">Last</th>
+        <th class="py-2 pr-4 text-right">Rel.</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr class="border-b border-slate-100 hover:bg-slate-50">
+        <td class="py-2 pr-4 text-right font-mono text-xs text-slate-400 tabular-nums">{{ loop.index }}</td>
+        <td class="py-2 pr-4">{{ who(r) }}</td>
+        <td class="py-2 pr-4">{{ r.display_name or "" }}</td>
+        <td class="py-2 pr-4 text-right font-mono font-semibold tabular-nums">{{ "{:,}".format(r.n) }}</td>
+        {# The reciprocal is what separates a correspondent from an audience. #}
+        <td class="py-2 pr-4 text-right font-mono tabular-nums
+                   {% if r.reciprocal %}text-slate-500{% else %}text-slate-300{% endif %}">
+          {{ "{:,}".format(r.reciprocal) if r.reciprocal else "0" }}
+        </td>
+        <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">{{ r.days_active }}</td>
+        <td class="py-2 pr-4 font-mono text-xs text-slate-400">{{ (r.last_at or "")[:10] }}</td>
+        <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-400">
+          {{ r.relationship_score if r.relationship_score is not none else "—" }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p class="mt-4 max-w-2xl text-xs text-slate-500">
+  Ranked by how many times each account
+  {{ VERB[kind] if direction == 'inbound' else VERB_OUT[kind] }}.
+  <strong>Back</strong> is the same interaction the other way, which is what
+  separates a correspondent from an audience.
+</p>
+{% endif %}
+
+{# The honesty note. These are counts of what sonde has seen, not of what
+   happened: the notification API's retention window is finite and
+   undocumented, so a short observation period silently truncates history. #}
+{% if window.events %}
+<p class="mt-6 max-w-2xl border-l-2 border-slate-300 pl-3 text-xs text-slate-500">
+  Counting {{ "{:,}".format(window.events) }} interactions with
+  {{ "{:,}".format(window.people) }} accounts, observed from
+  <span class="font-mono">{{ (window.earliest or "")[:10] }}</span> to
+  <span class="font-mono">{{ (window.latest or "")[:10] }}</span>.
+  Bluesky only retains notifications for a while, so this is what sonde has
+  <em>seen</em> rather than everything that happened — and it gets more complete
+  the longer sonde runs.
+</p>
+{% endif %}
+
+{% endblock %}

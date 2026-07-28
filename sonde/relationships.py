@@ -133,7 +133,12 @@ def summarise(rows: list[dict], conversations: int = 0,
             rel.outbound += 1
         else:
             rel.inbound += 1
-        rel.by_kind[row["kind"]] = rel.by_kind.get(row["kind"], 0) + 1
+        # Split by direction. Counting both into one bucket made "someone I
+        # reply to constantly who never answers" indistinguishable from
+        # "someone who replies to me constantly" — a wrong number on the
+        # profile page, and the thing the leaderboards exist to separate.
+        bucket = rel.by_kind.setdefault(row["kind"], {"inbound": 0, "outbound": 0})
+        bucket[row["direction"]] = bucket.get(row["direction"], 0) + 1
         days.add((row["occurred_at"] or "")[:10])
         if not rel.last_at or row["occurred_at"] > rel.last_at:
             rel.last_at = row["occurred_at"]

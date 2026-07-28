@@ -121,6 +121,7 @@ def create_app() -> FastAPI:
         person["affiliations"] = await store.affiliations_for(did)
         person["groups"] = await store.groups_for(did)
         person["interactions"] = await store.interactions_for(did)
+        person["breakdown"] = await store.interaction_breakdown(did)
         return TEMPLATES.TemplateResponse(
             request=request, name="detail.html",
             context={"p": person, "settings": settings},
@@ -172,6 +173,27 @@ def create_app() -> FastAPI:
                     limit=per_page, offset=(page_num - 1) * per_page,
                     order=order, direction=direction),
                 "order": order, "direction": direction, "page": page_num,
+                "settings": settings,
+            },
+        )
+
+    @app.get("/interactions", response_class=HTMLResponse)
+    async def interactions_page(
+        request: Request, kind: str = "reply", direction: str = "inbound",
+        days: int | None = None,
+    ) -> HTMLResponse:
+        """One kind at a time. A like and a reply do not belong in one ranking."""
+        from sonde.db import store
+
+        return TEMPLATES.TemplateResponse(
+            request=request, name="interactions.html",
+            context={
+                "rows": await store.interaction_leaderboard(
+                    kind, direction=direction, days=days),
+                "totals": await store.interaction_totals(days=days),
+                "window": await store.interaction_window(),
+                "kinds": store.INTERACTION_KINDS,
+                "kind": kind, "direction": direction, "days": days,
                 "settings": settings,
             },
         )

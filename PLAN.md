@@ -588,6 +588,7 @@ Sub-steps for the scoring work are sequenced in
 | M20 | Institutions page fixes | ✅ done | Detail rendered below a 76-row table; name lookup case-sensitive; counts included departed followers |
 | M20b | Test isolation | ✅ done | `db`-fixture tests were writing to the real `./sonde.db` |
 | M21 | Latent group discovery | ✅ done | 75 clusters proposed; rediscovers Game industry at 67% overlap without being told it exists |
+| M22 | Interaction leaderboards | ✅ done | One tab per kind, inbound by default; fixed `by_kind` conflating directions |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
 ### Detail on what is done
@@ -820,6 +821,56 @@ wrapper left the suite green. It now walks the actual ancestor stack, and
 The eval also found `/groups/discover` — the route list in the first draft said
 `/discover`, which 404s. A test that checks the wrong URL passes for the wrong
 reason.
+
+### M22 — Who replies, reposts, quotes and likes the most
+
+Requested 2026-07-28: rank followers by each interaction type separately.
+
+The data is already there — `interactions` stores `did`, `direction`, `kind`,
+`occurred_at` per event — so this is a reading problem, not a collection one.
+Three things have to be right or the numbers mislead.
+
+**Direction is the whole question.** "Who replies to me most" is *inbound*
+replies. `Relationship.by_kind` today counts both directions into one bucket,
+so a person I reply to constantly and who never answers looks identical to one
+who replies to me constantly. That is a defect for this feature and a
+misleading number on the profile page already. Counts become
+`{kind: {inbound, outbound}}`, and the leaderboards default to inbound because
+that is what was asked for, with a toggle for the other direction.
+
+**Kinds are not comparable, so they never share a ranking.** A like costs
+nothing and a reply costs real attention; a combined "interactions" table would
+be a like-count leaderboard wearing a disguise. One tab per kind, each ranked on
+its own — which is also exactly what was asked for.
+
+**A count is only as old as the observation window.** `listNotifications` has a
+finite, undocumented retention window, so these are counts of what sonde has
+*seen*, not what happened. If it has been running a fortnight, "most replies"
+means "most replies this fortnight". Every leaderboard states the window it is
+drawn from — earliest event held, and total events — rather than presenting a
+partial count as a total. This is the same discipline as showing 10,041 tracked
+against 11,451 reported.
+
+Not a new nav entry: the top row already needs 1,280px and adding a tenth link
+would push the breakpoint further. It hangs off `/relationships`, which is where
+someone looking for "who talks to me" will already be.
+
+**Verification limit, stated plainly:** the interaction table is empty in every
+local snapshot because it needs the app password, so this was built and tested
+against synthetic data. The shapes are asserted; the volumes are not.
+
+#### Built
+
+`/interactions`, one tab per kind, each with a **Back** column — the same
+interaction in the other direction, which is what distinguishes a correspondent
+from an audience — plus direction and 30d/90d/1y window filters. The observation
+window is printed under every table: how many events, how many accounts, and the
+first and last dates they span.
+
+The defect this turned up: `Relationship.by_kind` counted both directions into
+one bucket, so the profile page could not tell somebody who replies to you
+constantly from somebody you reply to who never answers. Counts are now
+`{kind: {inbound, outbound}}`, and the profile shows the full grid.
 
 ### M21 — Latent groups
 

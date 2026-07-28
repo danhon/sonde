@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -1616,6 +1616,114 @@ async def ranked_relationships(limit: int = 100, offset: int = 0, *,
         except ValueError:
             row["relationship"] = {}
     return rows
+
+
+INTERACTION_KINDS = ("reply", "quote", "repost", "like", "mention")
+
+
+async def interaction_window() -> dict:
+    """What period these counts actually cover.
+
+    `listNotifications` retains for a finite, undocumented time, so every count
+    here is of what sonde has *observed*, not of what happened. A leaderboard
+    that does not say so invites reading a fortnight's replies as a lifetime's.
+    """
+    db = await _db()
+    async with db.execute(
+        """SELECT COUNT(*) AS events, MIN(occurred_at) AS earliest,
+                  MAX(occurred_at) AS latest,
+                  COUNT(DISTINCT did) AS people FROM interactions"""
+    ) as cur:
+        return dict(await cur.fetchone())
+
+
+async def interaction_leaderboard(kind: str, *, direction: str = "inbound",
+                                  days: int | None = None,
+                                  limit: int = 100) -> list[dict]:
+    """Who does the most of one kind of interaction, ranked.
+
+    One kind at a time on purpose. A like costs nothing and a reply costs real
+    attention, so a combined ranking is a like-count leaderboard in disguise.
+    """
+    if kind not in INTERACTION_KINDS:
+        kind = "reply"
+    direction = "outbound" if direction == "outbound" else "inbound"
+    other = "outbound" if direction == "inbound" else "inbound"
+
+    where = ["i.kind = ?", "i.direction = ?", "fs.is_current = 1",
+             "fs.ignored_at IS NULL"]
+    params: list = [kind, direction]
+    if days:
+        where.append("i.occurred_at >= ?")
+        params.append(
+            (datetime.now(timezone.utc) - timedelta(days=days)).isoformat())
+
+    db = await _db()
+    async with db.execute(
+        f"""SELECT i.did, COUNT(*) AS n, MAX(i.occurred_at) AS last_at,
+                   MIN(i.occurred_at) AS first_at,
+                   COUNT(DISTINCT substr(i.occurred_at, 1, 10)) AS days_active,
+                   a.handle, a.display_name, a.avatar_url, a.followers_count,
+                   a.influence_score, a.relationship_score, a.verified_status,
+                   (SELECT COUNT(*) FROM interactions r
+                     WHERE r.did = i.did AND r.kind = i.kind
+                       AND r.direction = '{other}') AS reciprocal
+              FROM interactions i
+              JOIN actors a USING (did)
+              JOIN follower_state fs USING (did)
+             WHERE {' AND '.join(where)}
+             GROUP BY i.did
+             ORDER BY n DESC, last_at DESC
+             LIMIT ?""",
+        (*params, limit),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def interaction_totals(*, days: int | None = None) -> dict:
+    """Per-kind, per-direction totals, for the tab counts."""
+    where = ""
+    params: list = []
+    if days:
+        where = "WHERE occurred_at >= ?"
+        params.append(
+            (datetime.now(timezone.utc) - timedelta(days=days)).isoformat())
+    db = await _db()
+    async with db.execute(
+        f"""SELECT kind, direction, COUNT(*) AS n,
+                   COUNT(DISTINCT did) AS people
+              FROM interactions {where} GROUP BY kind, direction""",
+        tuple(params),
+    ) as cur:
+        out: dict[str, dict[str, dict]] = {}
+        for row in await cur.fetchall():
+            out.setdefault(row["kind"], {})[row["direction"]] = {
+                "n": row["n"], "people": row["people"]}
+    return out
+
+
+async def interaction_breakdown(did: str) -> dict:
+    """One person's counts, split by kind AND direction.
+
+    Split, because a person I reply to constantly who never answers is not the
+    same as one who replies to me constantly, and a single number cannot tell
+    them apart.
+    """
+    db = await _db()
+    async with db.execute(
+        """SELECT kind, direction, COUNT(*) AS n, MAX(occurred_at) AS last_at
+             FROM interactions WHERE did = ? GROUP BY kind, direction""",
+        (did,),
+    ) as cur:
+        out = {k: {"inbound": 0, "outbound": 0, "last_at": None}
+               for k in INTERACTION_KINDS}
+        for row in await cur.fetchall():
+            entry = out.setdefault(
+                row["kind"], {"inbound": 0, "outbound": 0, "last_at": None})
+            entry[row["direction"]] = row["n"]
+            if not entry["last_at"] or row["last_at"] > entry["last_at"]:
+                entry["last_at"] = row["last_at"]
+    return out
 
 
 async def interactions_for(did: str, limit: int = 30) -> list[dict]:

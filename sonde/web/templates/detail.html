@@ -397,9 +397,7 @@
   <p class="mt-2 text-xs text-slate-500">
     Reciprocity {{ p.relationship.reciprocity }} —
     {% if p.relationship.reciprocity > 0.5 %}a two-way relationship{% else %}mostly one-directional{% endif %}.
-    {% if p.relationship.by_kind %}
-    {{ p.relationship.by_kind.items() | map('join', ' × ') | join(' · ') }}.
-    {% endif %}
+
     Weighted by what an interaction costs to give, so a like counts for little
     and a conversation for a lot.
   </p>
@@ -407,6 +405,35 @@
   <p class="mt-2 text-xs text-slate-500">
     No interactions recorded yet — this score is attention scarcity alone.
   </p>
+  {% endif %}
+
+  {#- Kind by direction. A single number per kind cannot tell "I reply to them
+      constantly and they never answer" from the reverse. -#}
+  {% if p.breakdown %}
+  <div class="mt-4 overflow-x-auto">
+    <table class="w-full max-w-lg text-sm">
+      <thead>
+        <tr class="border-b border-slate-200 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
+          <th class="py-1 pr-4"></th><th class="py-1 pr-4 text-right">To you</th>
+          <th class="py-1 pr-4 text-right">From you</th><th class="py-1 pr-4">Last</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for kind, counts in p.breakdown.items() %}
+        {% if counts.inbound or counts.outbound %}
+        <tr class="border-b border-slate-100">
+          <td class="py-1 pr-4 font-mono text-[10px] uppercase tracking-wider text-slate-500">
+            <a href="/interactions?kind={{ kind }}" class="hover:text-red-800">{{ kind }}</a>
+          </td>
+          <td class="py-1 pr-4 text-right font-mono tabular-nums">{{ counts.inbound }}</td>
+          <td class="py-1 pr-4 text-right font-mono tabular-nums text-slate-500">{{ counts.outbound }}</td>
+          <td class="py-1 pr-4 font-mono text-xs text-slate-400">{{ (counts.last_at or "")[:10] }}</td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
   {% endif %}
 
   {% if p.interactions %}
