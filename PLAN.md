@@ -583,7 +583,8 @@ Sub-steps for the scoring work are sequenced in
 | M16 | Job batches on /settings | ✅ done | Five ordered batches; individual jobs collapsed |
 | M17 | Attention scarcity in the relationship score | ✅ done | 388 of 1,500 score; the ratio's top score is this one's zero |
 | M18 | Game industry group | ✅ done | 84 members; validation pass killed 18 of the first 105 |
-| M19 | Mobile responsiveness | ✅ done | Measured 767px of sideways scroll at 320px; now zero across 56 renders |
+| M19 | Mobile responsiveness | ✅ done | 767px of sideways scroll at 320px, fixed |
+| M19b | Nav regression fix | ✅ done | M19 removed the desktop menu entirely; eval was rect-based and missed it |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
 ### Detail on what is done
@@ -816,6 +817,51 @@ wrapper left the suite green. It now walks the actual ancestor stack, and
 The eval also found `/groups/discover` — the route list in the first draft said
 `/discover`, which 404s. A test that checks the wrong URL passes for the wrong
 reason.
+
+### M19b — the nav regression, and why the eval missed it
+
+M19 shipped a nav that **removed the desktop menu**. Reported against desktop
+Safari; it reproduced identically in Chromium, so it was never Safari-specific.
+
+The cause: one shared markup block — a `<details>` whose panel was forced
+visible at wide widths with `display: flex`. **A closed `<details>` does not
+paint its slotted content, whatever `display` the child is given.** The links
+were in the DOM with real bounding boxes and were simply never drawn; the nav
+collapsed from 95px to 35px.
+
+**Why the eval passed it.** Every check was rect-based — `scrollWidth`,
+`getBoundingClientRect().height` — and a laid-out-but-unpainted element has a
+perfectly good rect. It reported ten visible links on a page showing none. The
+fix is `checkVisibility({checkVisibilityCSS: true})`, which asks whether the
+element is actually painted. Everything in the eval now uses it.
+
+Three further corrections, all found by re-running against the broken build
+rather than by reasoning:
+
+- **Desktop widths were not being tested at all.** The viewport list stopped at
+  768. A *desktop* regression against a mobile-only eval was never going to be
+  caught. Now 320–1440, seven widths, two engines, 196 renders.
+- **The reachability check hardcoded the breakpoint** — "≥768px means a full
+  row is showing" — which is a guess about the CSS, not a question about the
+  app. It broke the moment the split moved. It now asks the same thing at every
+  width: is every section visible, or reachable by opening a menu?
+- **A blind `click()` on the menu hung for 30 seconds** instead of reporting
+  that the button was itself invisible. It checks `is_visible` first.
+
+**The fix.** Two separate elements, neither overriding the other's native
+behaviour: the pre-M19 row at `xl:` and up, a real disclosure below it. The
+split is at `xl:`, not `sm:`, because measurement says the row needs 1,280px —
+below that it overflowed its own container by 121–505px, which **it also did
+before M19**. At ≥1280 the markup is byte-identical to the nav that worked.
+
+Two attempts to improve the row while fixing it were measured and discarded:
+`flex-wrap` plus `ml-auto` sends the actor span to a second line, giving 115px
+of nav against the original 95.
+
+Verified both directions: the eval now reports 196 failures against the shipped
+build ("9 sections not visible and no usable menu to reach them" at 1024, 1280
+and 1440) and zero against the fix. The static suite gained two nav checks,
+which also fail against the shipped build.
 
 ### M18 — Game industry
 

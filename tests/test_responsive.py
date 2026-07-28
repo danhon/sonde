@@ -116,8 +116,38 @@ def test_the_nav_collapses_on_small_screens():
     nav = BASE[BASE.index("<nav"):BASE.index("</nav>")]
     assert "<details" in nav, "nav no longer collapses to a disclosure"
     assert "<summary" in nav
-    # The link row must be hidden until opened on mobile, and a row from sm: up.
-    assert "group-open:flex" in nav and "sm:flex" in nav
+
+
+def test_the_two_nav_variants_are_mutually_exclusive():
+    """The regression: one shared block, shown by overriding <details>.
+
+    A closed `<details>` does not PAINT its slotted panel, whatever `display`
+    the child is given, so the desktop nav had no visible links at all — they
+    had bounding boxes and were never drawn. The wide row and the disclosure
+    must be separate elements, each hidden at the other's widths, so neither
+    depends on overriding the other's native behaviour.
+    """
+    nav = BASE[BASE.index("<nav"):BASE.index("</nav>")]
+    details = nav[nav.index("<details"):nav.index("</details>")]
+
+    assert "group-open:" not in details.split(">", 1)[1].split("</summary>")[-1], (
+        "the disclosure panel is being revealed by a CSS override again"
+    )
+    # The disclosure hides at some breakpoint, and a separate row appears there.
+    hide = re.search(r"<details[^>]*\b(sm|md|lg|xl):hidden", details)
+    assert hide, "the disclosure never hides on wide screens"
+    breakpoint_ = hide.group(1)
+    assert f"{breakpoint_}:flex" in nav, (
+        f"the disclosure hides at {breakpoint_}: but no row appears there"
+    )
+
+
+def test_both_nav_variants_carry_every_section():
+    """One shared link list, so the two variants cannot drift apart."""
+    nav = BASE[BASE.index("<nav"):BASE.index("</nav>")]
+    assert nav.count("{%- for href, label in NAV %}") == 2, (
+        "nav links are no longer generated from the shared NAV list"
+    )
 
 
 def test_the_nav_row_never_reverts_to_a_rigid_flex_row():

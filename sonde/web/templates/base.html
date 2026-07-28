@@ -5,16 +5,37 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}sonde{% endblock %}</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Safari draws a disclosure triangle that `list-style: none` alone does
+       not remove, so both rules are needed. */
+    summary { list-style: none; }
+    summary::-webkit-details-marker { display: none; }
+  </style>
 </head>
 <body class="bg-slate-100 text-slate-900 antialiased">
-  {#- The nav was ten links in a flex row with no wrap. Text will not compress
-      below its intrinsic width, so on a phone the row overflowed the viewport
-      and dragged the whole page sideways with it — which made several
-      unrelated pages look broken when they were only being pushed off-screen.
+  {#- The nav is written TWICE, and that is deliberate.
 
-      Below sm: it is a <details> disclosure. Native, so no JavaScript, and it
-      keeps chrome to one line where flex-wrap would stack three rows of
-      uppercase links above every page. -#}
+      M19 first shipped one shared block: a <details> whose panel was forced
+      visible at desktop with `display: flex`. A closed <details> does not
+      PAINT its slotted content, whatever display the child is given — so the
+      desktop nav had no links at all. They were in the DOM, with real bounding
+      boxes and `display: flex`, and simply never drawn; the nav collapsed from
+      95px to 35px. Measured identically in Chromium and WebKit, so this was
+      never Safari-specific — it broke everywhere, and Safari is where it got
+      noticed.
+
+      The eval missed it because every check it had was rect-based, and a
+      laid-out-but-unpainted element has a perfectly good rect. It now asks
+      `checkVisibility()` instead.
+
+      So: a plain row, and a real disclosure, neither depending on overriding
+      the other's native behaviour. The link list is shared, so there is one
+      place to edit.
+
+      The split is at xl:, not sm:, because measurement says the row genuinely
+      needs 1,280px — below that it overflowed its own container by 121–505px,
+      which it did before M19 as well. The disclosure covers that band instead.
+      At >=1280 this markup is byte-identical to the pre-M19 nav. -#}
   {%- set NAV = [
         ('/followers', 'Followers'), ('/influential', 'Influential'),
         ('/verified', 'Verified'), ('/groups', 'Groups'),
@@ -22,30 +43,37 @@
         ('/changes', 'Changes'), ('/ignored', 'Hidden'),
         ('/settings', 'Settings')] -%}
   <nav class="border-b-2 border-slate-900 bg-white">
-    <details class="group mx-auto max-w-6xl px-4 sm:px-6 [&>summary]:sm:hidden" id="nav">
-      <summary class="flex cursor-pointer list-none items-center justify-between sm:py-4">
-        {#- py-2 on the wordmark itself, not just the row: the browser eval
-            measures the <a>, and at text-xl its own box is only 28px. -#}
-        <a href="/" class="py-2 font-mono text-xl font-semibold tracking-tight">sonde</a>
-        <span class="flex items-center gap-2 py-2 pl-4 font-mono text-xs uppercase tracking-widest text-slate-500">
+    {#- The pre-M19 row, unchanged apart from `hidden xl:flex`. Deliberately
+        identical: this layout worked, and trying to improve it while fixing
+        the break made things worse — `flex-wrap` plus `ml-auto` sends the
+        actor span to a second line, 115px of nav against the original 95. -#}
+    <div class="mx-auto hidden max-w-6xl items-baseline gap-6 px-6 py-4 xl:flex">
+      <a href="/" class="font-mono text-xl font-semibold tracking-tight">sonde</a>
+      {%- for href, label in NAV %}
+      <a href="{{ href }}"
+         class="font-mono text-xs uppercase tracking-widest text-slate-500 hover:text-red-800">{{ label }}</a>
+      {%- endfor %}
+      <span class="ml-auto font-mono text-xs uppercase tracking-widest text-slate-400">{{ settings.actor }}</span>
+      <span class="font-mono text-xs text-slate-400">{{ settings.build_sha }}</span>
+    </div>
+
+    {#- Below xl: — a native disclosure. The panel is only ever shown by the
+        browser's own open/closed handling, which every engine agrees on. -#}
+    <details class="group px-4 xl:hidden" id="nav">
+      <summary class="flex cursor-pointer items-center justify-between">
+        <a href="/" class="py-3 font-mono text-xl font-semibold tracking-tight">sonde</a>
+        <span class="flex items-center gap-2 py-3 pl-4 font-mono text-xs uppercase tracking-widest text-slate-500">
           <span aria-hidden="true" class="text-base leading-none group-open:hidden">☰</span>
           <span aria-hidden="true" class="hidden text-base leading-none group-open:inline">✕</span>
           Menu
         </span>
       </summary>
-
-      {#- `hidden` + `group-open:flex` is the mobile state; from sm: up it is
-          always a row, whether or not the disclosure happens to be open. -#}
-      <div class="hidden flex-col pb-3 group-open:flex sm:flex sm:flex-row sm:flex-wrap
-                  sm:items-baseline sm:gap-6 sm:pb-4">
-        <a href="/" class="hidden font-mono text-xl font-semibold tracking-tight sm:inline">sonde</a>
+      <div class="flex flex-col pb-2">
         {%- for href, label in NAV %}
         <a href="{{ href }}"
-           class="border-t border-slate-100 py-3 font-mono text-xs uppercase tracking-widest
-                  text-slate-500 hover:text-red-800 sm:border-0 sm:py-0">{{ label }}</a>
+           class="flex min-h-[44px] items-center border-t border-slate-100 font-mono
+                  text-xs uppercase tracking-widest text-slate-500 hover:text-red-800">{{ label }}</a>
         {%- endfor %}
-        <span class="ml-auto hidden font-mono text-xs uppercase tracking-widest text-slate-400 sm:inline">{{ settings.actor }}</span>
-        <span class="hidden font-mono text-xs text-slate-400 sm:inline">{{ settings.build_sha }}</span>
       </div>
     </details>
 
