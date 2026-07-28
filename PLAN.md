@@ -582,7 +582,7 @@ Sub-steps for the scoring work are sequenced in
 | M14 | Relationship score | ✅ done | Separate from influence; notifications ~190x cheaper than per-post |
 | M16 | Job batches on /settings | ✅ done | Five ordered batches; individual jobs collapsed |
 | M17 | Attention scarcity in the relationship score | ✅ done | 388 of 1,500 score; the ratio's top score is this one's zero |
-| M18 | Game industry group | 📋 planned | Target-set mismatch is the real problem: only 6% of matches are in it |
+| M18 | Game industry group | ✅ done | 84 members; validation pass killed 18 of the first 105 |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
 ### Detail on what is done
@@ -735,7 +735,7 @@ send regardless, because silence is otherwise ambiguous between "nothing
 happened" and "the app died". Reports stale sweeps, held sweeps, failed runs and
 an app password that is set but not authenticating.
 
-### M18 — Game industry (planned)
+### M18 — Game industry
 
 Requested 2026-07-27, with [Cat Manning](https://bsky.app/profile/catacalypto.bsky.social)
 — "narrative director at Firaxis" — as the worked example.
@@ -808,14 +808,46 @@ IV, a localization writer at Nintendo and a principal UX designer at Riot — no
 is a developer in the sense the word normally carries, and all four are exactly
 who was meant. One line to change if "Game developers" is preferred.
 
-**Validation before shipping**, as with propagation: hand-check the full T4b
-list, report precision, and only then let it create memberships. The bar is that
-no fan-only account appears; a missing practitioner is recoverable, a group that
-is one-third wrong makes every group count untrustworthy.
-
 **Cost**: zero API calls for detection. T5 reuses the affinity index already
-built. Hydrating the ~190 newly-in-scope people for ranking is ~2 calls at
+built. Hydrating the newly-in-scope people for ranking is ~4 calls at
 `getProfiles`' batch size of 25.
+
+#### What the validation pass caught
+
+Hand-checking the full list before letting it create memberships was the most
+valuable hour of this milestone. The first run produced **105 members, 18 of
+them wrong**, in three distinct failure modes. Final: **84 members** — 11
+studio, 69 text, 3 Wikidata, 4 link — from a target set of 637.
+
+1. **A studio name is not an employer.** "Into Marvel, Riot Games properties"
+   (a fan), "Partnered with Epic Games" (a creator programme) and a bare
+   PlayStation in a list of hobbies all scored 0.9. Studio matches now require
+   an employment preposition — `at` or `@`, and *only* those two, because
+   allowing "with" readmitted the Epic Games partnership.
+2. **`systems design` is not game design.** Six false positives, among them
+   "Design systems designer" and "Service & Systems Design". It is service- and
+   UX-design vocabulary and has been dropped from the pattern; `narrative`,
+   `level`, `combat`, `encounter` and `quest` design stay.
+3. **The negation rule was too tight.** It required the negative word directly
+   before the match, so "Former art daddy at Obsidian Entertainment" and
+   "Previously: Adobe/Substance, Rockstar Games" were both credited as current
+   employers. Studio matches now look back 56 characters — but stop at a
+   sentence boundary, so "ex-Twitter. Now at Bungie" is correctly current.
+
+Two studios were removed outright for being ordinary English: **Valve** matched
+a digital-ethics consultant and **Telltale** matched a comic studio's use of the
+adjective. Rare, King, DICE and Sega were never added for the same reason.
+`hobbyist` and `amateur` joined the negation list after "Hobbyist Game
+Developer" turned up.
+
+Residual known imprecision, all at the 0.65 text tier and all reviewable: bios
+that *list an interest* rather than a job ("Sciency Games & Game Design",
+"likes … Gamedev, RTS, FPS"). Roughly 3 of 69.
+
+Note that a `classify` run deletes and rebuilds derived memberships, so
+propagation rows disappear until `propagate` runs. The "Rebuild groups" batch
+already orders `groups → discover → propagate`, so this only shows if the steps
+are run individually.
 
 ### M17 — Attention scarcity
 

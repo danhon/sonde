@@ -460,7 +460,17 @@ async def post_targets(ttl_hours: int = 20, limit: int | None = None) -> list[st
 
 
 async def group_target_dids(top_n: int = 500) -> list[str]:
-    """Top N by influence plus every verified follower, ignored excluded."""
+    """Top N by influence, every verified follower, plus sweep candidates.
+
+    The third term is M18. A top-N-by-influence set silently excludes any group
+    whose members are less prominent than the corpus average: 198 followers have
+    a game-industry bio and only 11 were in scope, because every influence
+    component reads reach and studio staff are not famous the way journalists
+    are. Groups that opt into `sweep_all` are matched against the whole list.
+
+    Costs nothing extra — `getFollowers` returns `description` with the sweep,
+    so roughly 8,000 of 10,041 bios are already on disk.
+    """
     db = await _db()
     async with db.execute(
         """SELECT did FROM (
@@ -475,7 +485,25 @@ async def group_target_dids(top_n: int = 500) -> list[str]:
               AND a.verified_status = 'valid'""",
         (top_n,),
     ) as cur:
-        return [r["did"] for r in await cur.fetchall()]
+        dids = {r["did"] for r in await cur.fetchall()}
+    return sorted(dids | set(await sweep_candidate_dids()))
+
+
+async def sweep_candidate_dids() -> list[str]:
+    """Followers whose own bio carries evidence precise enough to be in scope."""
+    from sonde.groups import SWEEP_GROUPS, sweep_match
+
+    if not SWEEP_GROUPS:
+        return []
+    db = await _db()
+    async with db.execute(
+        """SELECT a.did, a.description FROM actors a
+             JOIN follower_state fs USING (did)
+            WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
+              AND a.description IS NOT NULL AND a.description != ''"""
+    ) as cur:
+        return [r["did"] for r in await cur.fetchall()
+                if sweep_match(r["description"])]
 
 
 async def commit() -> None:

@@ -34,6 +34,39 @@ DOMAIN = 0.9
 TEXT = 0.65
 PROPAGATION = 0.5
 
+STUDIO = 0.9
+
+# Named game studios. A studio name in a bio is a checkable fact rather than a
+# self-description, which is why it scores above ordinary role text.
+#
+# Excludes studios whose names are ordinary English. Measured on the live list:
+# "Valve" matched a digital-ethics consultant and "Telltale" matched a comic
+# studio's "telltale" — both at 0.9 confidence. Rare, King, DICE and Sega are
+# left out for the same reason. A studio that cannot be named unambiguously is
+# left to the role patterns rather than allowed to poison an evidence tier.
+STUDIOS: list[str] = [
+    "Firaxis", "Bungie", "Riot Games", "Blizzard", "Naughty Dog",
+    "Insomniac Games", "Double Fine", "Klei", "Failbetter", "inkle",
+    "Obsidian Entertainment", "Larian", "Ubisoft", "BioWare", "Arkane",
+    "Respawn", "Guerrilla Games", "Supergiant", "thatgamecompany",
+    "Annapurna Interactive", "Devolver", "Rockstar Games", "Electronic Arts",
+    "Nintendo", "PlayStation", "Xbox Game Studios", "id Software", "Mojang",
+    "Epic Games", "Roblox", "Niantic", "Media Molecule",
+    "The Chinese Room", "Hello Games", "Team17", "Paradox Interactive",
+    "CD Projekt", "Remedy Entertainment", "IO Interactive",
+    "Crystal Dynamics", "Square Enix", "Capcom", "Konami", "Bandai Namco",
+    "FromSoftware", "PlatinumGames", "Infinity Ward", "343 Industries",
+    "Playground Games", "Creative Assembly", "Sports Interactive",
+    "Codemasters", "Frontier Developments", "Jagex", "Zynga", "Bethesda",
+]
+
+# A studio name only counts as employment when introduced like employment.
+# Without this, "Into Marvel, Riot Games properties" (a fan), "Partnered with
+# Epic Games" (a creator programme) and a bare "PlayStation" in a list of
+# hobbies all scored 0.9. Deliberately only `at` and `@` — "with" readmitted
+# the Epic Games partnership.
+EMPLOYED_AT = r"(?:\bat\b|@)[^.|•\n]{0,20}?"
+
 # Seeded definitions. Editable, and the aliases matter more than the name.
 GROUPS: list[dict] = [
     {"slug": "journalists", "name": "Journalists",
@@ -92,6 +125,32 @@ GROUPS: list[dict] = [
      "org_names": ["Google", "Google LLC", "Alphabet Inc.", "DeepMind", "YouTube"]},
     {"slug": "microsoft", "name": "Microsoft",
      "org_names": ["Microsoft", "Microsoft Corporation", "GitHub", "LinkedIn"]},
+    # M18. `sweep_all` because the top-500-by-influence target set finds only 11
+    # of the 198 matches in the full list — see the milestone note. Every role
+    # pattern here is a multi-word job title rather than a common noun, which is
+    # what makes running it over 8,000 bios safe where "writer" would not be.
+    {"slug": "game-industry", "name": "Game industry",
+     "sweep_all": True,
+     "occupations": ["video game developer", "video game designer",
+                     "game designer", "game artist", "game programmer",
+                     "game director"],
+     "link_kinds": ["games"],
+     "org_names": STUDIOS,
+     "studios": STUDIOS,
+     "roles": [
+         r"\b(?:game\s?dev(?:eloper|elopment)?s?|gamedev)\b",
+         r"\bgame\s(?:design(?:er|ing)?|writer|artist|producer|programmer|"
+         r"director|audio|composer|studio|engineer)\b",
+         # No `systems` here. "Systems design" is service- and UX-design
+         # vocabulary: it matched six people on the live list, among them
+         # "Design systems designer" and "Service & Systems Design".
+         r"\b(?:narrative|level|combat|encounter|quest)\sdesign(?:er|ing)?\b",
+         r"\bnarrative\sdirector\b",
+         r"\btechnical\sartist\b",
+         r"\bgames?\s(?:journalis\w+|critic\w*)\b",
+         r"\bindie\sgames?\sdev\w*\b",
+         r"\b(?:unity3d|unity\sengine|unreal\sengine|godot)\b",
+     ]},
 ]
 
 BY_SLUG = {g["slug"]: g for g in GROUPS}
@@ -100,7 +159,7 @@ BY_SLUG = {g["slug"]: g for g in GROUPS}
 # job description.
 NEGATIVE = re.compile(
     r"\b(ex[-\s]|former(?:ly)?|previous(?:ly)?|retired|aspiring|wannabe|"
-    r"used to be|recovering|not a)\s*$", re.I)
+    r"used to be|recovering|not a|hobbyist|amateur)\s*$", re.I)
 
 
 @dataclass
@@ -133,6 +192,40 @@ def _matches_role(patterns: list[str], text: str | None) -> str | None:
             if NEGATIVE.search(before):
                 continue
             return found.group(0)
+    return None
+
+
+# The role rule requires a negation immediately before the match. Studio names
+# are listed differently — "Former art daddy at Obsidian Entertainment" and
+# "Previously: Adobe/Substance, Rockstar Games" both put words in between, and
+# both were credited as current employers at 0.9 until this existed.
+NEGATIVE_ANYWHERE = re.compile(
+    r"\b(ex|former(?:ly)?|previous(?:ly)?|retired|alum(?:ni|nus)?|prev)\b", re.I)
+# ...but a sentence boundary ends the run, so "ex-Twitter. Now at Bungie" is not
+# negated by the "ex-".
+BOUNDARY = re.compile(r"[.|•\n]")
+
+
+def _negated_before(text: str, start: int, window: int = 56) -> bool:
+    before = text[max(0, start - window):start]
+    last = None
+    for match in BOUNDARY.finditer(before):
+        last = match
+    if last is not None:
+        before = before[last.end():]
+    return NEGATIVE_ANYWHERE.search(before) is not None
+
+
+def _matches_studio(studios: list[str], text: str | None) -> str | None:
+    """A named studio introduced as an employer, and not in the past tense."""
+    if not text:
+        return None
+    for studio in studios:
+        pattern = rf"{EMPLOYED_AT}(?<!\w){re.escape(studio)}(?!\w)"
+        for found in re.finditer(pattern, text, re.I):
+            if _negated_before(text, found.start()):
+                continue
+            return studio
     return None
 
 
@@ -196,9 +289,42 @@ def classify(actor: dict) -> list[Membership]:
             if kind in link_kinds:
                 add(slug, "domain", DOMAIN, f"self-declared {kind} link")
 
-        # T4 — bio and post text.
+        # T4a — a named employer in the bio. Above plain role text because a
+        # studio name is a checkable fact, not a self-description.
+        named = _matches_studio(group.get("studios", []), text)
+        if named:
+            add(slug, "studio", STUDIO, f"names {named} in bio or recent posts")
+
+        # T4b — bio and post text.
         found = _matches_role(group.get("roles", []), text)
         if found:
             add(slug, "text", TEXT, f"matched {found!r} in bio or recent posts")
 
     return list(out.values())
+
+
+# Groups whose rules are precise enough to run over every follower rather than
+# only the top-N target set. Opting in is a measured decision per group, not a
+# default: "writer" matches 626 bios and would make the target set meaningless,
+# while "narrative designer" matches people who are one.
+SWEEP_GROUPS = [g for g in GROUPS if g.get("sweep_all")]
+
+
+def sweep_match(text: str | None) -> tuple[str, str] | None:
+    """Evidence strong enough to pull someone into the grouping set at all.
+
+    Returns `(slug, evidence)`, or None. This is the widening rule for M18: the
+    top 500 by influence plus every verified follower contained just 11 of the
+    198 game-industry accounts, because studio staff are not prominent the way
+    journalists are and every influence component reads reach.
+    """
+    if not text:
+        return None
+    for group in SWEEP_GROUPS:
+        named = _matches_studio(group.get("studios", []), text)
+        if named:
+            return group["slug"], f"names {named}"
+        found = _matches_role(group.get("roles", []), text)
+        if found:
+            return group["slug"], f"matched {found!r}"
+    return None

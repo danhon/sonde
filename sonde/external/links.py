@@ -38,6 +38,8 @@ PLATFORMS: dict[str, tuple[str, str]] = {
     "patreon.com": ("supported", "takes support on Patreon"),
     "ko-fi.com": ("supported", "takes support on Ko-fi"),
     "itch.io": ("games", "publishes games on itch.io"),
+    "gamejolt.com": ("games", "publishes games on Game Jolt"),
+    "steampowered.com": ("games", "has a Steam store page"),
     "bandcamp.com": ("music", "publishes music on Bandcamp"),
     "twitch.tv": ("streaming", "streams on Twitch"),
     "youtube.com": ("video", "publishes video on YouTube"),
