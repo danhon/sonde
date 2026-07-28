@@ -1,8 +1,9 @@
 {% extends "base.html" %}
-{% from "_sort.html" import who %}
+{% from "_sort.html" import who with context %}
 {% set base = {'kind': kind, 'direction': direction, 'days': days} %}
 {% macro link(overrides) -%}
-  {%- set p = {'kind': kind, 'direction': direction, 'days': days} -%}
+  {%- set p = {'kind': kind, 'direction': direction, 'days': days,
+               'order': order, 'sort': sort} -%}
   {%- set _ = p.update(overrides) -%}
   {%- set parts = [] -%}
   {%- for k, v in p.items() %}{% if v %}{% set _ = parts.append(k ~ '=' ~ v) %}{% endif %}{% endfor -%}
@@ -14,6 +15,22 @@
 {% set VERB_OUT = {'reply': 'you replied to', 'quote': 'you quoted',
                    'repost': 'you reposted', 'like': 'you liked',
                    'mention': 'you mentioned'} %}
+{#- A sortable header. Clicking the active column flips direction, as
+    everywhere else in sonde; every other filter is carried along, which is the
+    bug the /followers table had. -#}
+{% macro sth(key, label, align='left') -%}
+  {%- set active = (order == key) -%}
+  {%- set flip = 'asc' if (active and sort == 'desc') else 'desc' -%}
+  <th class="py-2 pr-4 text-{{ align }} font-mono text-[10px] uppercase tracking-widest
+             {% if active %}text-red-800{% else %}text-slate-500{% endif %}">
+    <a href="{{ link({'order': key, 'sort': flip}) }}"
+       class="inline-flex min-h-[36px] items-center gap-1 py-2 hover:text-red-800">
+      {{ label }}
+      <span aria-hidden="true" class="{% if not active %}opacity-0{% endif %}">
+        {{ '↑' if sort == 'asc' else '↓' }}</span>
+    </a>
+  </th>
+{%- endmacro %}
 {% block title %}Interactions — sonde{% endblock %}
 {% block content %}
 
@@ -77,13 +94,14 @@
     <thead>
       <tr class="border-b border-slate-300 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
         <th class="py-2 pr-4 text-right">#</th>
-        <th class="py-2 pr-4">Handle</th>
+        {{ sth('handle', 'Handle') }}
         <th class="py-2 pr-4">Name</th>
-        <th class="py-2 pr-4 text-right">{{ kind }}s</th>
-        <th class="py-2 pr-4 text-right" title="the same kind of interaction in the other direction">Back</th>
-        <th class="py-2 pr-4 text-right">Days</th>
-        <th class="py-2 pr-4">Last</th>
-        <th class="py-2 pr-4 text-right">Rel.</th>
+        {{ sth('count', kind ~ 's', 'right') }}
+        {{ sth('back', 'Back', 'right') }}
+        {{ sth('days', 'Days', 'right') }}
+        {{ sth('last', 'Last') }}
+        {{ sth('followers', 'Followers', 'right') }}
+        {{ sth('relationship', 'Rel.', 'right') }}
       </tr>
     </thead>
     <tbody>
@@ -100,6 +118,9 @@
         </td>
         <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">{{ r.days_active }}</td>
         <td class="py-2 pr-4 font-mono text-xs text-slate-400">{{ (r.last_at or "")[:10] }}</td>
+        <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">
+          {% if r.followers_count is not none %}{{ "{:,}".format(r.followers_count) }}{% else %}—{% endif %}
+        </td>
         <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-400">
           {{ r.relationship_score if r.relationship_score is not none else "—" }}
         </td>
@@ -121,15 +142,37 @@
    happened: the notification API's retention window is finite and
    undocumented, so a short observation period silently truncates history. #}
 {% if window.events %}
-<p class="mt-6 max-w-2xl border-l-2 border-slate-300 pl-3 text-xs text-slate-500">
-  Counting {{ "{:,}".format(window.events) }} interactions with
-  {{ "{:,}".format(window.people) }} accounts, observed from
-  <span class="font-mono">{{ (window.earliest or "")[:10] }}</span> to
-  <span class="font-mono">{{ (window.latest or "")[:10] }}</span>.
-  Bluesky only retains notifications for a while, so this is what sonde has
-  <em>seen</em> rather than everything that happened — and it gets more complete
-  the longer sonde runs.
-</p>
+<div class="mt-6 max-w-2xl border-l-2 border-slate-300 pl-3 text-xs text-slate-500">
+  <p>
+    {{ "{:,}".format(window.events) }} interactions with
+    {{ "{:,}".format(window.people) }} accounts. The two directions come from
+    different places and do <strong>not</strong> cover the same period:
+  </p>
+  <div class="overflow-x-auto">
+  <table class="mt-2 w-full max-w-md">
+    <tbody>
+      {% for d, dlabel, source in [
+          ('inbound', 'To you', 'from notifications — Bluesky retains these for a limited, undocumented period, so this is the half that truncates'),
+          ('outbound', 'From you', 'from your own posts, so it reaches back as far as you have posted')] %}
+      {% set w = window.by_direction.get(d) %}
+      {% if w %}
+      <tr class="border-b border-slate-100 align-top">
+        <td class="py-1 pr-3 font-mono text-[10px] uppercase tracking-widest">{{ dlabel }}</td>
+        <td class="py-1 pr-3 font-mono tabular-nums">{{ "{:,}".format(w.events) }}</td>
+        <td class="py-1 pr-3 font-mono">{{ (w.earliest or "")[:10] }} → {{ (w.latest or "")[:10] }}</td>
+      </tr>
+      <tr><td></td><td colspan="2" class="pb-2 text-[11px] text-slate-400">{{ source }}</td></tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="mt-1">
+    So an inbound count is what sonde has <em>seen</em>, not everything that
+    happened, and it gets more complete the longer sonde runs. Outbound is
+    already close to complete.
+  </p>
+</div>
 {% endif %}
 
 {% endblock %}

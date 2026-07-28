@@ -49,7 +49,33 @@
   {%- if row.verified_status == 'valid' %}<span class="text-sky-700" title="verified">✓</span>{% endif %}
   {%- if row.is_mutual %}<span class="text-emerald-700" title="mutual">⇄</span>{% endif %}
   {%- if row.is_private %}<span class="text-slate-400" title="hidden when logged out">◍</span>{% endif %}
+  {{- follow_back(row) -}}
 </span>
+{%- endmacro -%}
+
+{#- One-click follow-back, on every table that knows whether you follow them.
+
+    Rendered only when `is_mutual` is actually present: a query that does not
+    select it must show nothing rather than a button that claims you are not
+    following someone it never checked.
+
+    This is the only thing sonde writes to Bluesky. It is a real, public follow
+    on a real account, so the same control undoes it — the safety here is
+    reversibility, not a confirmation step, because a confirmation step would
+    defeat the point of one click. -#}
+{%- macro follow_back(row) -%}
+  {%- if row.is_mutual is defined and row.did and settings and settings.enable_follow_write -%}
+    {%- if row.is_mutual -%}
+      <span class="font-mono text-[10px] text-slate-300" title="you follow them">·</span>
+    {%- else -%}
+      <form method="post" action="/followers/{{ row.did }}/follow" class="inline">
+        <button type="submit"
+                class="font-mono text-[10px] uppercase tracking-wider text-slate-400
+                       hover:text-emerald-700"
+                title="follow {{ row.handle }} back — writes a real follow to your account">+follow</button>
+      </form>
+    {%- endif -%}
+  {%- endif -%}
 {%- endmacro -%}
 
 {#- When someone started following. `followed_at` is the exact time, decoded

@@ -103,6 +103,12 @@ class Settings:
     mass_departure_pct: float = field(default_factory=lambda: _float("MASS_DEPARTURE_PCT", 2.0))
 
     # Display policy for followers who turned off logged-out visibility
+    # Following is the one thing sonde writes to Bluesky. On by default because
+    # it was asked for and is useless off, but it is a single switch: set
+    # ENABLE_FOLLOW_WRITE=false and the buttons disappear and the route refuses.
+    enable_follow_write: bool = field(
+        default_factory=lambda: _bool("ENABLE_FOLLOW_WRITE", True)
+    )
     respect_no_unauthenticated: bool = field(
         default_factory=lambda: _bool("RESPECT_NO_UNAUTHENTICATED", False)
     )

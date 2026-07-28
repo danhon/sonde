@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_sort.html" import who, since %}
+{% from "_sort.html" import who, since with context %}
 {% block title %}Followers — sonde{% endblock %}
 
 {#- Build a query string carrying the current filters, so sorting and paging

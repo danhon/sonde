@@ -180,7 +180,8 @@ def create_app() -> FastAPI:
     @app.get("/interactions", response_class=HTMLResponse)
     async def interactions_page(
         request: Request, kind: str = "reply", direction: str = "inbound",
-        days: int | None = None,
+        days: int | None = None, order: str = "count",
+        sort: str = "desc",
     ) -> HTMLResponse:
         """One kind at a time. A like and a reply do not belong in one ranking."""
         from sonde.db import store
@@ -189,11 +190,13 @@ def create_app() -> FastAPI:
             request=request, name="interactions.html",
             context={
                 "rows": await store.interaction_leaderboard(
-                    kind, direction=direction, days=days),
+                    kind, direction=direction, days=days,
+                    order=order, sort_direction=sort),
                 "totals": await store.interaction_totals(days=days),
                 "window": await store.interaction_window(),
                 "kinds": store.INTERACTION_KINDS,
                 "kind": kind, "direction": direction, "days": days,
+                "order": order, "sort": sort,
                 "settings": settings,
             },
         )
@@ -300,6 +303,55 @@ def create_app() -> FastAPI:
         finally:
             await client.aclose()
         return RedirectResponse(f"/followers/{did}", status_code=303)
+
+    @app.post("/followers/{did}/follow")
+    async def follow_back(request: Request, did: str,
+                          undo: bool = False) -> RedirectResponse:
+        """One click, and one click to undo. The only write sonde makes.
+
+        Returns the operator to the page they clicked from, because this is
+        meant to be used while working down a list.
+        """
+        from sonde.api.client import BlueskyClient
+        from sonde.api.follows import FollowError, create_follow, delete_follow
+        from sonde.db import store
+
+        # Only ever a page inside sonde, never an absolute URL from a header we
+        # do not control.
+        back = request.headers.get("referer") or f"/followers/{did}"
+        if "://" in back:
+            back = "/" + back.split("://", 1)[1].split("/", 1)[-1] \
+                if "/" in back.split("://", 1)[1] else "/"
+
+        if not settings.enable_follow_write:
+            return RedirectResponse(f"{back}#writes-disabled", status_code=303)
+
+        target = await store.follow_back_target(did)
+        if target is None:
+            return RedirectResponse(f"{back}#unknown", status_code=303)
+
+        client = BlueskyClient()
+        try:
+            if undo:
+                await delete_follow(client, target.get("follow_uri") or "")
+                await store.forget_my_follow(did)
+            else:
+                if target["already"]:
+                    return RedirectResponse(back, status_code=303)
+                if not target["is_current"] or target["ignored_at"]:
+                    # Follow-back only: sonde never follows a stranger, so a
+                    # stray DID fails here rather than writing.
+                    return RedirectResponse(f"{back}#not-a-follower",
+                                            status_code=303)
+                uri = await create_follow(client, did)
+                await store.record_my_follow(did, uri)
+        except (FollowError, Exception) as exc:  # noqa: BLE001
+            log.warning("follow-back failed for %s: %s", did, exc)
+            await store.record_follow_failure(did, str(exc), undo=undo)
+            return RedirectResponse(f"{back}#follow-failed", status_code=303)
+        finally:
+            await client.aclose()
+        return RedirectResponse(back, status_code=303)
 
     @app.post("/followers/{did}/ignore")
     async def ignore_follower(did: str, restore: bool = False) -> RedirectResponse:

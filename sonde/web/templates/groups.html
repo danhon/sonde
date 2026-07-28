@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_sort.html" import qs, th, who %}
+{% from "_sort.html" import qs, th, who with context %}
 {% set base = {'slug': slug, 'order': order, 'direction': direction} %}
 {% block title %}Groups — sonde{% endblock %}
 {% block content %}

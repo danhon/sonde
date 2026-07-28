@@ -125,6 +125,25 @@ class BlueskyClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def xrpc_post(self, method: str, body: dict[str, Any]) -> dict:
+        """POST an XRPC procedure. Always authenticated, never retried.
+
+        No automatic retry, deliberately. Every procedure sonde calls *writes*
+        to a real account, and a retry after an ambiguous failure risks writing
+        twice — a duplicate follow record is not something a user asked for. A
+        failed write is reported and left for a human to repeat.
+        """
+        token = await authenticator.token()
+        if not token:
+            raise PermissionError("this needs the Bluesky app password")
+        url = f"{AUTHED_BASE.rstrip('/')}/xrpc/{method}"
+        await self.limiter.acquire()
+        self.calls += 1
+        resp = await self._client.post(
+            url, json=body, headers={"Authorization": f"Bearer {token}"})
+        resp.raise_for_status()
+        return resp.json() if resp.content else {}
+
     async def xrpc(
         self, method: str, params: dict[str, Any] | None = None,
         *, base_url: str | None = None, authed: bool = False,

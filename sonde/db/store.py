@@ -109,6 +109,13 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("relationship_score", "REAL"),
         ("relationship_components", "TEXT"),
     ],
+    "my_follows": [
+        # Needed to undo. Only set for follows sonde created; ones discovered by
+        # the follows sweep have no URI, and their button says so rather than
+        # offering an undo that would fail.
+        ("follow_uri", "TEXT"),
+        ("followed_by_sonde_at", "TEXT"),
+    ],
     "group_candidates": [
         # A cluster candidate IS its members — unlike a rule-based one, there is
         # no term to re-run later, so accepting it has to use the stored list.
@@ -1118,11 +1125,22 @@ async def replace_my_follows(dids: Sequence[str]) -> None:
     """
     db = await _db()
     now = utcnow()
+    # The follow URIs sonde created are the only thing here that cannot be
+    # re-fetched — `getFollows` returns subjects, not record keys — and without
+    # one a follow cannot be undone. Delete-then-insert would drop them on the
+    # next sweep, so they are carried across.
+    async with db.execute(
+        "SELECT did, follow_uri, followed_by_sonde_at FROM my_follows "
+        "WHERE follow_uri IS NOT NULL"
+    ) as cur:
+        created = {r["did"]: (r["follow_uri"], r["followed_by_sonde_at"])
+                   for r in await cur.fetchall()}
     await db.execute("DELETE FROM my_follows")
     await db.executemany(
-        "INSERT INTO my_follows (did, last_seen_at) VALUES (?,?) "
+        "INSERT INTO my_follows (did, last_seen_at, follow_uri, "
+        "                        followed_by_sonde_at) VALUES (?,?,?,?) "
         "ON CONFLICT (did) DO UPDATE SET last_seen_at = excluded.last_seen_at",
-        [(did, now) for did in dids],
+        [(did, now, *created.get(did, (None, None))) for did in dids],
     )
 
 
@@ -1602,8 +1620,10 @@ async def ranked_relationships(limit: int = 100, offset: int = 0, *,
     async with db.execute(
         f"""SELECT a.did, a.handle, a.display_name, a.avatar_url,
                    a.followers_count, a.influence_score, a.relationship_score,
-                   a.relationship_components, a.verified_status
+                   a.relationship_components, a.verified_status,
+                   (mf.did IS NOT NULL) AS is_mutual
               FROM actors a JOIN follower_state fs USING (did)
+              LEFT JOIN my_follows mf ON mf.did = a.did
              WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
                AND a.relationship_score > 0
              ORDER BY {column} {arrow} NULLS LAST, a.handle LIMIT ? OFFSET ?""",
@@ -1621,24 +1641,69 @@ async def ranked_relationships(limit: int = 100, offset: int = 0, *,
 INTERACTION_KINDS = ("reply", "quote", "repost", "like", "mention")
 
 
-async def interaction_window() -> dict:
-    """What period these counts actually cover.
+async def record_follow_failure(did: str, error: str, *, undo: bool) -> None:
+    """A failed write is logged, not swallowed."""
+    db = await _db()
+    await db.execute(
+        "INSERT INTO follow_events (did, event, reason, detail, detected_at) "
+        "VALUES (?,?,?,?,?)",
+        (did, "unfollow_failed" if undo else "follow_failed", "error",
+         error[:500], utcnow()),
+    )
+    await db.commit()
 
-    `listNotifications` retains for a finite, undocumented time, so every count
-    here is of what sonde has *observed*, not of what happened. A leaderboard
-    that does not say so invites reading a fortnight's replies as a lifetime's.
+
+async def interaction_window() -> dict:
+    """What period these counts actually cover — **per direction**.
+
+    The two directions come from different places and have wildly different
+    coverage, so one combined window is a misleading number:
+
+      inbound   `listNotifications`, which retains for a finite, undocumented
+                period. This is the one that truncates.
+      outbound  my own author feed, which is my whole posting history. It
+                reaches back as far as I have posted.
+
+    Reported together, the outbound floor sets the earliest date and makes
+    inbound look complete back to it. On real data that read as "observed from
+    2023-12-16" when the inbound half almost certainly starts much later.
     """
     db = await _db()
+    async with db.execute(
+        """SELECT direction, COUNT(*) AS events, MIN(occurred_at) AS earliest,
+                  MAX(occurred_at) AS latest, COUNT(DISTINCT did) AS people
+             FROM interactions GROUP BY direction"""
+    ) as cur:
+        by_direction = {r["direction"]: dict(r) for r in await cur.fetchall()}
     async with db.execute(
         """SELECT COUNT(*) AS events, MIN(occurred_at) AS earliest,
                   MAX(occurred_at) AS latest,
                   COUNT(DISTINCT did) AS people FROM interactions"""
     ) as cur:
-        return dict(await cur.fetchone())
+        out = dict(await cur.fetchone())
+    out["by_direction"] = by_direction
+    return out
+
+
+# Sorting the aggregate, not the row: these are GROUP BY results, so the
+# sortable set is the computed columns plus the actor's own.
+IX_SORTABLE = {
+    "count": "n",
+    "back": "reciprocal",
+    "days": "days_active",
+    "last": "last_at",
+    "first": "first_at",
+    "handle": "a.handle",
+    "followers": "a.followers_count",
+    "influence": "a.influence_score",
+    "relationship": "a.relationship_score",
+}
 
 
 async def interaction_leaderboard(kind: str, *, direction: str = "inbound",
                                   days: int | None = None,
+                                  order: str = "count",
+                                  sort_direction: str = "desc",
                                   limit: int = 100) -> list[dict]:
     """Who does the most of one kind of interaction, ranked.
 
@@ -1649,6 +1714,8 @@ async def interaction_leaderboard(kind: str, *, direction: str = "inbound",
         kind = "reply"
     direction = "outbound" if direction == "outbound" else "inbound"
     other = "outbound" if direction == "inbound" else "inbound"
+    column = IX_SORTABLE.get(order, IX_SORTABLE["count"])
+    arrow = "ASC" if sort_direction == "asc" else "DESC"
 
     where = ["i.kind = ?", "i.direction = ?", "fs.is_current = 1",
              "fs.ignored_at IS NULL"]
@@ -1665,16 +1732,18 @@ async def interaction_leaderboard(kind: str, *, direction: str = "inbound",
                    COUNT(DISTINCT substr(i.occurred_at, 1, 10)) AS days_active,
                    a.handle, a.display_name, a.avatar_url, a.followers_count,
                    a.influence_score, a.relationship_score, a.verified_status,
+                   (mf.did IS NOT NULL) AS is_mutual,
                    (SELECT COUNT(*) FROM interactions r
                      WHERE r.did = i.did AND r.kind = i.kind
                        AND r.direction = '{other}') AS reciprocal
               FROM interactions i
               JOIN actors a USING (did)
               JOIN follower_state fs USING (did)
+              LEFT JOIN my_follows mf ON mf.did = i.did
              WHERE {' AND '.join(where)}
              GROUP BY i.did
-             ORDER BY n DESC, last_at DESC
-             LIMIT ?""",
+             ORDER BY {column} {arrow} NULLS LAST, n DESC, a.handle ASC
+             LIMIT ?""".replace("{column}", column).replace("{arrow}", arrow),
         (*params, limit),
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]
@@ -1724,6 +1793,63 @@ async def interaction_breakdown(did: str) -> dict:
             if not entry["last_at"] or row["last_at"] > entry["last_at"]:
                 entry["last_at"] = row["last_at"]
     return out
+
+
+async def follow_back_target(did: str) -> dict | None:
+    """Check a follow-back is legitimate before anything is written.
+
+    Returns the row when following is possible, or None. This is the only guard
+    between a URL and a public write on a real account, so it is deliberately
+    strict: the subject must be a current, non-hidden follower we are not
+    already following.
+    """
+    db = await _db()
+    async with db.execute(
+        """SELECT a.did, a.handle, fs.is_current, fs.ignored_at,
+                  mf.did IS NOT NULL AS already, mf.follow_uri
+             FROM actors a
+             LEFT JOIN follower_state fs USING (did)
+             LEFT JOIN my_follows mf USING (did)
+            WHERE a.did = ?""",
+        (did,),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        return None
+    return dict(row)
+
+
+async def record_my_follow(did: str, uri: str | None) -> None:
+    db = await _db()
+    now = utcnow()
+    await db.execute(
+        """INSERT INTO my_follows (did, last_seen_at, follow_uri,
+                                   followed_by_sonde_at)
+           VALUES (?,?,?,?)
+           ON CONFLICT (did) DO UPDATE SET
+             last_seen_at = excluded.last_seen_at,
+             follow_uri = excluded.follow_uri,
+             followed_by_sonde_at = excluded.followed_by_sonde_at""",
+        (did, now, uri, now),
+    )
+    await db.execute(
+        "INSERT INTO follow_events (did, event, reason, detail, detected_at) "
+        "VALUES (?,?,?,?,?)",
+        (did, "followed_back", "manual", uri or "", now),
+    )
+    await db.commit()
+
+
+async def forget_my_follow(did: str) -> None:
+    db = await _db()
+    now = utcnow()
+    await db.execute("DELETE FROM my_follows WHERE did = ?", (did,))
+    await db.execute(
+        "INSERT INTO follow_events (did, event, reason, detail, detected_at) "
+        "VALUES (?,?,?,?,?)",
+        (did, "unfollowed_back", "manual", "", now),
+    )
+    await db.commit()
 
 
 async def interactions_for(did: str, limit: int = 30) -> list[dict]:
@@ -2135,10 +2261,12 @@ async def organisation_members(name: str) -> dict:
     async with db.execute(
         """SELECT act.did, act.handle, act.display_name, act.avatar_url,
                   act.followers_count, act.influence_score, act.verified_status,
-                  a.kind, a.role, a.method, a.confidence, a.note, a.source_url
+                  a.kind, a.role, a.method, a.confidence, a.note, a.source_url,
+                  (mf.did IS NOT NULL) AS is_mutual
              FROM affiliations a
              JOIN actors act USING (did)
              JOIN follower_state fs USING (did)
+             LEFT JOIN my_follows mf ON mf.did = act.did
             WHERE a.org_name = ? COLLATE NOCASE
               AND COALESCE(a.confirmed, 1) = 1
               AND fs.is_current = 1 AND fs.ignored_at IS NULL
@@ -2303,10 +2431,12 @@ async def group_members(slug: str, limit: int = 200, *, order: str = "influence"
     async with db.execute(
         f"""SELECT a.did, a.handle, a.display_name, a.avatar_url,
                    a.followers_count, a.influence_score, a.verified_status,
-                   m.tier, m.confidence, m.evidence, m.confirmed
+                   m.tier, m.confidence, m.evidence, m.confirmed,
+                   (mf.did IS NOT NULL) AS is_mutual
               FROM group_members m
               JOIN groups g ON g.id = m.group_id
               JOIN actors a USING (did)
+              LEFT JOIN my_follows mf ON mf.did = a.did
              WHERE g.slug = ? AND COALESCE(m.confirmed, 1) = 1
              ORDER BY {column} {arrow} NULLS LAST, a.handle ASC LIMIT ?""",
         (slug, limit),

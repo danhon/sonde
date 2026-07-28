@@ -8,6 +8,7 @@ asserted here; the volumes have not been seen.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -182,3 +183,66 @@ def test_the_route_renders_empty_and_populated(tmp_path):
         # A junk kind must not 500.
         assert client.get("/interactions?kind=nonsense").status_code == 200
     store.set_db_path(None)
+
+
+# ------------------------------------------------- sorting
+
+async def test_every_column_sorts_both_ways(db):
+    """Distinct values on every sortable field.
+
+    With ties, or with NULLs on both rows, `NULLS LAST` correctly produces the
+    same order in both directions — so a reversal assertion needs the rows to
+    actually differ on the column under test.
+    """
+    await follower("did:plc:a")
+    await follower("did:plc:b")
+    dbc = await store._db()
+    await dbc.execute("UPDATE actors SET followers_count=100, influence_score=10, "
+                      "relationship_score=5 WHERE did='did:plc:a'")
+    await dbc.execute("UPDATE actors SET followers_count=200, influence_score=20, "
+                      "relationship_score=15 WHERE did='did:plc:b'")
+    await dbc.commit()
+    await store.record_interactions(
+        [event("did:plc:a", "reply", "inbound", 1, i) for i in range(5)]
+        + [event("did:plc:b", "reply", "inbound", 9 + i, i) for i in range(2)]
+        + [event("did:plc:b", "reply", "outbound", 9, i) for i in range(4)])
+
+    for column in store.IX_SORTABLE:
+        desc = await store.interaction_leaderboard("reply", order=column)
+        asc = await store.interaction_leaderboard("reply", order=column,
+                                                  sort_direction="asc")
+        assert len(desc) == len(asc) == 2, column
+        assert [r["did"] for r in desc] == list(reversed(
+            [r["did"] for r in asc])), f"{column} did not reverse"
+
+
+async def test_sorting_by_back_finds_the_correspondent(db):
+    """The column that answers "who do I actually talk with"."""
+    await follower("did:plc:loud")
+    await follower("did:plc:mutual")
+    await store.record_interactions(
+        [event("did:plc:loud", "reply", "inbound", 1, i) for i in range(20)]
+        + [event("did:plc:mutual", "reply", "inbound", 1, i) for i in range(4)]
+        + [event("did:plc:mutual", "reply", "outbound", 1, i) for i in range(9)])
+
+    by_count = await store.interaction_leaderboard("reply")
+    by_back = await store.interaction_leaderboard("reply", order="back")
+    assert by_count[0]["did"] == "did:plc:loud"
+    assert by_back[0]["did"] == "did:plc:mutual"
+
+
+async def test_an_injected_sort_column_falls_back(db):
+    await follower("did:plc:a")
+    await store.record_interactions([event("did:plc:a", "reply", "inbound", 1)])
+    rows = await store.interaction_leaderboard(
+        "reply", order="n; DROP TABLE interactions--")
+    assert len(rows) == 1
+
+
+def test_sorting_carries_the_other_filters():
+    """The /followers table lost its filters when paging. Not again."""
+    source = (Path(__file__).resolve().parents[1] / "sonde" / "web"
+              / "templates" / "interactions.html").read_text()
+    macro = source[source.index("{% macro link("):source.index("{%- endmacro %}")]
+    for key in ("kind", "direction", "days", "order", "sort"):
+        assert f"'{key}'" in macro, f"sort links drop {key}"

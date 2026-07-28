@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_sort.html" import since %}
+{% from "_sort.html" import since with context %}
 {% block title %}{{ p.handle }} — sonde{% endblock %}
 {% block content %}
 
@@ -460,6 +460,23 @@
 
 <div class="mt-8 flex items-center gap-4">
   <a href="/followers" class="font-mono text-xs text-red-800 hover:underline">← all followers</a>
+  {#- Follow-back, full size. The same action as the +follow in the tables, and
+      the same control undoes it: reversibility is the safety, since a
+      confirmation step would defeat one-click. -#}
+  {% if settings.enable_follow_write and p.is_current and not p.ignored_at %}
+  <form method="post"
+        action="/followers/{{ p.did }}/follow{% if p.is_mutual %}?undo=true{% endif %}">
+    <button type="submit"
+            class="border px-3 py-1.5 font-mono text-xs
+                   {% if p.is_mutual %}border-slate-300 bg-white text-slate-500 hover:border-red-800 hover:text-red-800
+                   {% else %}border-emerald-700 bg-emerald-50 text-emerald-800 hover:bg-emerald-100{% endif %}">
+      {% if p.is_mutual %}Unfollow{% else %}Follow back{% endif %}
+    </button>
+  </form>
+  <span class="font-mono text-[10px] uppercase tracking-widest text-slate-400">
+    {% if p.is_mutual %}you follow them{% else %}writes a real follow to your account{% endif %}
+  </span>
+  {% endif %}
   <form method="post" action="/followers/{{ p.did }}/ignore{% if p.ignored_at %}?restore=true{% endif %}" class="ml-auto">
     <button type="submit" class="border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs hover:border-red-800 hover:text-red-800">
       {% if p.ignored_at %}Restore to listings{% else %}Hide from listings{% endif %}

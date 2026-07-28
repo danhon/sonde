@@ -38,6 +38,27 @@ here starts failing, suspect the API changed rather than the test.
 6. **Only a complete full sweep may mark departures.** Head sweeps must never
    compute them — they deliberately don't see most of the list.
 
+## Following is the one thing sonde writes
+
+Everything else reads. `/followers/{did}/follow` creates a real, public follow
+record on the operator's account, so it is guarded: follow-back only (the
+subject must be a current, non-hidden follower), never retried on failure, the
+record URI is stored so the same control undoes it, and every attempt — success
+or failure — lands in `follow_events`.
+
+`replace_my_follows` deletes and reinserts wholesale. It must keep carrying
+`follow_uri` across: `getFollows` returns subjects, not record keys, so a lost
+URI can never be recovered and that follow becomes impossible to undo from
+sonde.
+
+Turn it all off with `ENABLE_FOLLOW_WRITE=false`.
+
+## Jinja macros must be imported `with context`
+
+`{% from "_sort.html" import who %}` does **not** give the macro access to
+`settings`, so the follow button silently never renders. Every import of
+`_sort.html` carries `with context`, and a test enforces it.
+
 ## Mobile: the static tests cannot prove a page fits
 
 `tests/test_responsive.py` checks structure — tables wrapped, nav collapsing,

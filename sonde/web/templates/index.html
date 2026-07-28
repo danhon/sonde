@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_sort.html" import who %}
+{% from "_sort.html" import who with context %}
 {% block content %}
 
 {% if stats.needs_review %}
