@@ -20,8 +20,10 @@
   {%- set flip = 'asc' if (active and base.get('direction', 'desc') == 'desc') else 'desc' -%}
   <th class="py-2 pr-4 text-{{ align }} font-mono text-[10px] uppercase tracking-widest
              {% if active %}text-red-800{% else %}text-slate-500{% endif %}">
+    {#- py-2 gives the link a touch-sized target. At text-[10px] the bare text
+        box is about 12px tall, which is not tappable on a phone. -#}
     <a href="{{ qs(base, {'order': key, 'direction': flip, 'page': 1}) }}"
-       class="inline-flex items-center gap-1 hover:text-red-800"
+       class="inline-flex min-h-[36px] items-center gap-1 py-2 hover:text-red-800"
        {% if active %}aria-sort="{{ 'ascending' if base.get('direction') == 'asc' else 'descending' }}"{% endif %}>
       {{ label }}
       <span aria-hidden="true" class="{% if not active %}opacity-0{% endif %}">

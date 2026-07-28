@@ -583,6 +583,7 @@ Sub-steps for the scoring work are sequenced in
 | M16 | Job batches on /settings | ✅ done | Five ordered batches; individual jobs collapsed |
 | M17 | Attention scarcity in the relationship score | ✅ done | 388 of 1,500 score; the ratio's top score is this one's zero |
 | M18 | Game industry group | ✅ done | 84 members; validation pass killed 18 of the first 105 |
+| M19 | Mobile responsiveness | ✅ done | Measured 767px of sideways scroll at 320px; now zero across 56 renders |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
 ### Detail on what is done
@@ -734,6 +735,87 @@ happened" email trains you to ignore the one that matters; but health problems
 send regardless, because silence is otherwise ambiguous between "nothing
 happened" and "the app died". Reports stale sweeps, held sweeps, failed runs and
 an app password that is set but not authenticating.
+
+### M19 — Mobile responsiveness
+
+Requested 2026-07-27: the top menu does not work on a phone, and it is "one of a
+few things".
+
+**Audited every template before planning.** The damage is narrower than the
+symptom suggests — the filter forms and the settings batches already carry
+`flex-wrap`, and every `grid-cols-N` already has a 1- or 2-column base. Three
+real defects:
+
+1. **The nav, which is the reported bug.** Ten links plus the actor handle and
+   build SHA, in a `flex` row with **no `flex-wrap`**. Text cannot compress
+   below its intrinsic width, so the row overflows the viewport — and because
+   nothing clips it, *the whole page* scrolls sideways. That is why several
+   unrelated things feel broken: they are all being pushed off-screen by the
+   nav, not broken themselves.
+2. **Six tables with no `overflow-x-auto` wrapper** — `detail.html` ×4,
+   `influential.html`, `institutions.html`. A wide table inside a wrapper
+   scrolls itself; without one it widens the page. Twelve other tables are
+   already wrapped, so this is drift from an established pattern rather than a
+   missing decision.
+3. **Tap targets.** Nav links and the sortable `<th>` arrows are `text-xs` and
+   `text-[10px]` with no vertical padding — well under the ~44px that is
+   reliably tappable.
+
+**No `overflow-x: hidden` on the body.** It would make every one of these
+invisible rather than fixed, and would defeat the test below by clipping the
+evidence. The page must not overflow, not be prevented from showing that it did.
+
+**The nav becomes a disclosure.** A native `<details>` "Menu" button below
+`sm:`, expanding to full-width stacked links; the horizontal row returns at
+`sm:` and up. No JavaScript, consistent with the rest of the app, and it keeps
+chrome to one line on a phone — where `flex-wrap` alone would put three rows of
+uppercase links above every page. The actor handle and build SHA are
+`hidden sm:inline`: useful, not worth a row on a 320px screen.
+
+**Testing, in two layers**, matching the split the repo already uses between
+fast fakes in `tests/` and real-world checks in `evals/`:
+
+- `tests/test_responsive.py` — renders every template with a realistic context
+  and asserts structural invariants: every `<table>` sits inside an
+  `overflow-x-auto` container, the nav collapses below `sm:`, no `grid-cols-N`
+  ≥3 without a mobile fallback, the viewport meta is present. Fast, runs in the
+  normal suite, and its job is catching regressions rather than proving
+  correctness.
+- `evals/mobile_check.py` — Playwright at **320 / 375 / 390 / 768**, walking
+  every route and asserting `documentElement.scrollWidth <= innerWidth`. This
+  is the only layer that can actually prove a page does not scroll sideways;
+  the static test cannot, and saying so is the point of having both. Also
+  measures nav tap-target heights. Run on demand, like the live-API evals.
+
+**Acceptance:** no route scrolls horizontally at 320px, and every nav target is
+at least 44px tall.
+
+#### Measured, before and after
+
+The eval was run against the pre-M19 nav to confirm it reproduces the report,
+and it does — on **every page**:
+
+    320px /followers: scrolls 767px sideways
+      widest is span.ml-auto.font-mono.text-xs reaching 1087px
+
+767px of overflow on a 320px screen, caused by one nav row. That is the whole
+reported symptom, and it explains why unrelated pages felt broken: they were
+being dragged off-screen by shared chrome, not broken themselves.
+
+After: **56 page renders across 4 viewports, zero overflow, every nav target
+≥44px.** The static suite is 45 checks, all of which were mutation-tested —
+stripping a single `overflow-x-auto` from any of eight templates fails the run,
+and reverting the nav fails it too.
+
+One test defect found by that mutation pass and worth recording: the first
+version of the table check looked for `overflow-x-auto` within the preceding 500
+characters, which a *previous* table's wrapper satisfied. Deleting a real
+wrapper left the suite green. It now walks the actual ancestor stack, and
+`test_the_table_check_actually_detects_a_missing_wrapper` guards the guard.
+
+The eval also found `/groups/discover` — the route list in the first draft said
+`/discover`, which 404s. A test that checks the wrong URL passes for the wrong
+reason.
 
 ### M18 — Game industry
 

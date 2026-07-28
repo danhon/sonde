@@ -55,25 +55,27 @@
 
     {% if row.components %}
     <div class="border-t border-slate-100 bg-slate-50 px-4 py-4">
-      <table class="w-full text-xs">
-        <tbody>
-          {% for c in row.components %}
-          <tr class="{% if not c.available %}opacity-40{% endif %}">
-            <td class="w-32 py-1 font-mono uppercase tracking-wider text-slate-500">{{ c.key.replace('_',' ') }}</td>
-            <td class="w-24 py-1">
-              <span class="block h-1.5 w-full bg-slate-200">
-                <span class="block h-full bg-red-800" style="width: {{ (c.value * 100)|round }}%"></span>
-              </span>
-            </td>
-            <td class="w-16 py-1 text-right font-mono tabular-nums">{{ c.points }}<span class="text-slate-400">/{{ c.weight }}</span></td>
-            <td class="py-1 pl-4 text-slate-600">
-              {{ c.detail }}
-              <span class="text-slate-400">· {{ c.source }}</span>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <tbody>
+            {% for c in row.components %}
+            <tr class="{% if not c.available %}opacity-40{% endif %}">
+              <td class="w-32 py-1 font-mono uppercase tracking-wider text-slate-500">{{ c.key.replace('_',' ') }}</td>
+              <td class="w-24 py-1">
+                <span class="block h-1.5 w-full bg-slate-200">
+                  <span class="block h-full bg-red-800" style="width: {{ (c.value * 100)|round }}%"></span>
+                </span>
+              </td>
+              <td class="w-16 py-1 text-right font-mono tabular-nums">{{ c.points }}<span class="text-slate-400">/{{ c.weight }}</span></td>
+              <td class="py-1 pl-4 text-slate-600">
+                {{ c.detail }}
+                <span class="text-slate-400">· {{ c.source }}</span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
     {% endif %}
   </details>

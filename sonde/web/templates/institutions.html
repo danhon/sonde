@@ -78,24 +78,26 @@
     <h3 class="mt-4 font-mono text-[10px] uppercase tracking-widest {% if label == 'Formerly' %}text-slate-400{% else %}text-slate-500{% endif %}">
       {{ label }} ({{ rows|length }})
     </h3>
-    <table class="mt-2 w-full text-sm {% if label == 'Formerly' %}opacity-60{% endif %}">
-      <tbody>
-        {% for r in rows %}
-        <tr class="border-b border-slate-100">
-          <td class="py-2 pr-4">
-            {{ who(r) }}
-          </td>
-          <td class="py-2 pr-4">{{ r.display_name or "" }}</td>
-          <td class="py-2 pr-4 font-mono text-[10px] uppercase tracking-wider text-slate-500">{{ r.kind.replace('_',' ') }}{% if r.role %} · {{ r.role }}{% endif %}</td>
-          <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">
-            {% if r.followers_count is not none %}{{ "{:,}".format(r.followers_count) }}{% else %}—{% endif %}
-          </td>
-          <td class="py-2 pr-4 text-right font-mono tabular-nums">{{ r.influence_score if r.influence_score is not none else "—" }}</td>
-          <td class="py-2 pr-4 font-mono text-[10px] text-slate-400">{{ r.method }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <div class="overflow-x-auto">
+      <table class="mt-2 w-full text-sm {% if label == 'Formerly' %}opacity-60{% endif %}">
+        <tbody>
+          {% for r in rows %}
+          <tr class="border-b border-slate-100">
+            <td class="py-2 pr-4">
+              {{ who(r) }}
+            </td>
+            <td class="py-2 pr-4">{{ r.display_name or "" }}</td>
+            <td class="py-2 pr-4 font-mono text-[10px] uppercase tracking-wider text-slate-500">{{ r.kind.replace('_',' ') }}{% if r.role %} · {{ r.role }}{% endif %}</td>
+            <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">
+              {% if r.followers_count is not none %}{{ "{:,}".format(r.followers_count) }}{% else %}—{% endif %}
+            </td>
+            <td class="py-2 pr-4 text-right font-mono tabular-nums">{{ r.influence_score if r.influence_score is not none else "—" }}</td>
+            <td class="py-2 pr-4 font-mono text-[10px] text-slate-400">{{ r.method }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
     {% endif %}
   {% endfor %}
 </section>

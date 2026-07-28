@@ -7,26 +7,52 @@
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-100 text-slate-900 antialiased">
+  {#- The nav was ten links in a flex row with no wrap. Text will not compress
+      below its intrinsic width, so on a phone the row overflowed the viewport
+      and dragged the whole page sideways with it — which made several
+      unrelated pages look broken when they were only being pushed off-screen.
+
+      Below sm: it is a <details> disclosure. Native, so no JavaScript, and it
+      keeps chrome to one line where flex-wrap would stack three rows of
+      uppercase links above every page. -#}
+  {%- set NAV = [
+        ('/followers', 'Followers'), ('/influential', 'Influential'),
+        ('/verified', 'Verified'), ('/groups', 'Groups'),
+        ('/institutions', 'Institutions'), ('/relationships', 'Relationships'),
+        ('/changes', 'Changes'), ('/ignored', 'Hidden'),
+        ('/settings', 'Settings')] -%}
   <nav class="border-b-2 border-slate-900 bg-white">
-    <div class="mx-auto flex max-w-6xl items-baseline gap-6 px-6 py-4">
-      <a href="/" class="font-mono text-xl font-semibold tracking-tight">sonde</a>
-      <a href="/followers" class="font-mono text-xs uppercase tracking-widest text-slate-500 hover:text-red-800">Followers</a>
-      <a href="/influential" class="font-mono text-xs uppercase tracking-widest text-slate-500 hover:text-red-800">Influential</a>
-      <a href="/verified" class="font-mono text-xs uppercase tracking-widest text-slate-500 hover:text-red-800">Verified</a>
-      <a href="/groups" class="font-mono text-xs uppercase tracking-widest text-slate-500 hover:text-red-800">Groups</a>
-      <a href="/institutions" class="font-mono text-xs uppercase tracking-widest text-slate-500 hover:text-red-800">Institutions</a>
-      <a href="/relationships" class="font-mono text-xs uppercase tracking-widest text-slate-500 hover:text-red-800">Relationships</a>
-      <a href="/changes" class="font-mono text-xs uppercase tracking-widest text-slate-500 hover:text-red-800">Changes</a>
-      <a href="/ignored" class="font-mono text-xs uppercase tracking-widest text-slate-500 hover:text-red-800">Hidden</a>
-      <a href="/settings" class="font-mono text-xs uppercase tracking-widest text-slate-500 hover:text-red-800">Settings</a>
-      <span class="ml-auto font-mono text-xs uppercase tracking-widest text-slate-400">{{ settings.actor }}</span>
-      <span class="font-mono text-xs text-slate-400">{{ settings.build_sha }}</span>
-    </div>
+    <details class="group mx-auto max-w-6xl px-4 sm:px-6 [&>summary]:sm:hidden" id="nav">
+      <summary class="flex cursor-pointer list-none items-center justify-between sm:py-4">
+        {#- py-2 on the wordmark itself, not just the row: the browser eval
+            measures the <a>, and at text-xl its own box is only 28px. -#}
+        <a href="/" class="py-2 font-mono text-xl font-semibold tracking-tight">sonde</a>
+        <span class="flex items-center gap-2 py-2 pl-4 font-mono text-xs uppercase tracking-widest text-slate-500">
+          <span aria-hidden="true" class="text-base leading-none group-open:hidden">☰</span>
+          <span aria-hidden="true" class="hidden text-base leading-none group-open:inline">✕</span>
+          Menu
+        </span>
+      </summary>
+
+      {#- `hidden` + `group-open:flex` is the mobile state; from sm: up it is
+          always a row, whether or not the disclosure happens to be open. -#}
+      <div class="hidden flex-col pb-3 group-open:flex sm:flex sm:flex-row sm:flex-wrap
+                  sm:items-baseline sm:gap-6 sm:pb-4">
+        <a href="/" class="hidden font-mono text-xl font-semibold tracking-tight sm:inline">sonde</a>
+        {%- for href, label in NAV %}
+        <a href="{{ href }}"
+           class="border-t border-slate-100 py-3 font-mono text-xs uppercase tracking-widest
+                  text-slate-500 hover:text-red-800 sm:border-0 sm:py-0">{{ label }}</a>
+        {%- endfor %}
+        <span class="ml-auto hidden font-mono text-xs uppercase tracking-widest text-slate-400 sm:inline">{{ settings.actor }}</span>
+        <span class="hidden font-mono text-xs text-slate-400 sm:inline">{{ settings.build_sha }}</span>
+      </div>
+    </details>
 
     {# Live activity. Present on every page: the question is "is it doing
        anything", and you shouldn't have to be on /settings to answer it. #}
     <div id="activity" class="border-t border-slate-200 bg-slate-50">
-      <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-1 px-6 py-2">
+      <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 sm:px-6">
         <span id="activity-dot" class="h-2 w-2 shrink-0 rounded-full bg-slate-300"></span>
         <span id="activity-text" class="font-mono text-xs text-slate-500">checking…</span>
         <span id="activity-bar" class="hidden h-1 w-32 shrink-0 overflow-hidden rounded-sm bg-slate-200">
@@ -36,7 +62,7 @@
       </div>
     </div>
   </nav>
-  <main class="mx-auto max-w-6xl px-6 py-10">
+  <main class="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
     {% block content %}{% endblock %}
   </main>
 

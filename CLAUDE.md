@@ -38,6 +38,21 @@ here starts failing, suspect the API changed rather than the test.
 6. **Only a complete full sweep may mark departures.** Head sweeps must never
    compute them — they deliberately don't see most of the list.
 
+## Mobile: the static tests cannot prove a page fits
+
+`tests/test_responsive.py` checks structure — tables wrapped, nav collapsing,
+grids with a mobile base — and runs in the normal suite. It cannot detect actual
+overflow. Only the browser can:
+
+```
+uv run --with playwright playwright install chromium   # first run only
+uv run --with playwright python -m evals.mobile_check  # needs a server running
+```
+
+Never add `overflow-x: hidden` to the body to silence a layout bug. It hides the
+symptom, keeps the broken layout, and blinds the eval by clipping the evidence
+it measures.
+
 ## Backups — deliberately incomplete
 
 `follow_events` is the only table that cannot be re-fetched from Bluesky. A
