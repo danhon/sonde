@@ -138,7 +138,11 @@ def create_app() -> FastAPI:
         fields = [
             "did", "handle", "display_name", "followers_count", "follows_count",
             "posts_count", "verified_status", "trusted_verifier_status",
-            "influence_score", "account_created_at", "first_seen_at", "list_rank",
+            "influence_score", "account_created_at",
+            # `following_since` is the answer to "since when"; `first_seen_at`
+            # is kept beside it because the two differ for backfilled rows and
+            # an export that silently conflated them would be wrong forever.
+            "following_since", "following_since_exact", "first_seen_at", "list_rank",
             "is_mutual", "is_private",
         ]
         writer = csv.DictWriter(buffer, fieldnames=fields, extrasaction="ignore")

@@ -51,3 +51,20 @@
   {%- if row.is_private %}<span class="text-slate-400" title="hidden when logged out">◍</span>{% endif %}
 </span>
 {%- endmacro -%}
+
+{#- When someone started following. `followed_at` is the exact time, decoded
+    from the TID in their follow record — recorded by the server that wrote it,
+    so it is better evidence than anything self-reported. It only arrives on
+    authenticated sweeps, so `first_seen_at` remains the fallback. The two are
+    NOT the same claim and are never rendered as though they were: the fallback
+    is prefixed and carries a tooltip saying what it actually measures. -#}
+{%- macro since(row, length=10) -%}
+  {%- if row.since -%}
+    {%- if row.since_exact -%}
+      <span title="exact follow time, from their follow record">{{ row.since[:length].replace("T", " ") }}</span>
+    {%- else -%}
+      <span class="text-slate-400"
+            title="sonde first saw them on this date; their actual follow date is earlier and unknown until an authenticated sweep runs">≥ {{ row.since[:length].replace("T", " ") }}</span>
+    {%- endif -%}
+  {%- else -%}<span class="text-slate-300">—</span>{%- endif -%}
+{%- endmacro -%}

@@ -731,8 +731,20 @@ SORTABLE = {
     "handle": "a.handle",
     "name": "a.display_name",
     "recent": "fs.list_rank",
-    "since": "fs.first_seen_at",
+    # "Since" means since they followed me, not since sonde noticed them. The
+    # exact follow time is decoded from the TID in `viewer.followedBy` and is
+    # only available on authenticated sweeps, so `first_seen_at` remains the
+    # fallback — but it is a fallback, and the UI says so rather than passing
+    # off "when this tool started watching" as "when they followed".
+    "since": "COALESCE(fs.followed_at, fs.first_seen_at)",
 }
+
+
+def _with_since(row: dict) -> dict:
+    """Attach the best available follow date, and whether it is exact."""
+    row["since"] = row.get("followed_at") or row.get("first_seen_at")
+    row["since_exact"] = bool(row.get("followed_at"))
+    return row
 
 
 async def ranked_followers(
@@ -769,7 +781,8 @@ async def ranked_followers(
 
     db = await _db()
     sql = (
-        "SELECT a.*, fs.first_seen_at, fs.list_rank, (mf.did IS NOT NULL) AS is_mutual "
+        "SELECT a.*, fs.first_seen_at, fs.followed_at, fs.backfilled, "
+        "fs.list_rank, (mf.did IS NOT NULL) AS is_mutual "
         "FROM actors a JOIN follower_state fs USING (did) "
         "LEFT JOIN my_follows mf USING (did) "
         f"WHERE {' AND '.join(where)} ORDER BY {order_sql} LIMIT ? OFFSET ?"
@@ -779,6 +792,7 @@ async def ranked_followers(
     for row in rows:
         row["components"] = json.loads(row["score_components"] or "{}").get("components", [])
         row["is_private"] = "no-unauthenticated" in (row.get("labels") or "")
+        _with_since(row)
     return rows
 
 
@@ -1137,7 +1151,7 @@ async def follower_detail(did: str) -> dict | None:
         row = await cur.fetchone()
     if row is None:
         return None
-    out = dict(row)
+    out = _with_since(dict(row))
     out["components"] = json.loads(out.get("score_components") or "{}").get("components", [])
     out["verification_records"] = json.loads(out.get("verifications") or "[]")
     # Parsed here too, not just in wikidata_matched(), or the detail page
@@ -1168,7 +1182,10 @@ async def export_rows() -> list[dict]:
         f"""SELECT a.did, a.handle, a.display_name, a.followers_count, a.follows_count,
                    a.posts_count, a.verified_status, a.trusted_verifier_status,
                    a.influence_score, a.account_created_at,
-                   fs.first_seen_at, fs.list_rank,
+                   fs.first_seen_at, fs.followed_at,
+                   COALESCE(fs.followed_at, fs.first_seen_at) AS following_since,
+                   (fs.followed_at IS NOT NULL) AS following_since_exact,
+                   fs.list_rank,
                    (mf.did IS NOT NULL) AS is_mutual,
                    (COALESCE(a.labels,'') LIKE '%no-unauthenticated%') AS is_private
               FROM actors a

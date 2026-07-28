@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_sort.html" import since %}
 {% block title %}{{ p.handle }} — sonde{% endblock %}
 {% block content %}
 
@@ -115,22 +116,34 @@
   <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
     History
   </h2>
+  {#- "Following since" leads, because it is the question being asked. When the
+      exact time is unknown it still leads, as a lower bound, rather than being
+      replaced by "first seen" — which answers a different question and would
+      quietly overstate how recently they arrived. -#}
   <dl class="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-3">
-    <div><dt class="font-mono text-[10px] uppercase tracking-widest text-slate-500">First seen</dt>
-      <dd class="font-mono text-xs">{{ (p.first_seen_at or "")[:16].replace("T"," ") }}</dd></div>
-    <div><dt class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Last seen</dt>
-      <dd class="font-mono text-xs">{{ (p.last_seen_at or "")[:16].replace("T"," ") }}</dd></div>
+    <div>
+      <dt class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Following since</dt>
+      <dd class="font-mono text-xs {% if p.since_exact %}text-red-800{% else %}text-slate-500{% endif %}">
+        {{ since(p, 16) }}
+      </dd>
+    </div>
     <div><dt class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Account created</dt>
       <dd class="font-mono text-xs">{{ (p.account_created_at or "—")[:10] }}</dd></div>
-    {% if p.followed_at %}
-    <div><dt class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Followed you</dt>
-      <dd class="font-mono text-xs text-red-800">{{ p.followed_at[:16].replace("T", " ") }}</dd></div>
-    {% endif %}
+    <div><dt class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Last seen</dt>
+      <dd class="font-mono text-xs">{{ (p.last_seen_at or "")[:16].replace("T"," ") }}</dd></div>
   </dl>
-  {% if p.followed_at %}
+  {% if p.since_exact %}
   <p class="mt-2 text-xs text-slate-500">
     Exact follow time, decoded from the record key of their follow. Recorded by the
     server that wrote it, so it is better evidence than a self-reported timestamp.
+  </p>
+  {% else %}
+  <p class="mt-2 text-xs text-slate-500">
+    <strong>A lower bound, not the follow date.</strong> This is when sonde first
+    saw them; they followed at some point before it, and by how much is unknown.
+    The exact time is in their follow record and arrives once a sweep runs with
+    the app password — sonde first saw them
+    {{ (p.first_seen_at or "")[:16].replace("T"," ") }}.
   </p>
   {% endif %}
 
