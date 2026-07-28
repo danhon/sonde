@@ -354,6 +354,7 @@ def create_app() -> FastAPI:
             "relevance": relevance.enrich,
             "groups": store.classify_groups,
             "discover": store.discover_group_candidates,
+            "latent": store.discover_latent_groups,
             "propagate": store.propagate_groups,
             "affinity": affinity.build_index,
             "interactions": interactions.sync,

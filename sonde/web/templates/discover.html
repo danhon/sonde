@@ -8,12 +8,19 @@
 </div>
 
 <p class="mt-4 max-w-2xl text-sm text-slate-600">
-  The twelve seeded groups were written by hand, so the interesting ones are
-  whatever nobody thought of. These are proposals drawn from data already
-  collected — Wikidata occupations no group claims, link kinds with nowhere to
-  land, organisations big enough to be groups on their own, and phrases common
-  across bios. <strong>Nothing becomes a group until you accept it</strong>: a
+  The seeded groups were written by hand, so the interesting ones are whatever
+  nobody thought of. These are proposals drawn from data already collected, at
+  no API cost. <strong>Nothing becomes a group until you accept it</strong>: a
   group nobody wanted makes every other count untrustworthy.
+</p>
+
+<p class="mt-3 max-w-2xl text-sm text-slate-600">
+  <strong class="font-mono text-xs uppercase tracking-widest text-red-800">cluster</strong>
+  rows are different in kind from the rest. They come from the shape of the
+  follow graph rather than from anything written in a bio, so they can find
+  communities no rule describes — and the label, where there is one, is worked
+  out afterwards. A cluster reported as overlapping a group you already have is
+  not a duplicate to discard: it is the method agreeing with you.
 </p>
 
 {% if not candidates %}
@@ -38,7 +45,10 @@
       <tr class="border-b border-slate-100 hover:bg-slate-50">
         <td class="py-2 pr-4 text-right font-mono font-semibold tabular-nums">{{ c.member_count }}</td>
         <td class="py-2 pr-4 font-medium">{{ c.label }}</td>
-        <td class="py-2 pr-4 font-mono text-[10px] uppercase tracking-wider text-slate-500">{{ c.kind }}</td>
+        <td class="py-2 pr-4 font-mono text-[10px] uppercase tracking-wider
+                   {% if c.kind == 'cluster' %}text-red-800{% else %}text-slate-500{% endif %}">
+          {{ c.kind }}{% if c.tier and c.tier != 'unnamed' %}<span class="text-slate-400"> · {{ c.tier }}</span>{% endif %}
+        </td>
         <td class="py-2 pr-4 text-xs text-slate-500">{{ c.why }}</td>
         <td class="py-2 pr-4">
           <div class="flex justify-end gap-3">

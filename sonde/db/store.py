@@ -6,6 +6,7 @@ writer plus concurrent readers fine at this scale (~10k rows).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -107,6 +108,12 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("wikidata_past_employers", "TEXT"),
         ("relationship_score", "REAL"),
         ("relationship_components", "TEXT"),
+    ],
+    "group_candidates": [
+        # A cluster candidate IS its members — unlike a rule-based one, there is
+        # no term to re-run later, so accepting it has to use the stored list.
+        ("members", "TEXT"),           # JSON array of DIDs
+        ("tier", "TEXT"),              # which naming tier produced the label
     ],
 }
 
@@ -1670,6 +1677,143 @@ async def discover_group_candidates() -> dict:
     return {"candidates": len(candidates), "by_kind": by_kind}
 
 
+async def discover_latent_groups() -> dict:
+    """Propose communities found in the follow graph. Creates nothing.
+
+    Unlike the rule-based candidates, these are not derived from a term anyone
+    wrote down — the graph says these people belong together and the label, if
+    any, is worked out afterwards. That is the point: it can only find groups
+    nobody thought to name.
+    """
+    from collections import Counter
+
+    from sonde import clustering
+
+    db = await _db()
+    async with db.execute(
+        """SELECT e.source_did, e.did FROM affinity_edges e
+             JOIN follower_state fs ON fs.did = e.did
+            WHERE fs.is_current = 1 AND fs.ignored_at IS NULL"""
+    ) as cur:
+        sources_by_did: dict[str, set[str]] = {}
+        for row in await cur.fetchall():
+            sources_by_did.setdefault(row["did"], set()).add(row["source_did"])
+
+    placeable = sum(1 for s in sources_by_did.values()
+                    if len(s) >= clustering.MIN_SOURCES)
+    clusters = clustering.cluster(sources_by_did)
+    if not clusters:
+        return {"proposed": 0, "clusters": 0, "placeable": placeable,
+                "reached": len(sources_by_did)}
+
+    # Evidence for naming, all already on disk — no calls.
+    members_all = {did for c in clusters for did in c}
+    placeholders = ",".join("?" for _ in members_all)
+    evidence: dict[str, dict[str, list[str]]] = {
+        "affiliation": {}, "occupation": {}, "link": {}, "text": {},
+    }
+    async with db.execute(
+        f"""SELECT did, description, display_name, wikidata_occupations,
+                   link_signals
+              FROM actors WHERE did IN ({placeholders})""",
+        tuple(members_all),
+    ) as cur:
+        for row in await cur.fetchall():
+            did = row["did"]
+            # Bio only. Display names contributed surnames as vocabulary —
+            # a cluster came back labelled "White · Queer · Science", where
+            # "white" was somebody's name. A person's name describes no group.
+            evidence["text"][did] = sorted(clustering._tokens(row["description"] or ""))
+            try:
+                evidence["occupation"][did] = [
+                    o.lower() for o in json.loads(row["wikidata_occupations"] or "[]")]
+            except (ValueError, TypeError):
+                evidence["occupation"][did] = []
+            try:
+                evidence["link"][did] = [
+                    s.get("kind") for s in json.loads(row["link_signals"] or "[]")
+                    if s.get("kind") and s.get("kind") != "site"]
+            except (ValueError, TypeError):
+                evidence["link"][did] = []
+    async with db.execute(
+        f"""SELECT did, org_name FROM affiliations
+             WHERE did IN ({placeholders}) AND kind != 'former'
+               AND COALESCE(confirmed, 1) = 1""",
+        tuple(members_all),
+    ) as cur:
+        for row in await cur.fetchall():
+            evidence["affiliation"].setdefault(row["did"], []).append(
+                row["org_name"].lower())
+
+    # The baseline every cluster is measured against is the placeable
+    # population, not the whole follower list: a term common among people the
+    # graph can see is not distinctive just because it is rare overall.
+    corpora = {
+        tier: Counter(t for did in members_all for t in set(values.get(did) or []))
+        for tier, values in evidence.items()
+    }
+    total = max(len(members_all), 1)
+
+    # Which existing group each cluster most resembles. Not a filter: a cluster
+    # that matches a hand-built group is *evidence the method works* — the game
+    # industry came back this way — and one that matches nothing is the
+    # interesting case. Either way the reviewer needs to be told which it is.
+    async with db.execute(
+        """SELECT g.slug, g.name, m.did FROM group_members m
+             JOIN groups g ON g.id = m.group_id
+            WHERE COALESCE(m.confirmed, 1) = 1"""
+    ) as cur:
+        existing: dict[str, set[str]] = {}
+        names: dict[str, str] = {}
+        for row in await cur.fetchall():
+            existing.setdefault(row["slug"], set()).add(row["did"])
+            names[row["slug"]] = row["name"]
+
+    def overlap_note(members: list[str]) -> str:
+        best, share = None, 0.0
+        for slug, dids in existing.items():
+            hit = len(dids.intersection(members)) / len(members)
+            if hit > share:
+                best, share = slug, hit
+        if best is None or share < 0.3:
+            return " Matches no existing group."
+        return (f" {share:.0%} of them are already in {names[best]!r} — "
+                f"{'largely a duplicate' if share > 0.7 else 'overlapping but not the same'}.")
+
+    now = utcnow()
+    proposed = 0
+    by_tier: dict[str, int] = {}
+    seen_terms: set[str] = set()
+    for members in clusters:
+        named = clustering.name_cluster(members, evidence, corpora, total)
+        named["why"] += overlap_note(members)
+        # A cluster has no natural key, so it is identified by its members.
+        term = f"cluster:{hashlib.sha1(','.join(members).encode()).hexdigest()[:16]}"
+        if term in seen_terms:
+            continue
+        seen_terms.add(term)
+        label = named["label"] or f"Unnamed community of {len(members)}"
+        await db.execute(
+            """INSERT INTO group_candidates
+                 (kind, term, label, member_count, why, first_seen_at,
+                  members, tier)
+               VALUES ('cluster',?,?,?,?,?,?,?)
+               ON CONFLICT (kind, term) DO UPDATE SET
+                 label = excluded.label, member_count = excluded.member_count,
+                 why = excluded.why, members = excluded.members,
+                 tier = excluded.tier
+               WHERE group_candidates.decided IS NULL""",
+            (term, label, len(members), named["why"], now,
+             json.dumps(members), named["tier"]),
+        )
+        proposed += 1
+        by_tier[named["tier"]] = by_tier.get(named["tier"], 0) + 1
+    await db.commit()
+    return {"proposed": proposed, "clusters": len(clusters),
+            "placeable": placeable, "reached": len(sources_by_did),
+            "by_tier": by_tier}
+
+
 async def group_candidates(decided: bool | None = None,
                            limit: int = 200) -> list[dict]:
     db = await _db()
@@ -1708,8 +1852,40 @@ async def decide_candidate(candidate_id: int, accept: bool) -> str | None:
         (slug, row["label"], f"Discovered from {row['kind']}: {row['why']}", utcnow()),
     )
     await db.commit()
-    await _apply_discovered_group(slug, row["kind"], row["term"])
+    if row["kind"] == "cluster":
+        # A cluster is not derived from a term, so there is no rule to re-run:
+        # the membership stored when it was proposed *is* the group.
+        await _apply_cluster_group(slug, row["members"])
+    else:
+        await _apply_discovered_group(slug, row["kind"], row["term"])
     return slug
+
+
+async def _apply_cluster_group(slug: str, members_json: str | None) -> int:
+    from sonde.groups import PROPAGATION
+
+    db = await _db()
+    async with db.execute("SELECT id FROM groups WHERE slug = ?", (slug,)) as cur:
+        group = await cur.fetchone()
+    if group is None:
+        return 0
+    try:
+        members = json.loads(members_json or "[]")
+    except (ValueError, TypeError):
+        return 0
+
+    now = utcnow()
+    for did in members:
+        await db.execute(
+            """INSERT INTO group_members
+                 (group_id, did, tier, confidence, evidence, created_at)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT (group_id, did) DO NOTHING""",
+            (group["id"], did, "cluster", PROPAGATION,
+             "clusters with this group in the follow graph", now),
+        )
+    await db.commit()
+    return len(members)
 
 
 async def _apply_discovered_group(slug: str, kind: str, term: str) -> int:

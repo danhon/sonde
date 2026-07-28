@@ -587,7 +587,7 @@ Sub-steps for the scoring work are sequenced in
 | M19b | Nav regression fix | ✅ done | M19 removed the desktop menu entirely; eval was rect-based and missed it |
 | M20 | Institutions page fixes | ✅ done | Detail rendered below a 76-row table; name lookup case-sensitive; counts included departed followers |
 | M20b | Test isolation | ✅ done | `db`-fixture tests were writing to the real `./sonde.db` |
-| M21 | Latent group discovery | 📋 planned | Prototyped: the follow graph rediscovers game-industry unprompted and finds 5 unseeded groups |
+| M21 | Latent group discovery | ✅ done | 75 clusters proposed; rediscovers Game industry at 67% overlap without being told it exists |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
 ### Detail on what is done
@@ -821,7 +821,7 @@ The eval also found `/groups/discover` — the route list in the first draft sai
 `/discover`, which 404s. A test that checks the wrong URL passes for the wrong
 reason.
 
-### M21 — Latent groups (planned)
+### M21 — Latent groups
 
 Requested 2026-07-28: the thirteen groups were supplied by hand; find the ones
 nobody thought to name. Free sources only.
@@ -908,6 +908,45 @@ is tuned further. **Do that first.**
 **Acceptance:** hand-check a sample of proposed clusters and report precision
 before any of them can create memberships, exactly as M18 did — that pass killed
 18 of the first 105 memberships and is the reason the group is trustworthy.
+
+#### Built
+
+`sonde/clustering.py` holds the algorithm as pure functions, so the graph
+behaviour is testable without a database. `store.discover_latent_groups()` reads
+`affinity_edges`, clusters, names, and writes `group_candidates` rows of kind
+`cluster`. Registered as the `latent` job inside the **Rebuild groups** batch,
+between `discover` and `propagate`.
+
+A cluster candidate is unlike every other kind: there is no term to re-run, so
+the member list *is* the proposal and is stored as JSON alongside it. Accepting
+one inserts exactly those members.
+
+**Each proposal says which existing group it most resembles.** That is not a
+filter — a cluster matching a hand-built group is the strongest evidence the
+method works, and on real data the game industry came back at **67% overlap
+without the clusterer being told it exists**. Academics (43%), Journalists
+(38%) and Writers also reappear. What is left over is the interesting part:
+law professors (35), product design (30), a technology-journalism cluster (17),
+cybersecurity-and-law (14).
+
+Run against the 11,038-edge index: **75 clusters proposed, 966 placeable
+followers of 2,462 reached.** Naming tiers: 35 text, 4 Wikidata occupation, 1
+link, and **35 unnamed** — which are proposed anyway, because a real community
+with no label is worth reviewing and a wrong label is worse than none.
+
+Three defects the tests and the real-data runs caught, all fixed:
+
+- **The share ceiling zeroed out small graphs.** Expressed only as a fraction,
+  16 placeable followers gave a ceiling of 6 while every source had 8 members,
+  so every source was discarded and the graph came back empty. It now has a
+  floor as well as a share.
+- **Bio links became vocabulary.** Communities were labelled "Org" and
+  "Games · Linktr · Game" straight out of `linktr.ee` and `.org` URLs. URLs are
+  stripped before tokenising, and boilerplate — "account", "personal",
+  "senior", "guy" — is refused as a label at both tokenising and scoring.
+- **Display names contributed surnames.** A cluster came back as
+  "White · Queer · Science", where "white" was somebody's name. Naming reads
+  bios only; a person's name describes no group.
 
 ### M20 — Institutions
 
