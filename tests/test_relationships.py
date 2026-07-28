@@ -136,7 +136,13 @@ async def test_scoring_writes_a_decomposition(db):
     assert detail["relationship"]["outbound"] == 1
 
 
-async def test_the_ranking_excludes_people_with_no_interactions(db):
+async def test_the_ranking_excludes_people_with_no_signal_at_all(db):
+    """Silence with nothing else known is still exclusion.
+
+    M17 qualified this rule rather than removing it: no interactions *and* no
+    attention scarcity means no relationship. See the next test for the case
+    where silence is not absence.
+    """
     await follower("did:plc:quiet")
     await follower("did:plc:chatty")
     await store.record_interactions([
@@ -144,6 +150,84 @@ async def test_the_ranking_excludes_people_with_no_interactions(db):
     await store.score_relationships()
 
     assert [r["did"] for r in await store.ranked_relationships()] == ["did:plc:chatty"]
+
+
+# ------------------------------------------- M17 attention scarcity
+
+async def scarce(did: str, followers: int, follows: int) -> None:
+    """A follower whose attention is measurably scarce."""
+    await store.upsert_actor(actor(did, followersCount=followers,
+                                   followsCount=follows))
+    await store.mark_seen(did, 0)
+    await store.apply_detailed_profile(
+        did, {"followersCount": followers, "followsCount": follows})
+
+
+async def test_a_silent_but_scarce_follower_still_ranks(db):
+    """The gap M17 exists to close.
+
+    Someone who follows 1,037 accounts including mine, with 150,735 followers,
+    has made a deliberate choice. Under interactions alone they scored zero.
+    """
+    await scarce("did:plc:whittaker", 150_735, 1_037)
+    result = await store.score_relationships()
+
+    assert result["with_attention"] == 1
+    detail = await store.follower_detail("did:plc:whittaker")
+    assert detail["relationship_score"] > 0
+    assert detail["relationship"]["attention"] > 0
+    assert detail["relationship"]["inbound"] == 0
+    assert "1,037" in detail["relationship"]["attention_note"]
+
+
+async def test_attention_cannot_outrank_a_real_conversation(db):
+    """The cap, stated as an ordering rather than a constant."""
+    await scarce("did:plc:scarce", 500_000, 60)
+    await follower("did:plc:friend")
+    await store.record_interactions([
+        {**event("reply", "inbound", d, thread=f"at://t{d}"), "uri": f"at://a{d}",
+         "did": "did:plc:friend"} for d in range(1, 12)
+    ] + [
+        {**event("reply", "outbound", d, thread=f"at://t{d}"), "uri": f"at://b{d}",
+         "did": "did:plc:friend"} for d in range(1, 12)
+    ])
+    await store.score_relationships()
+
+    ranked = [r["did"] for r in await store.ranked_relationships()]
+    assert ranked.index("did:plc:friend") < ranked.index("did:plc:scarce")
+
+
+async def test_attention_adds_to_interaction_rather_than_replacing_it(db):
+    await scarce("did:plc:both", 150_735, 1_037)
+    await store.record_interactions([
+        {**event("reply", "inbound", 1, thread="at://t"), "uri": "at://x",
+         "did": "did:plc:both"},
+        {**event("reply", "outbound", 1, thread="at://t"), "uri": "at://y",
+         "did": "did:plc:both"},
+    ])
+    await store.score_relationships()
+
+    rel = (await store.follower_detail("did:plc:both"))["relationship"]
+    assert rel["interaction_score"] > 0
+    assert rel["attention"] > 0
+    assert rel["score"] == pytest.approx(
+        min(rel["interaction_score"] + rel["attention"], 100.0), abs=0.11)
+
+
+async def test_unhydrated_followers_are_not_scored_as_zero_attention(db):
+    """No counts means unknown, which must not look like a measured zero."""
+    await follower("did:plc:unknown")
+    result = await store.score_relationships()
+    assert result["scored"] == 0
+
+
+async def test_attention_is_sortable(db):
+    await scarce("did:plc:more", 500_000, 200)
+    await scarce("did:plc:less", 20_000, 900)
+    await store.score_relationships()
+
+    ranked = await store.ranked_relationships(order="attention", direction="desc")
+    assert [r["did"] for r in ranked] == ["did:plc:more", "did:plc:less"]
 
 
 async def test_incremental_sync_resumes_from_the_newest_stored(db):

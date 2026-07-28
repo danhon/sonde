@@ -162,6 +162,11 @@ async def sync(client: BlueskyClient | None = None, *,
     max_pages = max_pages if max_pages is not None else settings.interaction_max_pages
 
     if not await authenticator.token():
+        # Attention scarcity needs no auth and no interactions — score it
+        # anyway, so an unauthenticated install still ranks relationships by
+        # the one signal it can see.
+        scored = await store.score_relationships()
+        await store.commit()
         await store.finish_run(
             run_id, status="ok", completed=1, api_calls=0,
             error="no Bluesky session; notifications need auth",
@@ -169,7 +174,8 @@ async def sync(client: BlueskyClient | None = None, *,
         if owns_client:
             await client.aclose()
         return {"status": "ok", "kind": "interactions", "stored": 0,
-                "skipped": "not authenticated", "api_calls": 0}
+                "skipped": "not authenticated", "api_calls": 0,
+                "with_attention": scored.get("with_attention", 0)}
 
     stored = 0
     try:

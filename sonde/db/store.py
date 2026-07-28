@@ -1447,7 +1447,13 @@ async def relationship_scale() -> float:
 
 
 async def score_relationships() -> dict:
-    """Fold interactions into a score per person."""
+    """Fold interactions and attention scarcity into a score per person.
+
+    Deliberately scores people with **no** interactions at all: attention
+    scarcity (M17) is relationship evidence on its own, so an early return on
+    an empty `interactions` table would discard the whole signal.
+    """
+    from sonde import attention as attn
     from sonde import relationships as rel
 
     db = await _db()
@@ -1460,15 +1466,40 @@ async def score_relationships() -> dict:
         for row in await cur.fetchall():
             by_did.setdefault(row["did"], []).append(dict(row))
 
-    if not by_did:
+    # Attention needs both counts; hydration fills them, so unhydrated
+    # followers simply contribute nothing rather than a misleading zero.
+    async with db.execute(
+        "SELECT did, followers_count, follows_count FROM actors "
+        "WHERE followers_count IS NOT NULL AND follows_count IS NOT NULL"
+    ) as cur:
+        counts = {
+            row["did"]: (row["followers_count"], row["follows_count"])
+            for row in await cur.fetchall()
+        }
+    attention_raw = {
+        did: attn.raw(followers, follows)
+        for did, (followers, follows) in counts.items()
+    }
+    attention_scale = attn.calibrate(list(attention_raw.values()))
+
+    scored_dids = set(by_did) | {d for d, v in attention_raw.items() if v > 0}
+    if not scored_dids:
         return {"scored": 0}
 
     summaries = {
-        did: rel.summarise(rows, conversations.get(did, 0))
-        for did, rows in by_did.items()
+        did: rel.summarise(by_did[did], conversations.get(did, 0))
+        if by_did.get(did) else rel.Relationship(did=did)
+        for did in scored_dids
     }
-    # Calibrate against the observed spread rather than a fixed constant.
-    raws = sorted((s.raw for s in summaries.values()), reverse=True)
+    for did, summary in summaries.items():
+        followers, follows = counts.get(did, (None, None))
+        summary.attention = attn.points(followers, follows, attention_scale)
+        summary.attention_note = attn.describe(followers, follows)
+        summary.attention_detail = attn.explain(followers, follows, attention_scale)
+
+    # Calibrate the interaction half against the observed spread rather than a
+    # fixed constant. Only people who actually interacted set that scale.
+    raws = sorted((s.raw for s in summaries.values() if s.raw > 0), reverse=True)
     scale = max(raws[min(len(raws) // 20, len(raws) - 1)], 1.0) if raws else 1.0
 
     updates = []
@@ -1480,8 +1511,11 @@ async def score_relationships() -> dict:
         "WHERE did = ?", updates,
     )
     await db.commit()
+    with_attention = sum(1 for s in summaries.values() if s.attention > 0)
     return {"scored": len(updates), "scale": round(scale, 2),
-            "with_conversations": len(conversations)}
+            "with_conversations": len(conversations),
+            "with_attention": with_attention,
+            "attention_scale": round(attention_scale, 3)}
 
 
 REL_SORTABLE = {
@@ -1489,6 +1523,10 @@ REL_SORTABLE = {
     "influence": "a.influence_score",
     "followers": "a.followers_count",
     "handle": "a.handle",
+    # Attention lives in the components JSON rather than its own column: it is
+    # derived from two columns already stored, so a third would be a cache to
+    # keep in sync for no gain.
+    "attention": "json_extract(a.relationship_components, '$.attention')",
 }
 
 

@@ -280,53 +280,7 @@
     {% endif %}
     <form method="post" action="/followers/{{ p.did }}/posts" class="ml-auto">
       <button type="submit" class="font-mono text-xs text-red-800 hover:underline">
-        {% if p.relationship and p.relationship.get('score') %}
-<section class="mt-8">
-  <h2 class="flex flex-wrap items-baseline gap-3 border-b border-slate-300 pb-2">
-    <span class="font-mono text-xs font-semibold uppercase tracking-widest text-red-800">Relationship</span>
-    <span class="font-mono text-lg font-semibold tabular-nums">{{ p.relationship.score }}</span>
-    <a href="/relationships" class="ml-auto font-mono text-xs text-red-800 hover:underline">all relationships →</a>
-  </h2>
-  <dl class="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
-    {% for label, value in [
-        ('From them', p.relationship.inbound), ('From me', p.relationship.outbound),
-        ('Conversations', p.relationship.conversations),
-        ('Days active', p.relationship.days_active)] %}
-    <div>
-      <dt class="font-mono text-[10px] uppercase tracking-widest text-slate-500">{{ label }}</dt>
-      <dd class="font-mono text-sm tabular-nums">{{ value }}</dd>
-    </div>
-    {% endfor %}
-  </dl>
-  <p class="mt-2 text-xs text-slate-500">
-    Reciprocity {{ p.relationship.reciprocity }} —
-    {% if p.relationship.reciprocity > 0.5 %}a two-way relationship{% else %}mostly one-directional{% endif %}.
-    {% if p.relationship.by_kind %}
-    {{ p.relationship.by_kind.items() | map('join', ' × ') | join(' · ') }}.
-    {% endif %}
-    Weighted by what an interaction costs to give, so a like counts for little
-    and a conversation for a lot.
-  </p>
-  {% if p.interactions %}
-  <table class="mt-3 w-full text-sm">
-    <tbody>
-      {% for i in p.interactions[:10] %}
-      <tr class="border-b border-slate-100">
-        <td class="w-40 py-1.5 font-mono text-xs text-slate-500">{{ i.occurred_at[:16].replace("T"," ") }}</td>
-        <td class="w-24 py-1.5 font-mono text-[10px] uppercase tracking-wider
-                   {% if i.direction == 'outbound' %}text-emerald-700{% else %}text-slate-600{% endif %}">
-          {{ 'me →' if i.direction == 'outbound' else '→ me' }}
-        </td>
-        <td class="py-1.5 font-mono text-xs">{{ i.kind }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-</section>
-{% endif %}
-
-{% if p.posts %}refresh{% else %}fetch posts{% endif %}
+        {% if p.posts %}refresh{% else %}fetch posts{% endif %}
       </button>
     </form>
   </div>
@@ -336,51 +290,6 @@
     and every verified follower. For anyone else, fetch them here when you want them.
   </p>
   {% endif %}
-  {% if p.relationship and p.relationship.get('score') %}
-<section class="mt-8">
-  <h2 class="flex flex-wrap items-baseline gap-3 border-b border-slate-300 pb-2">
-    <span class="font-mono text-xs font-semibold uppercase tracking-widest text-red-800">Relationship</span>
-    <span class="font-mono text-lg font-semibold tabular-nums">{{ p.relationship.score }}</span>
-    <a href="/relationships" class="ml-auto font-mono text-xs text-red-800 hover:underline">all relationships →</a>
-  </h2>
-  <dl class="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
-    {% for label, value in [
-        ('From them', p.relationship.inbound), ('From me', p.relationship.outbound),
-        ('Conversations', p.relationship.conversations),
-        ('Days active', p.relationship.days_active)] %}
-    <div>
-      <dt class="font-mono text-[10px] uppercase tracking-widest text-slate-500">{{ label }}</dt>
-      <dd class="font-mono text-sm tabular-nums">{{ value }}</dd>
-    </div>
-    {% endfor %}
-  </dl>
-  <p class="mt-2 text-xs text-slate-500">
-    Reciprocity {{ p.relationship.reciprocity }} —
-    {% if p.relationship.reciprocity > 0.5 %}a two-way relationship{% else %}mostly one-directional{% endif %}.
-    {% if p.relationship.by_kind %}
-    {{ p.relationship.by_kind.items() | map('join', ' × ') | join(' · ') }}.
-    {% endif %}
-    Weighted by what an interaction costs to give, so a like counts for little
-    and a conversation for a lot.
-  </p>
-  {% if p.interactions %}
-  <table class="mt-3 w-full text-sm">
-    <tbody>
-      {% for i in p.interactions[:10] %}
-      <tr class="border-b border-slate-100">
-        <td class="w-40 py-1.5 font-mono text-xs text-slate-500">{{ i.occurred_at[:16].replace("T"," ") }}</td>
-        <td class="w-24 py-1.5 font-mono text-[10px] uppercase tracking-wider
-                   {% if i.direction == 'outbound' %}text-emerald-700{% else %}text-slate-600{% endif %}">
-          {{ 'me →' if i.direction == 'outbound' else '→ me' }}
-        </td>
-        <td class="py-1.5 font-mono text-xs">{{ i.kind }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-</section>
-{% endif %}
 
 {% if p.posts %}
   <ul class="mt-3 space-y-3">
@@ -399,6 +308,107 @@
   </ul>
   {% endif %}
 </section>
+
+{% if p.relationship and p.relationship.get('score') %}
+<section class="mt-8">
+  <h2 class="flex flex-wrap items-baseline gap-3 border-b border-slate-300 pb-2">
+    <span class="font-mono text-xs font-semibold uppercase tracking-widest text-red-800">Relationship</span>
+    <span class="font-mono text-lg font-semibold tabular-nums">{{ p.relationship.score }}</span>
+    <a href="/relationships" class="ml-auto font-mono text-xs text-red-800 hover:underline">all relationships →</a>
+  </h2>
+
+  {% if p.relationship.get('attention') %}
+  {% set a = p.relationship.get('attention_detail') %}
+  <div class="mt-3 border-l-2 border-red-800 bg-slate-50 px-3 py-3">
+    <div class="flex flex-wrap items-baseline gap-3">
+      <span class="font-mono text-[10px] uppercase tracking-widest text-red-800">Attention scarcity</span>
+      <span class="font-mono text-sm font-semibold tabular-nums">+{{ p.relationship.attention }}</span>
+      <span class="font-mono text-[10px] uppercase tracking-widest text-slate-400">
+        of {{ p.relationship.score }} · {{ p.relationship.get('interaction_score', 0) }} from interaction
+      </span>
+    </div>
+    <p class="mt-2 text-sm text-slate-700">{{ p.relationship.attention_note }}</p>
+
+    {% if a %}
+    <dl class="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+      {% for label, value, detail in [
+          ('Followers ÷ follows', a.ratio_label, a.counts_label),
+          ('Scarcity', '%.2f'|format(a.scarcity), 'of a slot in their list'),
+          ('Standing', '%.2f'|format(a.standing), 'what their attention is worth'),
+          ('Scarcity × standing', '%.2f'|format(a.raw), 'scaled against the top of my list, %.2f'|format(a.scale))] %}
+      <div>
+        <dt class="font-mono text-[10px] uppercase tracking-widest text-slate-500">{{ label }}</dt>
+        <dd class="font-mono text-sm tabular-nums">{{ value }}</dd>
+        <dd class="text-[11px] text-slate-500">{{ detail }}</dd>
+      </div>
+      {% endfor %}
+    </dl>
+    <p class="mt-3 text-xs text-slate-500">
+      <strong>How this is calculated.</strong> Two facts, kept apart and
+      multiplied, so both have to hold. <em>Scarcity</em> falls from 1 at
+      {{ a.floor }} follows to 0 at {{ a.ceiling }} — past that, following is
+      not a curated act. <em>Standing</em> rises from 0 at 1,000 followers to 1
+      at 100,000; below the gate a small account following few people is just a
+      small account, not scarce attention. The product is divided by the 99th
+      divisor described below rather than a fixed constant, and capped at {{ a.max_points }} of the 100 relationship points. The
+      divisor is the most attention-scarce follower I actually have, not a fixed
+      constant, so it tracks the list rather than a guess made once.
+    </p>
+    <p class="mt-2 text-xs text-slate-500">
+      This is <em>not</em> the followers ÷ follows ratio in the influence score.
+      That ratio collapses both facts into one number and scores 1,000 ÷ 10 the
+      same as 500,000 ÷ 5,000; this scores neither.
+    </p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if p.relationship.inbound or p.relationship.outbound %}
+  <dl class="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
+    {% for label, value in [
+        ('From them', p.relationship.inbound), ('From me', p.relationship.outbound),
+        ('Conversations', p.relationship.conversations),
+        ('Days active', p.relationship.days_active)] %}
+    <div>
+      <dt class="font-mono text-[10px] uppercase tracking-widest text-slate-500">{{ label }}</dt>
+      <dd class="font-mono text-sm tabular-nums">{{ value }}</dd>
+    </div>
+    {% endfor %}
+  </dl>
+  <p class="mt-2 text-xs text-slate-500">
+    Reciprocity {{ p.relationship.reciprocity }} —
+    {% if p.relationship.reciprocity > 0.5 %}a two-way relationship{% else %}mostly one-directional{% endif %}.
+    {% if p.relationship.by_kind %}
+    {{ p.relationship.by_kind.items() | map('join', ' × ') | join(' · ') }}.
+    {% endif %}
+    Weighted by what an interaction costs to give, so a like counts for little
+    and a conversation for a lot.
+  </p>
+  {% else %}
+  <p class="mt-2 text-xs text-slate-500">
+    No interactions recorded yet — this score is attention scarcity alone.
+  </p>
+  {% endif %}
+
+  {% if p.interactions %}
+  <table class="mt-3 w-full text-sm">
+    <tbody>
+      {% for i in p.interactions[:10] %}
+      <tr class="border-b border-slate-100">
+        <td class="w-40 py-1.5 font-mono text-xs text-slate-500">{{ i.occurred_at[:16].replace("T"," ") }}</td>
+        <td class="w-24 py-1.5 font-mono text-[10px] uppercase tracking-wider
+                   {% if i.direction == 'outbound' %}text-emerald-700{% else %}text-slate-600{% endif %}">
+          {{ 'me →' if i.direction == 'outbound' else '→ me' }}
+        </td>
+        <td class="py-1.5 font-mono text-xs">{{ i.kind }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endif %}
+
 
 <div class="mt-8 flex items-center gap-4">
   <a href="/followers" class="font-mono text-xs text-red-800 hover:underline">← all followers</a>

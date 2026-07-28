@@ -581,6 +581,7 @@ Sub-steps for the scoring work are sequenced in
 | M15c | Follow-graph propagation | ✅ done | 194 proposals over 11,038 real edges; found Whittaker for privacy |
 | M14 | Relationship score | ✅ done | Separate from influence; notifications ~190x cheaper than per-post |
 | M16 | Job batches on /settings | ✅ done | Five ordered batches; individual jobs collapsed |
+| M17 | Attention scarcity in the relationship score | ✅ done | 388 of 1,500 score; the ratio's top score is this one's zero |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
 ### Detail on what is done
@@ -732,6 +733,94 @@ happened" email trains you to ignore the one that matters; but health problems
 send regardless, because silence is otherwise ambiguous between "nothing
 happened" and "the app died". Reports stale sweeps, held sweeps, failed runs and
 an app password that is set but not authenticating.
+
+### M17 — Attention scarcity
+
+Requested 2026-07-27: *if an account has tens or hundreds of thousands of
+followers but follows only a few hundred, and mine is one of them, that says my
+account is high signal to them.*
+
+That is right, and worth measuring. But the first three versions of this plan
+were all wrong in instructive ways, so the reasoning is recorded here rather
+than just the answer.
+
+**v1 — "add followers ÷ follows as an influence component."** Already exists.
+`selectivity` in the influence score is exactly that ratio. Shipping it again
+would have double-counted a number already on every row.
+
+**v2 — "so the idea is redundant."** Also wrong, and this is the substantive
+finding. The *ratio* is not the *hypothesis*. Two accounts:
+
+| | followers | follows | ratio | selectivity | attention |
+|---|---|---|---|---|---|
+| A | 1,000 | 10 | 100 | **1.00** | 0.00 |
+| B | 500,000 | 5,000 | 100 | **1.00** | 0.00 |
+
+A ratio cannot tell these apart — it divides two facts into one — so selectivity
+awards both its maximum. And *neither is the thing being asked about*: A is a
+tiny account whose reading habits say nothing about me, B follows more accounts
+than anyone reads. The ratio's top score is this component's zero, which is the
+sharpest available demonstration that they are not the same measurement.
+
+The hypothesis needs **both** terms held separately, which means it cannot be
+expressed as the ratio at all.
+
+So: `attention = scarcity(follows) × standing(followers)`, multiplied so that
+*both* conditions must hold — the way the request was actually phrased.
+
+**v3 — "put it in the influence score."** Wrong place. Selectivity asks whether
+*they* are discriminating: a property of them, which is why it belongs to
+influence. This asks what *my slot in their attention budget* is worth: a
+property of us, which is the relationship score's question. It also fixes a real
+gap there — today the relationship score needs interactions, so someone who
+follows 200 people including me but has never replied scores exactly zero.
+A deliberate, scarce choice to follow me is relationship evidence on its own.
+
+**Calibration, measured not guessed** — over the 1,500 hydrated followers that
+have both counts:
+
+- `scarcity = log10(5000 / clamp(follows, 50, ·)) / log10(100)`. Above ~5,000
+  follows, following is not a curated act — nobody reads 5,000 accounts, so the
+  term is zero. Below 50 it stops meaning more.
+- `standing = clamp((log10(followers) − 3) / 2, 0, 1)`. **Gated at 1,000
+  followers.** The first draft used the ungated `log10(followers)/5` shared with
+  `reach`, and it put a 434-follower account above Cory Doctorow — a small
+  account following 45 people is an ordinary small account, not scarce
+  attention. The gate is what makes the component match the request.
+
+Result on the 1,500 hydrated followers: **388 score non-zero**, and the top is
+alt18f (59,637 ÷ 126), Matt Bors, Kevin Beaumont, Meredith Whittaker
+(150,735 ÷ 1,037), Maggie Appleton, Cory Doctorow, Mike Masnick. That is the
+list the request describes.
+
+Worth noting it does **not** rank by the ratio, which is the clearest evidence
+the two are different measurements: Whittaker at 145× ranks *below* Bors at
+110×, because Bors' 510 follows make a slot in his list much scarcer even though
+his reach is smaller.
+
+**Scaled** against the most attention-scarce follower actually present rather
+than a constant, and **capped at 30 of the 100 relationship points** so it can
+lift a silent follower into view without ever outranking a conversation.
+
+The scale started as a p99, matching the interaction scale and the affinity
+index, and that was wrong here. With ~400 non-zero values a p99 leaves four
+people above the line and every one of them lands on the cap: alt18f,
+doublepulsar, edoggthered and mattbors all scored exactly 30.0, destroying the
+ordering at precisely the top of the list this exists to rank. Dividing by the
+maximum keeps every rank distinct. The trade — one extreme account compresses
+everyone below it — is fine because `raw` is bounded at 1.0.
+
+Two limits, recorded because they are permanent:
+
+- `follows_count` is *current*, not what it was when they followed me. Someone
+  who followed at 100 follows may now be at 5,000. This cuts the right way —
+  what my slot is worth now is the question — but it is not a historical claim.
+- It is gameable in principle by an account with bought followers and few
+  follows. The moderation lists catch the cheap version, and six-figure follower
+  counts are not cheap, but the component is evidence and not proof.
+
+Correlation with the influence score is r = 0.64 — related, as expected, since
+both read `followers_count`, but far from a restatement.
 
 ### M14 — Relationship score (planned)
 

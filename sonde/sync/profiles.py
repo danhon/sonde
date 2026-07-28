@@ -68,6 +68,11 @@ async def hydrate(
         # mix of denominators.
         if hydrated:
             await store.rescore_all()
+            # Hydration is also what supplies `follows_count`, so it is what
+            # makes attention scarcity computable. Rescoring relationships here
+            # means the signal appears without waiting for an authenticated
+            # interaction sync, which it does not depend on.
+            await store.score_relationships()
         await store.commit()
     except Exception as exc:  # noqa: BLE001
         await store.finish_run(run_id, status="failed", error=str(exc),

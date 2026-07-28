@@ -18,6 +18,14 @@
   more than a stream in one.
 </p>
 
+<p class="mt-3 max-w-2xl text-sm text-slate-600">
+  Silence is not always absence, so up to 30 of the 100 points come from
+  <strong>attention scarcity</strong>: someone with 150,000 followers who follows
+  only a thousand accounts, one of them mine, has made a deliberate and narrow
+  choice. That registers even with nothing said. It is capped low enough that it
+  can lift a quiet follower into view but never outrank an actual conversation.
+</p>
+
 {% if not rows %}
 <div class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center">
   <p class="font-mono text-sm uppercase tracking-widest text-slate-500">No interactions captured yet</p>
@@ -37,6 +45,7 @@
         {{ th(base, 'relationship', 'Relationship', 'right') }}
         {{ th(base, 'influence', 'Influence', 'right') }}
         {{ th(base, 'followers', 'Followers', 'right') }}
+        {{ th(base, 'attention', 'Attention', 'right') }}
         <th class="py-2 pr-4 font-mono text-[10px] uppercase tracking-widest text-slate-500">Interaction</th>
       </tr>
     </thead>
@@ -53,8 +62,14 @@
         <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-500">
           {% if row.followers_count is not none %}{{ "{:,}".format(row.followers_count) }}{% else %}—{% endif %}
         </td>
+        <td class="py-2 pr-4 text-right font-mono tabular-nums
+                   {% if r.get('attention') %}text-red-800{% else %}text-slate-300{% endif %}"
+            {% if r.get('attention_note') %}title="{{ r.attention_note }}"{% endif %}>
+          {% if r.get('attention') %}+{{ r.attention }}{% else %}—{% endif %}
+        </td>
         <td class="py-2 pr-4 text-xs text-slate-500">
-          {{ r.outbound }}→ {{ r.inbound }}←
+          {% if not (r.inbound or r.outbound) %}<span class="text-slate-400">no interactions yet</span>{% else %}
+          {{ r.outbound }}→ {{ r.inbound }}←{% endif %}
           {%- if r.conversations %} · {{ r.conversations }} conversation{{ '' if r.conversations == 1 else 's' }}{% endif %}
           {%- if r.days_active %} · {{ r.days_active }} day{{ '' if r.days_active == 1 else 's' }}{% endif %}
         </td>

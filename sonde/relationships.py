@@ -61,6 +61,15 @@ class Relationship:
     conversations: int = 0
     days_active: int = 0
     last_at: str | None = None
+    # Attention scarcity (M17) — added, not multiplied, so it can register a
+    # relationship on its own. Someone who follows 200 people including me and
+    # has never replied is not a stranger, and the interaction terms cannot see
+    # that. Capped well below 100 so it never outranks actual conversation.
+    attention: float = 0.0
+    attention_note: str | None = None
+    # The working, stored rather than recomputed at render time so the profile
+    # always shows the scale the score was actually calculated with.
+    attention_detail: dict | None = None
 
     @property
     def reciprocity(self) -> float:
@@ -74,7 +83,8 @@ class Relationship:
         low, high = sorted((self.inbound, self.outbound))
         return round((low / high) if high else 0.0, 3)
 
-    def score(self, scale: float = DEFAULT_SCALE) -> float:
+    def interaction_score(self, scale: float = DEFAULT_SCALE) -> float:
+        """The part earned by actually talking, 0–100."""
         if self.raw <= 0:
             return 0.0
         # Reciprocity is a multiplier with a floor, so a purely one-way
@@ -87,9 +97,19 @@ class Relationship:
         value = self.raw * balance * spread
         return round(min(value / max(scale, 1.0), 1.0) * 100, 1)
 
+    def score(self, scale: float = DEFAULT_SCALE) -> float:
+        # Attention is additive and headroom-limited: it cannot push a real
+        # conversation down the list, only lift a silent follower into view.
+        total = self.interaction_score(scale) + max(self.attention, 0.0)
+        return round(min(total, 100.0), 1)
+
     def as_dict(self, scale: float = DEFAULT_SCALE) -> dict:
         return {
             "score": self.score(scale), "raw": round(self.raw, 2),
+            "interaction_score": self.interaction_score(scale),
+            "attention": round(self.attention, 1),
+            "attention_note": self.attention_note,
+            "attention_detail": self.attention_detail,
             "inbound": self.inbound, "outbound": self.outbound,
             "reciprocity": self.reciprocity, "conversations": self.conversations,
             "days_active": self.days_active, "by_kind": self.by_kind,
