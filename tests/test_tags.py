@@ -784,3 +784,209 @@ async def test_an_ordinary_referer_still_comes_back(db, client):
         follow_redirects=False)
 
     assert response.headers["location"].startswith("/followers?page=3&order=followers")
+
+
+# ============================================ previewing a candidate
+
+async def seed_cluster(dids: list[str], label: str = "Unnamed community") -> int:
+    """A cluster candidate is its stored member list — there is no rule."""
+    import json as _json
+    conn = await store._db()
+    cur = await conn.execute(
+        """INSERT INTO group_candidates
+             (kind, term, label, member_count, why, members, first_seen_at)
+           VALUES ('cluster', ?, ?, ?, 'follow the same accounts', ?, ?)""",
+        (label.lower(), label, len(dids), _json.dumps(dids), store.utcnow()))
+    await store.commit()
+    return cur.lastrowid
+
+
+async def seed_phrase(term: str, label: str) -> int:
+    conn = await store._db()
+    cur = await conn.execute(
+        """INSERT INTO group_candidates
+             (kind, term, label, member_count, why, first_seen_at)
+           VALUES ('phrase', ?, ?, 0, 'bio phrase', ?)""",
+        (term, label, store.utcnow()))
+    await store.commit()
+    return cur.lastrowid
+
+
+async def test_a_cluster_preview_lists_its_stored_members(db):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    await add("did:plc:b", is_verified=True)
+    cid = await seed_cluster(["did:plc:a", "did:plc:b"])
+
+    preview = await store.candidate_members(cid)
+
+    assert {m["did"] for m in preview["members"]} == {"did:plc:a", "did:plc:b"}
+
+
+async def test_a_rule_based_preview_is_recomputed_from_the_rule(db):
+    """Phrase candidates store no members at all — they are rebuilt on demand,
+    which is also what makes the preview reflect today's data."""
+    from tests.test_groups import add
+
+    await add("did:plc:w", is_verified=True, description="Public sector wonk")
+    cid = await seed_phrase("wonk", "Wonks")
+
+    preview = await store.candidate_members(cid)
+
+    assert [m["did"] for m in preview["members"]] == ["did:plc:w"]
+    assert "wonk" in preview["members"][0]["evidence"]
+
+
+async def test_previewing_writes_nothing(db):
+    """The whole point of a preview. Recomputing a rule-based candidate runs the
+    same matcher the accept does, so it would be easy to write by accident."""
+    from tests.test_groups import add
+
+    await add("did:plc:w", is_verified=True, description="Public sector wonk")
+    cid = await seed_phrase("wonk", "Wonks")
+    before = await store._scalar("SELECT COUNT(*) FROM group_members")
+    groups_before = await store._scalar("SELECT COUNT(*) FROM groups")
+
+    preview = await store.candidate_members(cid)
+
+    # Without this the test passes for the wrong reason: a preview that matched
+    # nobody writes nothing too.
+    assert len(preview["members"]) == 1
+    assert await store._scalar("SELECT COUNT(*) FROM group_members") == before
+    assert await store._scalar("SELECT COUNT(*) FROM groups") == groups_before
+    assert (await store.group_candidates())[0]["decided"] is None
+
+
+async def test_the_preview_marks_members_who_have_departed(db):
+    """A cluster's members were captured when it was found. Dropping the ones
+    who left would hide that a candidate is half-stale."""
+    from tests.test_groups import add
+
+    await add("did:plc:here", is_verified=True)
+    await add("did:plc:gone", is_verified=True)
+    await store.mark_departed(["did:plc:gone"], "unfollow")
+    cid = await seed_cluster(["did:plc:here", "did:plc:gone"])
+
+    preview = await store.candidate_members(cid)
+
+    assert preview["candidate"]["departed"] == 1
+    assert {m["did"]: bool(m["is_current"]) for m in preview["members"]} == {
+        "did:plc:here": True, "did:plc:gone": False}
+
+
+async def test_the_preview_counts_members_it_cannot_resolve(db):
+    """A DID with no stored profile cannot be rendered; a count that ignored it
+    would not add up to the number on the candidate row."""
+    from tests.test_groups import add
+
+    await add("did:plc:known", is_verified=True)
+    cid = await seed_cluster(["did:plc:known", "did:plc:never-seen"])
+
+    preview = await store.candidate_members(cid)
+
+    assert preview["candidate"]["members_found"] == 1
+    assert preview["candidate"]["unresolved"] == 1
+
+
+async def test_an_unknown_candidate_previews_as_nothing(db):
+    assert await store.candidate_members(9999) is None
+
+
+async def test_accepting_a_subset_creates_the_group_with_only_those(db):
+    from tests.test_groups import add
+
+    for did in ("did:plc:a", "did:plc:b", "did:plc:c"):
+        await add(did, is_verified=True)
+    cid = await seed_cluster(["did:plc:a", "did:plc:b", "did:plc:c"], "Cohort")
+
+    slug = await store.decide_candidate(cid, True, dids=["did:plc:a", "did:plc:c"])
+
+    assert {m["did"] for m in await store.group_members(slug)} == {
+        "did:plc:a", "did:plc:c"}
+
+
+async def test_a_hand_picked_member_survives_a_reclassify(db):
+    """Picked by a person looking at a list, so it gets the same standing as any
+    other hand tag — including immunity from the six-hourly job."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    cid = await seed_cluster(["did:plc:a"], "Cohort")
+    slug = await store.decide_candidate(cid, True, dids=["did:plc:a"])
+
+    await store.classify_groups()
+
+    assert [m["did"] for m in await store.group_members(slug)] == ["did:plc:a"]
+
+
+async def test_accepting_without_a_subset_still_takes_everything(db):
+    """The list page's one-click accept must not change behaviour."""
+    from tests.test_groups import add
+
+    for did in ("did:plc:a", "did:plc:b"):
+        await add(did, is_verified=True)
+    cid = await seed_cluster(["did:plc:a", "did:plc:b"], "Cohort")
+
+    slug = await store.decide_candidate(cid, True)
+
+    assert len(await store.group_members(slug)) == 2
+
+
+# ------------------------------------------------- the preview page
+
+async def test_the_preview_page_renders_its_members(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    cid = await seed_cluster(["did:plc:a"], "Cohort")
+
+    page = client.get(f"/groups/discover/{cid}")
+
+    assert page.status_code == 200
+    assert 'name="did" value="did:plc:a"' in page.text
+    assert 'form="accept"' in page.text
+
+
+async def test_the_preview_page_does_not_nest_forms(db, client):
+    """who() renders follow-back as its own form, so the members table must not
+    be wrapped — same trap as the batch bars."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    cid = await seed_cluster(["did:plc:a"], "Cohort")
+
+    body = client.get(f"/groups/discover/{cid}").text
+
+    depth = 0
+    for chunk in body.split("<form")[1:]:
+        depth += 1
+        assert depth == 1, "the preview page nests a form inside another form"
+        depth -= chunk.count("</form>")
+
+
+async def test_ticking_nobody_creates_nothing(db, client):
+    """An empty selection is a misclick, not a request for an empty group."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    cid = await seed_cluster(["did:plc:a"], "Cohort")
+
+    response = client.post(f"/groups/discover/{cid}?accept=true",
+                           data={"subset": "1"}, follow_redirects=False)
+
+    assert "notice=nobody" in response.headers["location"]
+    assert "cohort" not in {g["slug"] for g in await store.group_names()}
+
+
+async def test_an_unknown_candidate_page_is_a_404(db, client):
+    assert client.get("/groups/discover/4242").status_code == 404
+
+
+async def test_a_candidate_matching_nobody_says_so(db, client):
+    cid = await seed_phrase("nobodyhasthisinabio", "Nobody")
+
+    page = client.get(f"/groups/discover/{cid}")
+
+    assert page.status_code == 200
+    assert "matches nobody now" in page.text

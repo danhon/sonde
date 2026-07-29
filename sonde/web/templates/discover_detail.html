@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% from "_sort.html" import th, who with context %}
+{% set base = {'order': order, 'direction': direction} %}
+{% block title %}{{ candidate.label }} — preview — sonde{% endblock %}
+{% block content %}
+
+<div class="flex flex-wrap items-baseline gap-4 border-b border-slate-300 pb-3">
+  <h1 class="font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+    {{ candidate.label }}
+  </h1>
+  <span class="font-mono text-[10px] uppercase tracking-wider
+               {% if candidate.kind == 'cluster' %}text-red-800{% else %}text-slate-500{% endif %}">
+    {{ candidate.kind }}
+  </span>
+  <a href="/groups/discover" class="ml-auto font-mono text-xs text-slate-500 hover:text-red-800">← candidates</a>
+</div>
+
+{% if notice == 'nobody' %}
+<p class="mt-4 border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+  Nothing was ticked, so no group was created. Accepting with an empty selection
+  would make an empty group; reject the candidate if that is what you meant.
+</p>
+{% endif %}
+
+<p class="mt-4 max-w-2xl text-sm text-slate-600">{{ candidate.why }}</p>
+
+<p class="mt-2 max-w-2xl text-xs text-slate-500">
+  Nothing here is written until you accept.
+  {% if candidate.kind == 'cluster' %}
+  These are the people the cluster was built from — a cluster has no rule to
+  re-run, so this list is what it is.
+  {% else %}
+  Recomputed now from the rule that proposed it, so it reflects today's data
+  rather than the day it was found.
+  {% endif %}
+  {% if candidate.departed %}
+  <strong>{{ candidate.departed }}</strong> no longer follow you and are marked
+  below.
+  {% endif %}
+  {% if candidate.unresolved %}
+  {{ candidate.unresolved }} could not be shown — no profile is stored for them.
+  {% endif %}
+</p>
+
+{% if not members %}
+<p class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center text-sm text-slate-600">
+  This candidate matches nobody now. It may have been proposed against data that
+  has since changed — rejecting it is the safe call.
+</p>
+<form method="post" action="/groups/discover/{{ candidate.id }}?accept=false" class="mt-4">
+  <button type="submit" class="border border-slate-300 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-600 hover:border-red-800 hover:text-red-800">
+    reject
+  </button>
+</form>
+{% else %}
+
+{#- The table is deliberately NOT wrapped in the accept form. who() renders the
+    follow-back control as its own <form>, and a form inside a form is dropped
+    silently by browsers. The checkboxes join by id instead. -#}
+<div class="mt-6 overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-slate-300 text-left">
+        <th class="w-8 py-2 pr-2">
+          <input type="checkbox" data-select-all form="accept" checked
+                 aria-label="select all">
+        </th>
+        {{ th(base, 'handle', 'Handle') }}
+        {{ th(base, 'name', 'Name') }}
+        {{ th(base, 'followers', 'Followers', 'right') }}
+        {{ th(base, 'influence', 'Score', 'right') }}
+        <th class="py-2 pr-4 font-mono text-[10px] uppercase tracking-widest text-slate-500">Already tagged</th>
+        <th class="py-2 pr-4 font-mono text-[10px] uppercase tracking-widest text-slate-500">Why</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in members %}
+      <tr class="border-b border-slate-100 hover:bg-slate-50 {% if not m.is_current %}opacity-60{% endif %}">
+        <td class="py-2 pr-2">
+          <input type="checkbox" name="did" value="{{ m.did }}" form="accept" checked
+                 aria-label="include {{ m.handle }}">
+        </td>
+        <td class="py-2 pr-4">
+          {{ who(m) }}
+          {% if not m.is_current %}
+          <span class="font-mono text-[10px] uppercase tracking-wider text-slate-400"
+                title="no longer follows you">departed</span>
+          {% endif %}
+        </td>
+        <td class="py-2 pr-4">{{ m.display_name or "" }}</td>
+        <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-600">
+          {% if m.followers_count is not none %}{{ "{:,}".format(m.followers_count) }}{% else %}—{% endif %}
+        </td>
+        <td class="py-2 pr-4 text-right font-mono font-semibold tabular-nums">
+          {% if m.influence_score is not none %}{{ m.influence_score }}{% else %}—{% endif %}
+        </td>
+        <td class="py-2 pr-4">
+          {% for t in m.tags %}<span class="mr-1 font-mono text-[10px] uppercase tracking-wider text-slate-500">{{ t.name }}</span>{% else %}<span class="text-slate-300">—</span>{% endfor %}
+        </td>
+        <td class="py-2 pr-4 text-xs text-slate-500">{{ m.evidence }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<form method="post" action="/groups/discover/{{ candidate.id }}?accept=true" id="accept" data-batch
+      class="sticky bottom-0 z-10 -mx-4 mt-4 flex flex-wrap items-center gap-3
+             border-t border-slate-300 bg-white/95 px-4 py-3 backdrop-blur">
+  <input type="hidden" name="subset" value="1">
+  <span class="font-mono text-[10px] uppercase tracking-widest text-slate-500">
+    <span data-selection-count>{{ members|length }}</span> of {{ members|length }} selected
+  </span>
+  <button type="submit"
+          class="bg-slate-900 px-3 py-1 font-mono text-[10px] uppercase tracking-widest
+                 text-white hover:bg-red-800">create group with these</button>
+  <span class="text-xs text-slate-400">
+    they are tagged by hand, so the classifier will not undo it
+  </span>
+</form>
+
+<form method="post" action="/groups/discover/{{ candidate.id }}?accept=false" class="mt-3">
+  <button type="submit" class="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-red-800">
+    reject this candidate
+  </button>
+</form>
+{% endif %}
+
+{% endblock %}

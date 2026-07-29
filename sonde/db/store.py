@@ -2236,8 +2236,14 @@ async def group_candidates(decided: bool | None = None,
         return [dict(r) for r in await cur.fetchall()]
 
 
-async def decide_candidate(candidate_id: int, accept: bool) -> str | None:
-    """Accepting turns a candidate into a real group and classifies at once."""
+async def decide_candidate(candidate_id: int, accept: bool,
+                           dids: list[str] | None = None) -> str | None:
+    """Accepting turns a candidate into a real group and populates it.
+
+    `dids` is the subset chosen on the preview page. Passing None keeps the
+    original behaviour — take everything the candidate matches — which is what
+    the one-click accept on the list page still does.
+    """
     db = await _db()
     async with db.execute(
         "SELECT * FROM group_candidates WHERE id = ?", (candidate_id,)
@@ -2261,13 +2267,102 @@ async def decide_candidate(candidate_id: int, accept: bool) -> str | None:
         (slug, row["label"], f"Discovered from {row['kind']}: {row['why']}", utcnow()),
     )
     await db.commit()
-    if row["kind"] == "cluster":
+
+    if dids is not None:
+        # A hand-picked subset. Everyone here was chosen by a person looking at
+        # the list, so they are `manual` and confirmed — the same standing as a
+        # tag applied anywhere else, and equally safe from the next classify run.
+        for did in dids:
+            await tag_actor(slug, did)
+    elif row["kind"] == "cluster":
         # A cluster is not derived from a term, so there is no rule to re-run:
         # the membership stored when it was proposed *is* the group.
         await _apply_cluster_group(slug, row["members"])
     else:
         await _apply_discovered_group(slug, row["kind"], row["term"])
     return slug
+
+
+CANDIDATE_SORTABLE = {
+    "influence": "a.influence_score",
+    "followers": "a.followers_count",
+    "handle": "a.handle",
+    "name": "a.display_name",
+}
+
+
+async def candidate_members(candidate_id: int, *, order: str = "influence",
+                            direction: str = "desc") -> dict | None:
+    """Who a candidate would contain if accepted, without accepting it.
+
+    The two kinds arrive at their members differently and the caller should not
+    have to care. A cluster IS its stored member list — there is no rule to
+    re-run, because it came from the shape of the follow graph. A rule-based
+    candidate has no stored members at all and is recomputed here.
+
+    Writes nothing. That is the whole point of a preview, and there is a test
+    asserting group_members is untouched after this runs.
+    """
+    db = await _db()
+    async with db.execute(
+        "SELECT * FROM group_candidates WHERE id = ?", (candidate_id,)
+    ) as cur:
+        candidate = await cur.fetchone()
+    if candidate is None:
+        return None
+    candidate = dict(candidate)
+
+    if candidate["kind"] == "cluster":
+        try:
+            dids = json.loads(candidate["members"] or "[]")
+        except (ValueError, TypeError):
+            dids = []
+        evidence = {d: "clusters with this group in the follow graph" for d in dids}
+    else:
+        # Measured at ~1.8s against the live database, nearly all of it inside
+        # group_target_dids -> sweep_candidate_dids, which reads every current
+        # follower's bio and runs the M18 regex set over it in Python. That cost
+        # is pre-existing and invisible inside classify_groups; this is the first
+        # thing to put it behind a click. Clusters skip it entirely and render
+        # instantly. Not cached, because the preview has to agree exactly with
+        # what accepting would do, and a stale target set would break that.
+        matched = await _discovered_matches(candidate["kind"], candidate["term"])
+        evidence = dict(matched)
+        dids = list(evidence)
+
+    members: list[dict] = []
+    if dids:
+        column = CANDIDATE_SORTABLE.get(order, CANDIDATE_SORTABLE["influence"])
+        arrow = "ASC" if direction == "asc" else "DESC"
+        placeholders = ",".join("?" for _ in dids)
+        async with db.execute(
+            f"""SELECT a.did, a.handle, a.display_name, a.avatar_url,
+                       a.followers_count, a.influence_score, a.verified_status,
+                       (mf.did IS NOT NULL) AS is_mutual,
+                       (fs.did IS NOT NULL AND fs.is_current = 1) AS is_current
+                  FROM actors a
+                  LEFT JOIN my_follows mf USING (did)
+                  LEFT JOIN follower_state fs USING (did)
+                 WHERE a.did IN ({placeholders})
+                 ORDER BY {column} {arrow} NULLS LAST, a.handle ASC""",
+            tuple(dids),
+        ) as cur:
+            members = [dict(r) for r in await cur.fetchall()]
+
+    for member in members:
+        member["evidence"] = evidence.get(member["did"], "")
+        member["tags"] = await groups_for(member["did"])
+
+    # A cluster's members were captured when it was found, so some may have
+    # departed since. Showing them marked beats dropping them silently: a
+    # candidate that is half-departed is information about whether to accept it.
+    candidate["departed"] = sum(1 for m in members if not m["is_current"])
+    candidate["members_found"] = len(members)
+    # DIDs we hold no actor row for at all — they cannot be rendered, and a
+    # count that ignored them would not add up.
+    candidate["unresolved"] = len(dids) - len(members)
+    return {"candidate": candidate, "members": members,
+            "order": order, "direction": direction}
 
 
 async def _apply_cluster_group(slug: str, members_json: str | None) -> int:
@@ -2306,9 +2401,31 @@ async def _apply_discovered_group(slug: str, kind: str, term: str) -> int:
         return 0
     group_id = group["id"]
 
+    matched = await _discovered_matches(kind, term)
+    now = utcnow()
+    await db.executemany(
+        """INSERT INTO group_members
+             (group_id, did, tier, confidence, evidence, created_at)
+           VALUES (?,?,?,?,?,?)
+           ON CONFLICT (group_id, did) DO NOTHING""",
+        [(group_id, did, "discovered", 0.8, evidence, now) for did, evidence in matched],
+    )
+    await db.commit()
+    return len(matched)
+
+
+async def _discovered_matches(kind: str, term: str) -> list[tuple[str, str]]:
+    """Who a rule-based candidate would contain, and why — writing nothing.
+
+    Split out of `_apply_discovered_group` so the preview and the accept run the
+    same matcher. They used to be able to disagree silently: what discovery
+    counted when it proposed a candidate and what this rebuilt when the operator
+    accepted it were separate code, and nothing compared them.
+    """
+    db = await _db()
     targets = await group_target_dids(top_n=settings.posts_top_n)
     if not targets:
-        return 0
+        return []
     placeholders = ",".join("?" for _ in targets)
 
     matched: list[tuple[str, str]] = []
@@ -2348,16 +2465,7 @@ async def _apply_discovered_group(slug: str, kind: str, term: str) -> int:
         ) as cur:
             matched = [(r["did"], f"bio mentions {term!r}") for r in await cur.fetchall()]
 
-    now = utcnow()
-    await db.executemany(
-        """INSERT INTO group_members
-             (group_id, did, tier, confidence, evidence, created_at)
-           VALUES (?,?,?,?,?,?)
-           ON CONFLICT (group_id, did) DO NOTHING""",
-        [(group_id, did, "discovered", 0.8, evidence, now) for did, evidence in matched],
-    )
-    await db.commit()
-    return len(matched)
+    return matched
 
 
 # ------------------------------------------------- M15a institutions

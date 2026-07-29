@@ -52,8 +52,11 @@
         <td class="py-2 pr-4 text-xs text-slate-500">{{ c.why }}</td>
         <td class="py-2 pr-4">
           <div class="flex justify-end gap-3">
+            <a href="/groups/discover/{{ c.id }}"
+               class="font-mono text-xs text-red-800 hover:underline"
+               title="see who is in it, and pick who to keep">preview</a>
             <form method="post" action="/groups/discover/{{ c.id }}?accept=true">
-              <button type="submit" class="font-mono text-xs text-emerald-700 hover:underline">accept</button>
+              <button type="submit" class="font-mono text-xs text-emerald-700 hover:underline">accept all</button>
             </form>
             <form method="post" action="/groups/discover/{{ c.id }}?accept=false">
               <button type="submit" class="font-mono text-xs text-slate-400 hover:text-red-800">reject</button>

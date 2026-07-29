@@ -358,11 +358,50 @@ def create_app() -> FastAPI:
             },
         )
 
-    @app.post("/groups/discover/{candidate_id}")
-    async def decide(candidate_id: int, accept: bool = False) -> RedirectResponse:
+    @app.get("/groups/discover/{candidate_id}", response_class=HTMLResponse)
+    async def preview_candidate(request: Request, candidate_id: int,
+                                order: str = "influence",
+                                direction: str = "desc",
+                                notice: str | None = None) -> HTMLResponse:
+        """Who a candidate would contain, before deciding.
+
+        Read-only by construction: the rule-based kinds are recomputed here and
+        nothing is written until the operator accepts.
+        """
+        from fastapi import HTTPException
         from sonde.db import store
 
-        slug = await store.decide_candidate(candidate_id, accept)
+        preview = await store.candidate_members(
+            candidate_id, order=order, direction=direction)
+        if preview is None:
+            raise HTTPException(status_code=404, detail="no such candidate")
+        return TEMPLATES.TemplateResponse(
+            request=request, name="discover_detail.html",
+            context={**preview, "settings": settings, "notice": notice},
+        )
+
+    @app.post("/groups/discover/{candidate_id}")
+    async def decide(request: Request, candidate_id: int,
+                     accept: bool = False,
+                     did: list[str] = Form([]),
+                     subset: str = Form("")) -> RedirectResponse:
+        """Accept or reject. `subset` marks a decision made on the preview page.
+
+        Without that marker an empty `did` list is simply the list page's
+        one-click accept, which means "take everything". With it, an empty list
+        means the operator ticked nothing — a misclick, not a request for an
+        empty group — so it goes back rather than creating one.
+        """
+        from sonde.db import store
+
+        if accept and subset:
+            if not did:
+                return RedirectResponse(
+                    f"/groups/discover/{candidate_id}?notice=nobody",
+                    status_code=303)
+            slug = await store.decide_candidate(candidate_id, True, dids=did)
+        else:
+            slug = await store.decide_candidate(candidate_id, accept)
         return RedirectResponse(
             f"/groups?slug={slug}" if slug else "/groups/discover", status_code=303
         )
