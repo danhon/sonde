@@ -2231,7 +2231,7 @@ async def _apply_cluster_group(slug: str, members_json: str | None) -> int:
     from sonde.groups import PROPAGATION
 
     db = await _db()
-    async with db.execute("SELECT id FROM groups WHERE slug = ?", (slug,)) as cur:
+    async with db.execute("SELECT id FROM groups WHERE slug = ? AND archived_at IS NULL", (slug,)) as cur:
         group = await cur.fetchone()
     if group is None:
         return 0
@@ -2257,7 +2257,7 @@ async def _apply_cluster_group(slug: str, members_json: str | None) -> int:
 async def _apply_discovered_group(slug: str, kind: str, term: str) -> int:
     """Populate an accepted group using the rule that proposed it."""
     db = await _db()
-    async with db.execute("SELECT id FROM groups WHERE slug = ?", (slug,)) as cur:
+    async with db.execute("SELECT id FROM groups WHERE slug = ? AND archived_at IS NULL", (slug,)) as cur:
         group = await cur.fetchone()
     if group is None:
         return 0
@@ -2532,7 +2532,7 @@ async def classify_groups() -> dict:
 
     await seed_groups()
     db = await _db()
-    async with db.execute("SELECT id, slug FROM groups") as cur:
+    async with db.execute("SELECT id, slug FROM groups WHERE archived_at IS NULL") as cur:
         ids = {r["slug"]: r["id"] for r in await cur.fetchall()}
 
     targets = await group_target_dids(top_n=settings.posts_top_n)
@@ -2557,7 +2557,9 @@ async def classify_groups() -> dict:
             texts.setdefault(row["did"], []).append(row["text"])
 
     # Derived rows are replaced; anything a human reviewed is left alone.
-    await db.execute("DELETE FROM group_members WHERE confirmed IS NULL AND tier != 'manual'")
+    # Skip archived groups — their members should not be touched by jobs.
+    await db.execute("""DELETE FROM group_members WHERE confirmed IS NULL AND tier != 'manual'
+        AND group_id IN (SELECT id FROM groups WHERE archived_at IS NULL)""")
 
     now = utcnow()
     total = people = 0
@@ -3026,7 +3028,8 @@ async def propagate_groups(min_seeds: int = 3, min_lift: float = 1.6,
     async with db.execute(
         """SELECT g.id, g.slug, m.did FROM group_members m
              JOIN groups g ON g.id = m.group_id
-            WHERE COALESCE(m.confirmed, 1) = 1 AND m.tier != 'propagation'"""
+            WHERE COALESCE(m.confirmed, 1) = 1 AND m.tier != 'propagation'
+              AND g.archived_at IS NULL"""
     ) as cur:
         members: dict[str, tuple[int, set[str]]] = {}
         for row in await cur.fetchall():

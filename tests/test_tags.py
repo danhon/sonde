@@ -154,3 +154,38 @@ async def test_restoring_brings_the_members_back_untouched(db):
     await store.archive_group("journalists", archived=False)
 
     assert [m["did"] for m in await store.group_members("journalists")] == ["did:plc:j"]
+
+
+# ----------------------------- job paths must also skip archived
+
+
+async def test_an_archived_tag_stops_gaining_members(db):
+    from tests.test_groups import add
+
+    await add("did:plc:first", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+    await store.archive_group("journalists")
+
+    await add("did:plc:second", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+
+    conn = await store._db()
+    async with conn.execute(
+        """SELECT COUNT(*) FROM group_members m JOIN groups g ON g.id = m.group_id
+            WHERE g.slug = 'journalists'"""
+    ) as cur:
+        assert (await cur.fetchone())[0] == 1, "an archived tag gained a member"
+
+
+async def test_seeding_does_not_resurrect_an_archived_seeded_tag(db):
+    """'journalists' is one of the 15 slugs in sonde/groups.py, and
+    seed_groups() runs at the top of every classify job. The whole reason
+    delete is archive: the surviving row is what makes the seeding upsert
+    a no-op."""
+    await store.seed_groups()
+    await store.archive_group("journalists")
+
+    await store.seed_groups()
+
+    assert "journalists" not in {g["slug"] for g in await store.group_summary()}
+    assert "journalists" in {g["slug"] for g in await store.archived_groups()}
