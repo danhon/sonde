@@ -513,3 +513,47 @@ def test_every_template_importing_the_tag_macros_does_so_with_context():
         for line in text.splitlines():
             if '_tags.html' in line and 'import' in line:
                 assert "with context" in line, f"{page.name} imports without context"
+
+
+# --------------------------------------------------------- the /groups page
+
+async def test_the_groups_page_can_rename_archive_and_create(db, client):
+    await store.create_group("Cohort")
+
+    page = client.get("/groups?slug=cohort")
+
+    assert 'action="/groups/cohort/rename"' in page.text
+    assert 'action="/groups/cohort/archive"' in page.text
+    assert 'action="/groups/new"' in page.text
+
+
+async def test_the_groups_page_lists_what_can_be_restored(db, client):
+    await store.create_group("Gone")
+    await store.archive_group("gone")
+
+    page = client.get("/groups")
+
+    assert 'action="/groups/gone/archive?undo=true"' in page.text
+
+
+async def test_the_member_table_can_untag_a_row_the_machine_got_right(db, client):
+    """Before M25 the 'remove' control rendered only on unreviewed rows, so a
+    correctly-classified person could not be removed at all."""
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+    await store.tag_actor("journalists", "did:plc:j")   # confirmed = 1
+
+    page = client.get("/groups?slug=journalists")
+
+    assert 'name="did" value="did:plc:j"' in page.text
+
+
+async def test_the_archived_notice_renders(db, client):
+    """Task 6 proved /groups/new redirects with notice=archived. This is the
+    other half: the page has to actually say something when it arrives."""
+    page = client.get("/groups?notice=archived&slug=gone")
+
+    assert page.status_code == 200
+    assert "archived" in page.text.lower()

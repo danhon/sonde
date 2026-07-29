@@ -36,7 +36,7 @@
 {#- A follower cell: avatar, handle, and the badges that matter at a glance.
     Avatars are lazy-loaded and small; a missing one falls back to a neutral
     block rather than a broken image. -#}
-{%- macro who(row, size='h-6 w-6') -%}
+{%- macro who(row, size='h-6 w-6', follow=true) -%}
 <span class="flex min-w-0 items-center gap-2">
   {%- if row.avatar_url %}
   <img src="{{ row.avatar_url }}" alt="" loading="lazy" decoding="async"
@@ -50,7 +50,7 @@
   {%- if row.verified_status == 'valid' %}<span class="text-sky-700" title="verified">✓</span>{% endif %}
   {%- if row.is_mutual %}<span class="text-emerald-700" title="mutual">⇄</span>{% endif %}
   {%- if row.is_private %}<span class="text-slate-400" title="hidden when logged out">◍</span>{% endif %}
-  {{- follow_back(row) -}}
+  {%- if follow %}{{- follow_back(row) -}}{% endif %}
 </span>
 {%- endmacro -%}
 

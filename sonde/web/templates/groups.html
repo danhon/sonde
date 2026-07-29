@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_charts.html" import frame, column_chart, scatter_chart, small_multiples, bar_list with context %}
 {% from "_sort.html" import qs, th, who with context %}
+{% from "_tags.html" import batch_bar, tag_options with context %}
 {% set base = {'slug': slug, 'order': order, 'direction': direction} %}
 {% block title %}Groups — sonde{% endblock %}
 {% block content %}
@@ -28,6 +29,28 @@
   </span>
 </div>
 
+{% if notice %}
+<p class="mt-4 border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+  {% if notice == 'archived' %}
+    That tag already exists but is archived — restore it below rather than
+    making a second one.
+  {% elif notice == 'exists' %}
+    That tag already exists.
+  {% else %}
+    That name has no usable slug — try one with letters or numbers in it.
+  {% endif %}
+</p>
+{% endif %}
+
+<form method="post" action="/groups/new" class="mt-4 flex flex-wrap items-center gap-2">
+  <input type="text" name="name" placeholder="new tag name"
+         class="w-56 border border-slate-300 px-2 py-1 text-sm
+                focus:border-red-800 focus:outline-none">
+  <button type="submit"
+          class="bg-slate-900 px-3 py-1 font-mono text-[10px] uppercase
+                 tracking-widest text-white hover:bg-red-800">create</button>
+</form>
+
 <p class="mt-2">
   <a href="/groups/discover" class="font-mono text-xs text-red-800 hover:underline">
     discover new groups →
@@ -50,54 +73,109 @@
   {% endfor %}
 </div>
 
-{% if slug and members %}
-<div class="mt-8 overflow-x-auto">
-  <table class="w-full text-sm">
-    <thead>
-      <tr class="border-b border-slate-300 text-left">
-        {{ th(base, 'handle', 'Handle') }}
-        {{ th(base, 'name', 'Name') }}
-        {{ th(base, 'followers', 'Followers', 'right') }}
-        {{ th(base, 'influence', 'Score', 'right') }}
-        {{ th(base, 'tier', 'Why') }}
-        <th class="py-2 pr-4"></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for m in members %}
-      <tr class="border-b border-slate-100 hover:bg-slate-50">
-        <td class="py-2 pr-4">
-          {{ who(m) }}
-        </td>
-        <td class="py-2 pr-4">{{ m.display_name or "" }}</td>
-        <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-600">
-          {% if m.followers_count is not none %}{{ "{:,}".format(m.followers_count) }}{% else %}—{% endif %}
-        </td>
-        <td class="py-2 pr-4 text-right font-mono font-semibold tabular-nums">
-          {% if m.influence_score is not none %}{{ m.influence_score }}{% else %}—{% endif %}
-        </td>
-        <td class="py-2 pr-4 text-xs text-slate-500">
-          {{ m.evidence }}
-          <span class="font-mono text-[10px] uppercase tracking-wider text-slate-400">{{ m.tier }}</span>
-        </td>
-        <td class="py-2 pr-4 text-right">
-          {% if m.confirmed is none %}
-          <form method="post" action="/groups/{{ slug }}/{{ m.did }}/review?keep=false">
-            <button type="submit" class="font-mono text-xs text-slate-400 hover:text-red-800">remove</button>
-          </form>
-          {% else %}
-          <span class="font-mono text-[10px] uppercase tracking-wider text-emerald-700">kept</span>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+{% if slug %}
+{% set current = (summary | selectattr('slug', 'equalto', slug) | list | first) %}
+{% if current %}
+<div class="mt-4 flex flex-wrap items-center gap-3 border-y border-slate-200 py-2">
+  <form method="post" action="/groups/{{ slug }}/rename"
+        class="flex items-center gap-2">
+    <input type="text" name="name" value="{{ current.name }}"
+           class="w-56 border border-slate-300 px-2 py-1 text-sm
+                  focus:border-red-800 focus:outline-none">
+    <button type="submit"
+            class="border border-slate-300 px-2 py-1 font-mono text-[10px]
+                   uppercase tracking-wider text-slate-600
+                   hover:border-red-800 hover:text-red-800">rename</button>
+  </form>
+  <span class="font-mono text-[10px] text-slate-400"
+        title="the slug is the URL key and cannot change — renaming only
+               changes the display name">/groups?slug={{ slug }}</span>
+  <form method="post" action="/groups/{{ slug }}/archive" class="ml-auto">
+    <button type="submit"
+            class="font-mono text-[10px] uppercase tracking-wider text-slate-400
+                   hover:text-red-800"
+            title="hides the tag everywhere and stops it gaining members; the
+                   members themselves are kept and it can be restored">archive</button>
+  </form>
 </div>
+{% endif %}
+{% endif %}
+
+{#- follow=false below: this table is itself inside <form action="/groups/apply">,
+    and who()'s follow-back control is its own <form> — nested forms are invalid
+    HTML and the browser silently drops the inner one, so it must stay off here. -#}
+{% if slug and members %}
+<form method="post" action="/groups/apply" data-batch>
+  <div class="mt-8 overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-slate-300 text-left">
+          <th class="w-8 py-2 pr-2">
+            <input type="checkbox" data-select-all aria-label="select all on this page">
+          </th>
+          {{ th(base, 'handle', 'Handle') }}
+          {{ th(base, 'name', 'Name') }}
+          {{ th(base, 'followers', 'Followers', 'right') }}
+          {{ th(base, 'influence', 'Score', 'right') }}
+          {{ th(base, 'tier', 'Why') }}
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in members %}
+        <tr class="border-b border-slate-100 hover:bg-slate-50">
+          <td class="py-2 pr-2">
+            <input type="checkbox" name="did" value="{{ m.did }}"
+                   aria-label="select {{ m.handle }}">
+          </td>
+          <td class="py-2 pr-4">{{ who(m, follow=false) }}</td>
+          <td class="py-2 pr-4">{{ m.display_name or "" }}</td>
+          <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-600">
+            {% if m.followers_count is not none %}{{ "{:,}".format(m.followers_count) }}{% else %}—{% endif %}
+          </td>
+          <td class="py-2 pr-4 text-right font-mono font-semibold tabular-nums">
+            {% if m.influence_score is not none %}{{ m.influence_score }}{% else %}—{% endif %}
+          </td>
+          <td class="py-2 pr-4 text-xs text-slate-500">
+            {{ m.evidence }}
+            <span class="font-mono text-[10px] uppercase tracking-wider text-slate-400">{{ m.tier }}</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ batch_bar(all_tags) }}
+</form>
+{{ tag_options(all_tags) }}
 {% elif slug %}
 <p class="mt-8 text-sm text-slate-500">Nobody in this group yet.</p>
 {% else %}
 <p class="mt-8 text-sm text-slate-500">Pick a group above.</p>
+{% endif %}
+
+{% if archived %}
+<section class="mt-12 border-t border-slate-200 pt-4">
+  <h2 class="font-mono text-[10px] uppercase tracking-widest text-slate-500">
+    Archived
+  </h2>
+  <p class="mt-1 max-w-2xl text-xs text-slate-500">
+    Hidden everywhere and no longer gaining members. Nothing was deleted —
+    restoring one brings its members back exactly as they were.
+  </p>
+  <ul class="mt-3 flex flex-wrap gap-2">
+    {% for a in archived %}
+    <li class="flex items-center gap-2 border border-slate-200 px-2 py-1">
+      <span class="font-mono text-xs text-slate-500">{{ a.name }}</span>
+      <span class="font-mono text-[10px] tabular-nums text-slate-400">{{ a.members }}</span>
+      <form method="post" action="/groups/{{ a.slug }}/archive?undo=true">
+        <button type="submit"
+                class="font-mono text-[10px] uppercase tracking-wider text-slate-400
+                       hover:text-emerald-700">restore</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
 {% endif %}
 
 {% endblock %}
