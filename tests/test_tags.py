@@ -1,5 +1,7 @@
 """M25 — groups as tags: hand decisions outrank every job."""
 
+import dataclasses
+
 from sonde.db import store
 
 
@@ -189,3 +191,172 @@ async def test_seeding_does_not_resurrect_an_archived_seeded_tag(db):
 
     assert "journalists" not in {g["slug"] for g in await store.group_summary()}
     assert "journalists" in {g["slug"] for g in await store.archived_groups()}
+
+
+# ------------------------------------------------------- tag and untag
+
+async def test_tagging_someone_the_machine_never_proposed_is_a_manual_row(db):
+    from tests.test_groups import add
+
+    await add("did:plc:new", is_verified=True)
+    await store.create_group("Neighbours")
+
+    assert await store.tag_actor("neighbours", "did:plc:new")
+
+    row = (await store.group_members("neighbours"))[0]
+    assert row["did"] == "did:plc:new"
+    assert row["tier"] == "manual"
+    assert row["confidence"] == 1.0
+
+
+async def test_tagging_a_row_the_machine_made_confirms_it_and_keeps_the_evidence(db):
+    """Agreeing with the machine is not the same as replacing it. Overwriting
+    tier and evidence here would throw away *why* the person is in the group."""
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+
+    await store.tag_actor("journalists", "did:plc:j")
+
+    row = (await store.group_members("journalists"))[0]
+    assert row["tier"] == "wikidata"
+    assert row["evidence"] == "Wikidata occupation: journalist"
+    assert row["confirmed"] == 1
+
+
+async def test_a_hand_tag_survives_a_reclassify(db):
+    """THE test of this milestone. classify_groups deletes unreviewed rows and
+    re-runs the rules every six hours. If the guards do not hold, hand-tagging
+    vanishes overnight and the operator finds out days later."""
+    from tests.test_groups import add
+
+    await add("did:plc:quiet", is_verified=True)
+    await store.create_group("Neighbours")
+    await store.tag_actor("neighbours", "did:plc:quiet")
+
+    await store.classify_groups()
+
+    row = (await store.group_members("neighbours"))[0]
+    assert row["did"] == "did:plc:quiet"
+    assert row["tier"] == "manual"
+
+
+async def test_an_untag_survives_a_reclassify(db):
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+    assert await store.untag_actor("journalists", "did:plc:j")
+
+    await store.classify_groups()
+
+    assert await store.group_members("journalists") == []
+
+
+async def test_untagging_keeps_the_machines_reasoning(db):
+    """confirmed = 0 records the disagreement without erasing what the rule
+    thought — 'argued with rather than merely deleted'."""
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+    await store.untag_actor("journalists", "did:plc:j")
+
+    conn = await store._db()
+    async with conn.execute(
+        "SELECT tier, evidence, confirmed FROM group_members") as cur:
+        row = await cur.fetchone()
+    assert row["tier"] == "wikidata"
+    assert row["evidence"] == "Wikidata occupation: journalist"
+    assert row["confirmed"] == 0
+
+
+async def test_tagging_again_undoes_an_untag(db):
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+    await store.untag_actor("journalists", "did:plc:j")
+
+    await store.tag_actor("journalists", "did:plc:j")
+
+    assert [m["did"] for m in await store.group_members("journalists")] == ["did:plc:j"]
+
+
+async def test_untagging_someone_who_was_never_tagged_does_nothing(db):
+    """Removing a tag from a hundred people when thirty have it is a no-op for
+    the other seventy. It must NOT write a pre-emptive tombstone: a rule may
+    legitimately tag one of them tomorrow, and 'remove' means undo, not
+    'never again'."""
+    from tests.test_groups import add
+
+    await add("did:plc:stranger", is_verified=True)
+    await store.create_group("Neighbours")
+
+    assert not await store.untag_actor("neighbours", "did:plc:stranger")
+
+    conn = await store._db()
+    async with conn.execute("SELECT COUNT(*) FROM group_members") as cur:
+        assert (await cur.fetchone())[0] == 0
+
+
+async def test_tagging_an_archived_tag_is_refused(db):
+    from tests.test_groups import add
+
+    await add("did:plc:x", is_verified=True)
+    await store.create_group("Gone")
+    await store.archive_group("gone")
+
+    assert not await store.tag_actor("gone", "did:plc:x")
+
+
+async def test_a_hand_decision_is_dated(db):
+    from tests.test_groups import add
+
+    await add("did:plc:x", is_verified=True)
+    await store.create_group("Neighbours")
+    await store.tag_actor("neighbours", "did:plc:x")
+
+    conn = await store._db()
+    async with conn.execute("SELECT decided_at FROM group_members") as cur:
+        assert (await cur.fetchone())["decided_at"]
+
+
+async def test_a_batch_reports_how_many_rows_it_changed(db):
+    from tests.test_groups import add
+
+    for did in ("did:plc:a", "did:plc:b", "did:plc:c"):
+        await add(did, is_verified=True)
+    await store.create_group("Cohort")
+
+    assert await store.tag_actors(
+        "cohort", ["did:plc:a", "did:plc:b", "did:plc:c"], add=True) == 3
+    assert await store.tag_actors(
+        "cohort", ["did:plc:a", "did:plc:zzz"], add=False) == 1
+
+
+async def test_hand_tagging_outside_the_grouping_set_widens_the_denominator(db, monkeypatch):
+    """The composition chart says 'N of M in scope'. A hand-applied tag is a
+    fact about a person however uninfluential they are, so manual members exist
+    outside the top-500-plus-verified target set — and a denominator ignoring
+    them would under-report from the first tag onwards."""
+    from tests.test_groups import add
+
+    # top_n=500 does not discriminate against a single-row test database — the
+    # LIMIT never binds when there is nothing to cut off, so an unverified,
+    # uninfluential actor would land in the target set anyway. Pin top_n to 0
+    # so only verified_status='valid' can qualify, which is what makes
+    # did:plc:nobody genuinely outside the grouping set here, matching the
+    # many-thousand-follower production database this composes against.
+    monkeypatch.setattr(store, "settings",
+                         dataclasses.replace(store.settings, posts_top_n=0))
+
+    # Neither verified nor influential: outside the grouping set by construction.
+    await add("did:plc:nobody")
+    before = (await store.composition())["in_scope"]
+
+    await store.create_group("Neighbours")
+    await store.tag_actor("neighbours", "did:plc:nobody")
+
+    assert (await store.composition())["in_scope"] == before + 1

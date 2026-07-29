@@ -12,7 +12,7 @@ be argued with rather than merely deleted.
   T3 domain       .edu, substack.com, .gov from link signals     high
   T4 text         bio and recent post text                       moderate
   T5 propagation  overlap with a group's seeds in the follow graph  moderate
-  T6 manual       a human said so                                 exact
+  T6 manual       a human said so                                 1.0
 
 T4 reuses M6a's rejection rules, because "I used to be a journalist" and "I read
 the NYT" are not job descriptions.
@@ -33,6 +33,9 @@ WIKIDATA = 0.95
 DOMAIN = 0.9
 TEXT = 0.65
 PROPAGATION = 0.5
+
+# A human said so. Nothing outranks this, and no job may overwrite it.
+MANUAL = 1.0
 
 STUDIO = 0.9
 

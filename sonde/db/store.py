@@ -1710,6 +1710,28 @@ async def interaction_series(*, direction: str = "inbound") -> dict:
     return {"months": months, "series": series, "direction": direction}
 
 
+async def _in_scope_count() -> int:
+    """The grouping set, plus anyone a human tagged by hand.
+
+    A hand-applied tag is a fact about a person regardless of how influential
+    they are, so manual members exist outside the target set — and a
+    denominator that excluded them would under-report the moment the first one
+    was tagged.
+    """
+    targets = set(await group_target_dids(top_n=settings.posts_top_n))
+    db = await _db()
+    async with db.execute(
+        """SELECT DISTINCT m.did FROM group_members m
+             JOIN groups g ON g.id = m.group_id
+             JOIN follower_state fs ON fs.did = m.did
+            WHERE m.tier = 'manual' AND COALESCE(m.confirmed, 1) = 1
+              AND g.archived_at IS NULL
+              AND fs.is_current = 1 AND fs.ignored_at IS NULL"""
+    ) as cur:
+        targets.update(r["did"] for r in await cur.fetchall())
+    return len(targets)
+
+
 async def composition() -> dict:
     """Named groups by size, and how much of the audience they cover."""
     db = await _db()
@@ -1732,7 +1754,7 @@ async def composition() -> dict:
         "AND decided IS NULL")
     return {"groups": groups, "people_in_a_group": grouped,
             "clusters_proposed": clustered,
-            "in_scope": len(await group_target_dids(top_n=settings.posts_top_n))}
+            "in_scope": await _in_scope_count()}
 
 
 async def verification_reach() -> dict:
@@ -2670,6 +2692,68 @@ async def review_group_member(group_slug: str, did: str, confirmed: bool) -> Non
         (1 if confirmed else 0, did, group_slug),
     )
     await db.commit()
+
+
+async def tag_actor(slug: str, did: str) -> bool:
+    """Hand-tag one person. False if the tag is missing or archived.
+
+    Three cases, and the middle one is the subtle one. Tagging someone the
+    machine already proposed *confirms* the existing row rather than replacing
+    it: agreeing with a rule is not the same as overruling it, and overwriting
+    tier and evidence would discard the reason they are in the group at all.
+    """
+    from sonde.groups import MANUAL
+
+    db = await _db()
+    async with db.execute(
+        "SELECT id FROM groups WHERE slug = ? AND archived_at IS NULL", (slug,)
+    ) as cur:
+        group = await cur.fetchone()
+    if group is None:
+        return False
+
+    now = utcnow()
+    await db.execute(
+        """INSERT INTO group_members
+             (group_id, did, tier, confidence, evidence, confirmed,
+              created_at, decided_at)
+           VALUES (?,?,?,?,?,1,?,?)
+           ON CONFLICT (group_id, did) DO UPDATE SET
+             confirmed = 1, decided_at = excluded.decided_at""",
+        (group["id"], did, "manual", MANUAL, "tagged by hand", now, now),
+    )
+    await db.commit()
+    return True
+
+
+async def untag_actor(slug: str, did: str) -> bool:
+    """`confirmed = 0`, whatever the row's origin. False if there was no row.
+
+    Existing rows only. This is undo, not a pre-emptive block: removing a tag
+    from people who never had it must not write tombstones, or a rule that
+    legitimately matches one of them tomorrow would be silently suppressed
+    forever.
+    """
+    db = await _db()
+    cur = await db.execute(
+        """UPDATE group_members SET confirmed = 0, decided_at = ?
+            WHERE did = ? AND group_id = (
+                  SELECT id FROM groups
+                   WHERE slug = ? AND archived_at IS NULL)""",
+        (utcnow(), did, slug),
+    )
+    await db.commit()
+    return bool(cur.rowcount)
+
+
+async def tag_actors(slug: str, dids: list[str], *, add: bool) -> int:
+    """Batch. Returns the number of rows actually changed, which is what the
+    page reports back — 'tagged 30' when 100 were selected is information."""
+    changed = 0
+    for did in dids:
+        if await (tag_actor(slug, did) if add else untag_actor(slug, did)):
+            changed += 1
+    return changed
 
 
 async def unreviewed_affiliations(limit: int = 200) -> list[dict]:
