@@ -2211,7 +2211,7 @@ async def decide_candidate(candidate_id: int, accept: bool) -> str | None:
         await db.commit()
         return None
 
-    slug = re.sub(r"[^a-z0-9]+", "-", row["label"].lower()).strip("-")[:48]
+    slug = slugify(row["label"])
     await db.execute(
         "INSERT INTO groups (slug, name, description, created_at) VALUES (?,?,?,?) "
         "ON CONFLICT (slug) DO NOTHING",
@@ -2438,6 +2438,92 @@ async def seed_groups() -> int:
         added += cur.rowcount or 0
     await db.commit()
     return added
+
+
+# A tag name is a label, not prose. 64 is generous for the chip it renders as.
+GROUP_NAME_MAX = 64
+
+
+def slugify(name: str) -> str:
+    """A stable URL key from a display name.
+
+    Extracted from `decide_candidate`, which had this inline, so hand-made and
+    discovered tags cannot drift into two different slug conventions.
+    """
+    return re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")[:48]
+
+
+async def create_group(name: str) -> dict:
+    """Make a tag, and say what actually happened.
+
+    The caller needs the distinction: an archived slug must offer restore rather
+    than silently doing nothing, which is what a bare
+    `INSERT ... ON CONFLICT DO NOTHING` would do.
+    """
+    name = (name or "").strip()
+    slug = slugify(name)
+    if not name or not slug:
+        return {"status": "invalid", "slug": None, "name": name}
+
+    db = await _db()
+    async with db.execute(
+        "SELECT slug, archived_at FROM groups WHERE slug = ?", (slug,)
+    ) as cur:
+        existing = await cur.fetchone()
+    if existing is not None:
+        return {"status": "archived" if existing["archived_at"] else "exists",
+                "slug": slug, "name": name}
+
+    await db.execute(
+        "INSERT INTO groups (slug, name, created_at) VALUES (?,?,?)",
+        (slug, name[:GROUP_NAME_MAX], utcnow()),
+    )
+    await db.commit()
+    return {"status": "created", "slug": slug, "name": name}
+
+
+async def rename_group(slug: str, name: str) -> bool:
+    """Display name only — never the slug. See the module note on create_group."""
+    name = (name or "").strip()
+    if not name:
+        return False
+    db = await _db()
+    cur = await db.execute(
+        "UPDATE groups SET name = ? WHERE slug = ?", (name[:GROUP_NAME_MAX], slug))
+    await db.commit()
+    return bool(cur.rowcount)
+
+
+async def archive_group(slug: str, archived: bool = True) -> bool:
+    """Delete is archive: memberships are preserved and it can come back."""
+    db = await _db()
+    cur = await db.execute(
+        "UPDATE groups SET archived_at = ? WHERE slug = ?",
+        (utcnow() if archived else None, slug))
+    await db.commit()
+    return bool(cur.rowcount)
+
+
+async def archived_groups() -> list[dict]:
+    db = await _db()
+    async with db.execute(
+        """SELECT g.slug, g.name, g.archived_at, COUNT(m.did) AS members
+             FROM groups g
+             LEFT JOIN group_members m ON m.group_id = g.id
+                   AND COALESCE(m.confirmed, 1) = 1
+            WHERE g.archived_at IS NOT NULL
+            GROUP BY g.id ORDER BY g.archived_at DESC"""
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def group_names() -> list[dict]:
+    """Live tags, for the type-to-create datalist."""
+    db = await _db()
+    async with db.execute(
+        "SELECT slug, name FROM groups WHERE archived_at IS NULL ORDER BY name"
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
 
 
 async def classify_groups() -> dict:
