@@ -360,3 +360,129 @@ async def test_hand_tagging_outside_the_grouping_set_widens_the_denominator(db, 
     await store.tag_actor("neighbours", "did:plc:nobody")
 
     assert (await store.composition())["in_scope"] == before + 1
+
+
+# ---------------------------------------------------------------- routes
+
+import pytest
+from fastapi.testclient import TestClient
+
+from sonde.web.app import create_app
+
+
+@pytest.fixture
+def client():
+    with TestClient(create_app()) as c:
+        yield c
+
+
+async def test_the_batch_endpoint_tags_everyone_selected(db, client):
+    from tests.test_groups import add
+
+    for did in ("did:plc:a", "did:plc:b"):
+        await add(did, is_verified=True)
+
+    response = client.post("/groups/apply", data={
+        "did": ["did:plc:a", "did:plc:b"], "tag": "Cohort", "action": "add",
+    }, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert {m["did"] for m in await store.group_members("cohort")} == {
+        "did:plc:a", "did:plc:b"}
+
+
+async def test_the_batch_endpoint_creates_the_tag_when_adding(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    client.post("/groups/apply", data={"did": ["did:plc:a"], "tag": "Brand new",
+                                       "action": "add"}, follow_redirects=False)
+
+    assert "brand-new" in {g["slug"] for g in await store.group_names()}
+
+
+async def test_removing_with_an_unknown_tag_creates_nothing(db, client):
+    """Only adding may create. Otherwise a typo in a remove conjures an empty
+    tag out of nowhere."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    client.post("/groups/apply", data={"did": ["did:plc:a"], "tag": "Typo",
+                                       "action": "remove"}, follow_redirects=False)
+
+    assert await store.group_names() == []
+
+
+async def test_the_batch_endpoint_returns_you_to_the_page_you_came_from(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    response = client.post(
+        "/groups/apply", data={"did": ["did:plc:a"], "tag": "X", "action": "add"},
+        headers={"referer": "http://testserver/followers?page=2"},
+        follow_redirects=False)
+
+    assert response.headers["location"].startswith("/followers?page=2")
+
+
+async def test_a_referer_pointing_off_site_cannot_redirect_off_site(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    response = client.post(
+        "/groups/apply", data={"did": ["did:plc:a"], "tag": "X", "action": "add"},
+        headers={"referer": "https://evil.example/phish"},
+        follow_redirects=False)
+
+    assert response.headers["location"].startswith("/phish")
+
+
+async def test_creating_a_tag_whose_slug_is_archived_redirects_with_a_notice(db, client):
+    """The route's half of this. Whether /groups then RENDERS the notice is
+    Task 8's assertion — the template does not know about `notice` yet, so do
+    not assert on page text here."""
+    await store.create_group("Gone")
+    await store.archive_group("gone")
+
+    response = client.post("/groups/new", data={"name": "Gone"},
+                           follow_redirects=False)
+
+    assert response.status_code == 303
+    assert "notice=archived" in response.headers["location"]
+    assert "slug=gone" in response.headers["location"]
+
+
+async def test_creating_a_brand_new_tag_redirects_straight_to_it(db, client):
+    response = client.post("/groups/new", data={"name": "Fresh"},
+                           follow_redirects=False)
+
+    assert response.headers["location"] == "/groups?slug=fresh"
+
+
+async def test_renaming_through_the_route(db, client):
+    await store.create_group("Before")
+    client.post("/groups/before/rename", data={"name": "After"},
+                follow_redirects=False)
+
+    assert {g["name"] for g in await store.group_summary()} == {"After"}
+
+
+async def test_archiving_and_restoring_through_the_route(db, client):
+    await store.create_group("Temporary")
+
+    client.post("/groups/temporary/archive", follow_redirects=False)
+    assert await store.group_names() == []
+
+    client.post("/groups/temporary/archive?undo=true", follow_redirects=False)
+    assert [g["slug"] for g in await store.group_names()] == ["temporary"]
+
+
+async def test_tagging_one_person_from_their_detail_page(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:solo", is_verified=True)
+    client.post("/followers/did:plc:solo/tags",
+                data={"tag": "Neighbours", "action": "add"},
+                follow_redirects=False)
+
+    assert [g["slug"] for g in await store.groups_for("did:plc:solo")] == ["neighbours"]

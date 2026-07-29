@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Form, Request
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
@@ -34,6 +34,20 @@ def _as_int(value: str | int | None) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _safe_back(request: Request, fallback: str) -> str:
+    """Where to send the operator after a write.
+
+    Only ever a page inside sonde, never an absolute URL from a header we do
+    not control. Extracted from `follow_back` when the tag routes became the
+    fifth caller.
+    """
+    back = request.headers.get("referer") or fallback
+    if "://" in back:
+        rest = back.split("://", 1)[1]
+        back = "/" + rest.split("/", 1)[1] if "/" in rest else "/"
+    return back
 
 STARTED_AT = time.time()
 
@@ -292,6 +306,7 @@ def create_app() -> FastAPI:
     async def groups_index(
         request: Request, slug: str | None = None,
         order: str = "influence", direction: str = "desc",
+        notice: str | None = None,
     ) -> HTMLResponse:
         from sonde.db import store
 
@@ -305,6 +320,9 @@ def create_app() -> FastAPI:
                 "members": await store.group_members(
                     slug, order=order, direction=direction) if slug else [],
                 "settings": settings,
+                "notice": notice,
+                "all_tags": await store.group_names(),
+                "archived": await store.archived_groups(),
             },
         )
 
@@ -337,6 +355,67 @@ def create_app() -> FastAPI:
 
         await store.review_group_member(slug, did, keep)
         return RedirectResponse(f"/groups?slug={slug}", status_code=303)
+
+    async def _apply_tags(back: str, dids: list[str], tag: str,
+                          action: str) -> RedirectResponse:
+        """Shared by the batch bar and the single control on a detail page."""
+        from sonde.db import store
+
+        tag = (tag or "").strip()
+        if not tag or not dids:
+            return RedirectResponse(f"{back}#nothing-selected", status_code=303)
+
+        if action == "add":
+            # Type-to-create: an unknown name in the box makes the tag. Only on
+            # add — a typo while removing must not conjure an empty tag.
+            result = await store.create_group(tag)
+            if result["status"] in ("invalid", "archived"):
+                return RedirectResponse(f"{back}#tag-{result['status']}",
+                                        status_code=303)
+            slug = result["slug"]
+        else:
+            slug = store.slugify(tag)
+
+        changed = await store.tag_actors(slug, dids, add=(action == "add"))
+        return RedirectResponse(f"{back}#tagged-{changed}", status_code=303)
+
+    @app.post("/groups/new")
+    async def new_group(name: str = Form("")) -> RedirectResponse:
+        from sonde.db import store
+
+        result = await store.create_group(name)
+        if result["status"] == "created":
+            return RedirectResponse(f"/groups?slug={result['slug']}", status_code=303)
+        suffix = f"&slug={result['slug']}" if result["slug"] else ""
+        return RedirectResponse(f"/groups?notice={result['status']}{suffix}",
+                                status_code=303)
+
+    @app.post("/groups/{slug}/rename")
+    async def rename_group(slug: str, name: str = Form("")) -> RedirectResponse:
+        from sonde.db import store
+
+        await store.rename_group(slug, name)
+        return RedirectResponse(f"/groups?slug={slug}", status_code=303)
+
+    @app.post("/groups/{slug}/archive")
+    async def archive_group(slug: str, undo: bool = False) -> RedirectResponse:
+        from sonde.db import store
+
+        await store.archive_group(slug, archived=not undo)
+        return RedirectResponse(f"/groups?slug={slug}" if undo else "/groups",
+                                status_code=303)
+
+    @app.post("/groups/apply")
+    async def apply_tags(request: Request, did: list[str] = Form([]),
+                         tag: str = Form(""),
+                         action: str = Form("add")) -> RedirectResponse:
+        return await _apply_tags(_safe_back(request, "/followers"), did, tag, action)
+
+    @app.post("/followers/{did}/tags")
+    async def tag_one(request: Request, did: str, tag: str = Form(""),
+                      action: str = Form("add")) -> RedirectResponse:
+        return await _apply_tags(
+            _safe_back(request, f"/followers/{did}"), [did], tag, action)
 
     @app.get("/ignored", response_class=HTMLResponse)
     async def ignored(request: Request) -> HTMLResponse:
@@ -377,12 +456,7 @@ def create_app() -> FastAPI:
         from sonde.api.follows import FollowError, create_follow, delete_follow
         from sonde.db import store
 
-        # Only ever a page inside sonde, never an absolute URL from a header we
-        # do not control.
-        back = request.headers.get("referer") or f"/followers/{did}"
-        if "://" in back:
-            back = "/" + back.split("://", 1)[1].split("/", 1)[-1] \
-                if "/" in back.split("://", 1)[1] else "/"
+        back = _safe_back(request, f"/followers/{did}")
 
         if not settings.enable_follow_write:
             return RedirectResponse(f"{back}#writes-disabled", status_code=303)
