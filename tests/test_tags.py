@@ -603,3 +603,61 @@ async def test_the_follow_button_survives_on_batch_pages(db, client):
     for url in ("/followers", "/groups?slug=journalists"):
         assert "/followers/did:plc:a/follow" in client.get(url).text, (
             f"{url} lost the one-click follow-back control")
+
+
+# ------------------------------------------------- filtering by tag
+
+async def test_filtering_the_followers_list_by_tag(db):
+    from tests.test_groups import add
+
+    await add("did:plc:in", is_verified=True)
+    await add("did:plc:out", is_verified=True)
+    await store.create_group("Cohort")
+    await store.tag_actor("cohort", "did:plc:in")
+
+    rows = await store.ranked_followers(tag="cohort")
+
+    assert [r["did"] for r in rows] == ["did:plc:in"]
+
+
+async def test_the_tag_filter_ignores_untagged_and_archived(db):
+    from tests.test_groups import add
+
+    await add("did:plc:in", is_verified=True)
+    await store.create_group("Cohort")
+    await store.tag_actor("cohort", "did:plc:in")
+    await store.untag_actor("cohort", "did:plc:in")
+    assert await store.ranked_followers(tag="cohort") == []
+
+    await store.tag_actor("cohort", "did:plc:in")
+    await store.archive_group("cohort")
+    assert await store.ranked_followers(tag="cohort") == []
+
+
+async def test_someone_in_a_tag_is_listed_once(db):
+    """EXISTS rather than a JOIN. A join against group_members would emit a row
+    per membership, so anyone matching twice would appear twice in the list."""
+    from tests.test_groups import add
+
+    await add("did:plc:both", is_verified=True)
+    await store.create_group("One")
+    await store.create_group("Two")
+    await store.tag_actor("one", "did:plc:both")
+    await store.tag_actor("two", "did:plc:both")
+
+    assert len(await store.ranked_followers(tag="one")) == 1
+
+
+async def test_the_tag_filter_survives_paging_and_sorting(db, client):
+    """Every link on the page has to carry the current filters. There is a
+    comment in the route saying so, because dropping one silently broke sorting
+    once already."""
+    from tests.test_groups import add
+
+    await add("did:plc:in", is_verified=True)
+    await store.create_group("Cohort")
+    await store.tag_actor("cohort", "did:plc:in")
+
+    page = client.get("/followers?tag=cohort&order=followers")
+
+    assert "tag=cohort" in page.text

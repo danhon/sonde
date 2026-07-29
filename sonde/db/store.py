@@ -764,7 +764,7 @@ async def ranked_followers(
     limit: int = 50, offset: int = 0, *, order: str = "influence",
     direction: str = "desc", verified_only: bool = False,
     min_followers: int | None = None, query: str | None = None,
-    mutual_only: bool = False,
+    mutual_only: bool = False, tag: str | None = None,
 ) -> list[dict]:
     column = SORTABLE.get(order, SORTABLE["influence"])
     # list_rank ascending IS most-recent-first, so "recent desc" has to invert.
@@ -780,6 +780,16 @@ async def ranked_followers(
         where.append("a.verified_status = 'valid'")
     if mutual_only:
         where.append("mf.did IS NOT NULL")
+    if tag:
+        # EXISTS rather than a JOIN: a join against group_members emits one row
+        # per membership, so anyone in two tags would be listed twice.
+        where.append(
+            """EXISTS (SELECT 1 FROM group_members m2
+                         JOIN groups g2 ON g2.id = m2.group_id
+                        WHERE m2.did = a.did AND g2.slug = ?
+                          AND COALESCE(m2.confirmed, 1) = 1
+                          AND g2.archived_at IS NULL)""")
+        params.append(tag)
     if min_followers is not None:
         where.append("COALESCE(a.followers_count, 0) >= ?")
         params.append(min_followers)

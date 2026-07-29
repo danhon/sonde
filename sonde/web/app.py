@@ -672,7 +672,7 @@ def create_app() -> FastAPI:
         request: Request, page: str | None = None, order: str = "influence",
         direction: str = "desc", q: str | None = None,
         verified: bool = False, mutual: bool = False,
-        min_followers: str | None = None,
+        min_followers: str | None = None, tag: str | None = None,
     ) -> HTMLResponse:
         """Numeric filters arrive as strings on purpose.
 
@@ -691,12 +691,13 @@ def create_app() -> FastAPI:
         rows = await store.ranked_followers(
             limit=per_page, offset=(page_num - 1) * per_page, order=order,
             direction=direction, verified_only=verified, mutual_only=mutual,
-            min_followers=floor, query=q,
+            min_followers=floor, query=q, tag=tag,
         )
         # Every link on the page has to carry the current filters, or
         # paginating or re-sorting silently drops them.
         filters = {"q": q or "", "verified": verified, "mutual": mutual,
-                   "min_followers": floor if floor is not None else ""}
+                   "min_followers": floor if floor is not None else "",
+                   "tag": tag or ""}
         return TEMPLATES.TemplateResponse(
             request=request,
             name="followers.html",
@@ -704,7 +705,7 @@ def create_app() -> FastAPI:
                 "rows": rows, "page": page_num, "order": order,
                 "direction": direction, "filters": filters,
                 "q": q or "", "verified": verified, "mutual": mutual,
-                "min_followers": floor,
+                "min_followers": floor, "tag": tag or "",
                 "counts": await store.counts(), "settings": settings,
                 "all_tags": await store.group_names(),
             },

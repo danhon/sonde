@@ -57,6 +57,16 @@
     <input type="number" name="min_followers" value="{{ min_followers if min_followers is not none else '' }}"
            min="0" class="w-32 border border-slate-300 px-2 py-1 text-sm focus:border-red-800 focus:outline-none">
   </label>
+  <label class="flex flex-col gap-1">
+    <span class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Tag</span>
+    <select name="tag" class="w-44 border border-slate-300 px-2 py-1 text-sm
+                              focus:border-red-800 focus:outline-none">
+      <option value="">any</option>
+      {% for t in all_tags %}
+      <option value="{{ t.slug }}" {% if tag == t.slug %}selected{% endif %}>{{ t.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
   <label class="flex items-center gap-2 pb-1.5">
     <input type="checkbox" name="verified" value="true" {% if verified %}checked{% endif %}>
     <span class="text-sm text-slate-700">Verified only</span>
@@ -68,14 +78,14 @@
   <button type="submit" class="mb-0.5 bg-slate-900 px-4 py-1.5 font-mono text-xs uppercase tracking-widest text-white hover:bg-red-800">
     Apply
   </button>
-  {% if q or verified or mutual or min_followers is not none %}
+  {% if q or verified or mutual or tag or min_followers is not none %}
   <a href="/followers" class="mb-1.5 font-mono text-xs text-slate-500 hover:text-red-800">clear</a>
   {% endif %}
 </form>
 
 {% if not rows %}
 <p class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center text-sm text-slate-600">
-  {% if q or verified or mutual or min_followers is not none %}No followers match those filters.{% else %}No followers yet — run a sweep.{% endif %}
+  {% if q or verified or mutual or tag or min_followers is not none %}No followers match those filters.{% else %}No followers yet — run a sweep.{% endif %}
 </p>
 {% else %}
 <div class="mt-6 overflow-x-auto">
