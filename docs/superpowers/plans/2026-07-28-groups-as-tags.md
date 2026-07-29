@@ -1065,15 +1065,26 @@ async def test_a_referer_pointing_off_site_cannot_redirect_off_site(db, client):
     assert response.headers["location"].startswith("/phish")
 
 
-async def test_creating_a_tag_that_is_archived_says_so_on_the_page(db, client):
+async def test_creating_a_tag_whose_slug_is_archived_redirects_with_a_notice(db, client):
+    """The route's half of this. Whether /groups then RENDERS the notice is
+    Task 8's assertion — the template does not know about `notice` yet, so do
+    not assert on page text here."""
     await store.create_group("Gone")
     await store.archive_group("gone")
 
-    client.post("/groups/new", data={"name": "Gone"}, follow_redirects=False)
-    page = client.get("/groups?notice=archived&slug=gone")
+    response = client.post("/groups/new", data={"name": "Gone"},
+                           follow_redirects=False)
 
-    assert page.status_code == 200
-    assert "archived" in page.text.lower()
+    assert response.status_code == 303
+    assert "notice=archived" in response.headers["location"]
+    assert "slug=gone" in response.headers["location"]
+
+
+async def test_creating_a_brand_new_tag_redirects_straight_to_it(db, client):
+    response = client.post("/groups/new", data={"name": "Fresh"},
+                           follow_redirects=False)
+
+    assert response.headers["location"] == "/groups?slug=fresh"
 
 
 async def test_renaming_through_the_route(db, client):
@@ -1251,7 +1262,9 @@ context dict add:
 - [ ] **Step 7: Run the tests**
 
 Run: `uv run pytest tests/test_tags.py -v && uv run pytest -q`
-Expected: all green. `test_creating_a_tag_that_is_archived_says_so_on_the_page` will still fail — the template does not render the notice until Task 8. Leave it failing and note it, or move that one assertion to Task 8.
+Expected: **all green**, whole suite included. Every test in this task asserts on
+routes and redirects only; nothing here depends on a template that Task 8 has
+not written yet.
 
 - [ ] **Step 8: Commit**
 
@@ -1488,6 +1501,15 @@ async def test_the_member_table_can_untag_a_row_the_machine_got_right(db, client
     page = client.get("/groups?slug=journalists")
 
     assert 'name="did" value="did:plc:j"' in page.text
+
+
+async def test_the_archived_notice_renders(db, client):
+    """Task 6 proved /groups/new redirects with notice=archived. This is the
+    other half: the page has to actually say something when it arrives."""
+    page = client.get("/groups?notice=archived&slug=gone")
+
+    assert page.status_code == 200
+    assert "archived" in page.text.lower()
 ```
 
 - [ ] **Step 2: Run and confirm they fail**
@@ -1660,7 +1682,7 @@ Before `{% endblock %}` at the end of the file:
 - [ ] **Step 7: Run the tests**
 
 Run: `uv run pytest tests/test_tags.py tests/test_groups.py -v`
-Expected: green, including `test_creating_a_tag_that_is_archived_says_so_on_the_page` from Task 6.
+Expected: green, whole suite included.
 
 - [ ] **Step 8: Commit**
 
