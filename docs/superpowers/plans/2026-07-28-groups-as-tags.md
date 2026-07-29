@@ -1386,9 +1386,10 @@ Expected: FAIL — `assert 'action="/followers/did:plc:solo/tags"' in page.text`
     that also wraps the table, so the checkboxes and these controls post
     together. Sticky by CSS; the count is filled in by the enhancement script in
     base.html and reads "0 selected" without it. -#}
-{%- macro batch_bar(all_tags) -%}
-<div class="sticky bottom-0 z-10 -mx-4 mt-4 flex flex-wrap items-center gap-3
-            border-t border-slate-300 bg-white/95 px-4 py-3 backdrop-blur">
+{%- macro batch_bar(all_tags, action_url) -%}
+<form method="post" action="{{ action_url }}" id="batch" data-batch
+      class="sticky bottom-0 z-10 -mx-4 mt-4 flex flex-wrap items-center gap-3
+             border-t border-slate-300 bg-white/95 px-4 py-3 backdrop-blur">
   <span class="font-mono text-[10px] uppercase tracking-widest text-slate-500">
     <span data-selection-count>0</span> selected
   </span>
@@ -1405,9 +1406,20 @@ Expected: FAIL — `assert 'action="/followers/did:plc:solo/tags"' in page.text`
   <span class="text-xs text-slate-400">
     an unfamiliar name creates that tag
   </span>
-</div>
+</form>
 {%- endmacro -%}
 ```
+
+**The bar OWNS the form; the table is never wrapped.** Row checkboxes join it
+with `form="batch"`, which HTML5 allows for a control outside the form's
+subtree. This is not a stylistic choice: `who()` renders the follow-back
+control as its own `<form>`, so wrapping a follower table would nest one form
+inside another — invalid HTML that browsers silently discard, leaving a control
+that looks correct and does nothing. Associating by id keeps both features on
+the same page.
+
+Named submit buttons post identically whether nested or associated this way, so
+`action=add` / `action=remove` still arrive as expected.
 
 - [ ] **Step 4: Rewrite the detail page's group block**
 
@@ -1587,18 +1599,22 @@ Immediately after the chip row (after line 51's `</div>`), insert:
 
 - [ ] **Step 5: Wrap the member table in the batch form**
 
-Replace the member-table block (lines 53-96) so the table sits inside a form,
-each row gains a checkbox, and the last cell untags through the tag endpoint:
+Replace the member-table block (lines 53-96). **The table is NOT wrapped in a
+form.** Each checkbox carries `form="batch"`, associating it with the form that
+`batch_bar` renders further down the page — HTML5 allows a control to belong to
+a form it is not nested inside. This is deliberate and load-bearing: wrapping
+the table would put the follow-back `<form>` that `who()` renders inside another
+form, which is invalid HTML and silently dropped by browsers.
 
 ```jinja
 {% if slug and members %}
-<form method="post" action="/groups/apply" data-batch>
   <div class="mt-8 overflow-x-auto">
     <table class="w-full text-sm">
       <thead>
         <tr class="border-b border-slate-300 text-left">
           <th class="w-8 py-2 pr-2">
-            <input type="checkbox" data-select-all aria-label="select all on this page">
+            <input type="checkbox" data-select-all form="batch"
+                   aria-label="select all on this page">
           </th>
           {{ th(base, 'handle', 'Handle') }}
           {{ th(base, 'name', 'Name') }}
@@ -1611,7 +1627,7 @@ each row gains a checkbox, and the last cell untags through the tag endpoint:
         {% for m in members %}
         <tr class="border-b border-slate-100 hover:bg-slate-50">
           <td class="py-2 pr-2">
-            <input type="checkbox" name="did" value="{{ m.did }}"
+            <input type="checkbox" name="did" value="{{ m.did }}" form="batch"
                    aria-label="select {{ m.handle }}">
           </td>
           <td class="py-2 pr-4">{{ who(m) }}</td>
@@ -1631,11 +1647,13 @@ each row gains a checkbox, and the last cell untags through the tag endpoint:
       </tbody>
     </table>
   </div>
-  {{ batch_bar(all_tags) }}
-</form>
+{{ batch_bar(all_tags, "/groups/apply") }}
 {{ tag_options(all_tags) }}
 {% elif slug %}
 ```
+
+`who(m)` keeps its follow-back button — that is the whole point of not wrapping
+the table. Do not pass `follow=false`.
 
 **There is deliberately no hidden `tag` field.** An earlier draft of this plan
 had one, to guarantee the field was always present. It is both unnecessary —
@@ -1734,18 +1752,20 @@ In `sonde/web/templates/followers.html` add to the imports:
 {% from "_tags.html" import batch_bar, tag_options with context %}
 ```
 
-Wrap the existing `<div class="mt-6 overflow-x-auto">…</div>` table block in a
-form and add the checkbox column. Open, immediately before that div:
+**Do NOT wrap the table in a form.** `who(row)` renders the one-click
+follow-back control as its own `<form>`, and `/followers` is the page that
+feature was built for — wrapping the table would nest one form inside another,
+which browsers silently discard. Instead the checkboxes join the bar's form by
+id, exactly as `/groups` does.
 
-```jinja
-<form method="post" action="/groups/apply" data-batch>
-```
+Leave `<div class="mt-6 overflow-x-auto">…</div>` exactly where it is.
 
 Add as the first `<th>` in the header row, before `{{ th('handle', 'Handle') }}`:
 
 ```jinja
         <th class="w-8 py-2 pr-2">
-          <input type="checkbox" data-select-all aria-label="select all on this page">
+          <input type="checkbox" data-select-all form="batch"
+                 aria-label="select all on this page">
         </th>
 ```
 
@@ -1753,18 +1773,19 @@ Add as the first `<td>` in the body row, before the `who(row)` cell:
 
 ```jinja
         <td class="py-2 pr-2">
-          <input type="checkbox" name="did" value="{{ row.did }}"
+          <input type="checkbox" name="did" value="{{ row.did }}" form="batch"
                  aria-label="select {{ row.handle }}">
         </td>
 ```
 
-Close, immediately after that table div:
+Immediately after that table div:
 
 ```jinja
-  {{ batch_bar(all_tags) }}
-</form>
+{{ batch_bar(all_tags, "/groups/apply") }}
 {{ tag_options(all_tags) }}
 ```
+
+`who(row)` keeps its follow-back button. Do not pass `follow=false`.
 
 - [ ] **Step 4: Pass `all_tags` to the template**
 
@@ -2021,32 +2042,64 @@ A checkbox column is going onto two of the widest tables on the site. The static
 tests cannot prove a page fits — only the browser can, and only against a
 populated database.
 
-- [ ] **Step 1: Write the failing static test**
+- [ ] **Step 1: Write the failing test**
 
-In `tests/test_responsive.py`, add:
+The nested-form rule is the one that needs guarding, and it needs a *rendered*
+page rather than template source — the offending `<form>` comes from inside the
+`who()` macro, so reading the template file would never see it.
+
+In `tests/test_tags.py`, add:
 
 ```python
-def test_batch_forms_keep_their_table_scrollable():
-    """The batch form wraps the table. If the overflow-x-auto div ends up
-    OUTSIDE the form instead of inside it, the table stops scrolling on a phone
-    and the page grows a horizontal scrollbar instead."""
-    from pathlib import Path
+async def test_no_batch_page_ever_nests_a_form(db, client):
+    """A <form> inside another <form> is invalid HTML and browsers silently drop
+    the inner one — the control renders perfectly and does nothing. It is a real
+    risk here and not a theoretical one: who() emits the follow-back control as
+    its own form, so any page that wrapped its follower table in the batch form
+    would break follow-back without a single visible symptom.
 
-    for name in ("followers.html", "groups.html"):
-        text = Path("sonde/web/templates") / name
-        body = text.read_text()
-        if "data-batch" not in body:
-            continue
-        form_at = body.index("data-batch")
-        assert "overflow-x-auto" in body[form_at:], (
-            f"{name}: the scroll wrapper must be inside the batch form")
+    Hence form="batch" on the checkboxes instead of a wrapper. This test is what
+    stops someone reinstating the wrapper later."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+
+    for url in ("/followers", "/groups?slug=journalists"):
+        body = client.get(url).text
+        depth = 0
+        for chunk in body.split("<form")[1:]:
+            depth += 1
+            assert depth == 1, f"{url} nests a form inside another form"
+            depth -= chunk.count("</form>")
+            assert depth >= 0, f"{url} has an unbalanced </form>"
+
+
+async def test_the_follow_button_survives_on_batch_pages(db, client):
+    """The reason nesting was avoided rather than worked around. If a later
+    change reinstates a wrapping form and suppresses who()'s button to fix the
+    nesting, this fails and says why."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+
+    for url in ("/followers", "/groups?slug=journalists"):
+        assert "/followers/did:plc:a/follow" in client.get(url).text, (
+            f"{url} lost the one-click follow-back control")
 ```
+
+Note the second test needs follow-writes enabled for the button to render at
+all — check `settings.enable_follow_write` and, if it defaults off in the test
+environment, `monkeypatch` it on the way `tests/test_follow_back.py` already
+does. Read that file first and match its approach rather than inventing one.
 
 - [ ] **Step 2: Run the responsive suite**
 
-Run: `uv run pytest tests/test_responsive.py -v`
-Expected: PASS if Tasks 8 and 9 placed the wrapper correctly; FAIL tells you the
-form and the scroll div are nested the wrong way round.
+Run: `uv run pytest tests/test_tags.py tests/test_responsive.py -v`
+Expected: both new tests PASS. `tests/test_responsive.py` already contains
+`test_every_table_can_scroll_itself`, which covers the scroll wrapper on every
+table including these two — no new responsive test is needed for that.
 
 - [ ] **Step 3: Add the enhancement script**
 
@@ -2059,13 +2112,16 @@ the activity poller's closing `})();`, add a second IIFE:
     // submit buttons still work; the count just reads 0 and select-all does
     // nothing. Nothing here is load-bearing.
     document.querySelectorAll("form[data-batch]").forEach(function (form) {
-      const boxes = form.querySelectorAll('input[name="did"]');
+      // form.elements, NOT form.querySelectorAll. The row checkboxes are not
+      // descendants of the form — they join it with form="batch" so that the
+      // table is never wrapped and who()'s follow-back form is never nested.
+      // A descendant query finds nothing and the count sits at zero forever.
+      const boxes = Array.from(form.elements).filter((el) => el.name === "did");
       const count = form.querySelector("[data-selection-count]");
       const all   = form.querySelector("[data-select-all]");
 
       function recount() {
-        if (!count) return;
-        count.textContent = form.querySelectorAll('input[name="did"]:checked').length;
+        if (count) count.textContent = boxes.filter((b) => b.checked).length;
       }
 
       boxes.forEach((box) => box.addEventListener("change", recount));
@@ -2078,6 +2134,15 @@ the activity poller's closing `})();`, add a second IIFE:
       recount();
     });
   })();
+```
+
+`[data-select-all]` lives in the table header, outside the form, so it also
+carries `form="batch"` and therefore appears in `form.elements` — but it is
+found here by `querySelector` on the form's own subtree, which will not see it.
+Query it from the document instead, scoped to the page:
+
+```javascript
+      const all = document.querySelector("[data-select-all]");
 ```
 
 - [ ] **Step 4: Run the whole suite**
