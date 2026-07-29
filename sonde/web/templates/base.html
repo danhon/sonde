@@ -198,6 +198,35 @@
       }
     });
   })();
+
+  (function () {
+    // Progressive enhancement only. Without this the checkboxes and both submit
+    // buttons still work exactly as they do with it; only the running count and
+    // the select-all box are lost. Nothing here is load-bearing.
+    document.querySelectorAll("form[data-batch]").forEach(function (form) {
+      // form.elements, NOT form.querySelectorAll. The row checkboxes are not
+      // descendants of the form — they join it with form="batch" so the table
+      // is never wrapped and the follow-back form inside who() is never nested.
+      // A descendant query finds nothing and the count sits at zero forever.
+      const boxes = Array.from(form.elements).filter((el) => el.name === "did");
+      const count = form.querySelector("[data-selection-count]");
+      // Also outside the form, for the same reason.
+      const all = document.querySelector("[data-select-all]");
+
+      function recount() {
+        if (count) count.textContent = boxes.filter((b) => b.checked).length;
+      }
+
+      boxes.forEach((box) => box.addEventListener("change", recount));
+      if (all) {
+        all.addEventListener("change", function () {
+          boxes.forEach((box) => { box.checked = all.checked; });
+          recount();
+        });
+      }
+      recount();
+    });
+  })();
   </script>
 </body>
 </html>
