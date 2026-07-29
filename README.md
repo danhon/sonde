@@ -205,7 +205,7 @@ make deploy
 `SERVICE_HOST` is only ever set by the Makefile. Bypass it and Compose
 substitutes an empty string, the Traefik rule becomes ``Host(``)``, and the site
 404s while `docker ps` shows the container perfectly healthy — see
-[troubleshooting](../reverse-proxy/docs-site/docs/troubleshooting.md#site-404s-after-a-manual-deploy--container-looks-perfectly-healthy)
+[troubleshooting](../reverse-proxy/docs-site/docs/troubleshooting.md#site-404s-after-a-manual-deploy-container-looks-perfectly-healthy)
 (hit for real on buywanderbot, 2026-07-17).
 
 Other targets: `make preview` (runs `sonde-preview.sgc.rayandhon.com` alongside
