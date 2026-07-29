@@ -661,3 +661,48 @@ async def test_the_tag_filter_survives_paging_and_sorting(db, client):
     page = client.get("/followers?tag=cohort&order=followers")
 
     assert "tag=cohort" in page.text
+
+
+# ---------------------------------- the dashboard shows arrivals only
+
+async def test_the_dashboard_lists_follows_and_not_unfollows(db, client):
+    """Asked for directly: departures are noise on the front page. They are
+    still recorded and still on /changes — this only changes what greets you."""
+    from tests.test_groups import add
+
+    await add("did:plc:gone", is_verified=True)
+    await store.add_event("did:plc:gone", "departed")
+    await add("did:plc:new", is_verified=True)
+    await store.add_event("did:plc:new", "followed")
+
+    events = (await store.dashboard_stats())["recent_changes"]
+
+    assert [e["event"] for e in events] == ["followed"]
+
+
+async def test_a_returning_follower_still_counts_as_an_arrival(db):
+    from tests.test_groups import add
+
+    await add("did:plc:back", is_verified=True)
+    await store.add_event("did:plc:back", "returned")
+
+    assert [e["event"] for e in (await store.dashboard_stats())["recent_changes"]] == ["returned"]
+
+
+async def test_sondes_own_follow_back_is_not_an_arrival(db):
+    """followed_back is us following them. It is not someone arriving."""
+    from tests.test_groups import add
+
+    await add("did:plc:x", is_verified=True)
+    await store.add_event("did:plc:x", "followed_back")
+
+    assert (await store.dashboard_stats())["recent_changes"] == []
+
+
+async def test_the_full_timeline_still_shows_departures(db):
+    from tests.test_groups import add
+
+    await add("did:plc:gone", is_verified=True)
+    await store.add_event("did:plc:gone", "departed")
+
+    assert [e["event"] for e in await store.recent_changes(50)] == ["departed"]

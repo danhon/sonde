@@ -3246,7 +3246,18 @@ async def growth_series(days: int = 90) -> list[dict]:
         return [dict(r) for r in reversed(await cur.fetchall())]
 
 
-async def recent_changes(limit: int = 100, event: str | None = None) -> list[dict]:
+# Someone arriving, by either route. `followed_back` is sonde's own write and
+# `handle_changed` is a rename, so neither is an arrival.
+ARRIVALS = ("followed", "returned")
+
+
+async def recent_changes(limit: int = 100,
+                         event: str | tuple[str, ...] | None = None) -> list[dict]:
+    """Recent follow events, newest first.
+
+    `event` takes one kind or several — the dashboard wants arrivals only while
+    /changes wants whatever the operator picked from its filter.
+    """
     db = await _db()
     sql = (
         "SELECT e.*, a.handle, a.display_name, a.avatar_url, "
@@ -3255,8 +3266,9 @@ async def recent_changes(limit: int = 100, event: str | None = None) -> list[dic
     )
     params: list = []
     if event:
-        sql += "WHERE e.event = ? "
-        params.append(event)
+        kinds = (event,) if isinstance(event, str) else tuple(event)
+        sql += f"WHERE e.event IN ({','.join('?' for _ in kinds)}) "
+        params.extend(kinds)
     sql += "ORDER BY e.detected_at DESC, e.id DESC LIMIT ?"
     params.append(limit)
     async with db.execute(sql, params) as cur:
@@ -3399,6 +3411,8 @@ async def dashboard_stats() -> dict:
         "empty": c["tracked"] == 0,
         "needs_review": int(needs_review) if needs_review else None,
         "growth": await growth_series(60),
-        "recent_changes": await recent_changes(12),
+        # Arrivals only. Departures still exist and are still recorded; they
+        # live on /changes, which is where you go to look for them.
+        "recent_changes": await recent_changes(12, event=ARRIVALS),
         "top": await ranked_followers(limit=10),
     }
