@@ -176,7 +176,7 @@
 </section>
 
 <div class="mt-4 flex flex-wrap items-center gap-2">
-  {% for g in p.groups %}{{ tag_chip(g, p.did) }}{% endfor %}
+  {% for g in p.circles %}{{ tag_chip(g, p.did) }}{% endfor %}
   {{ tag_input(all_tags, "/followers/" ~ p.did ~ "/tags") }}
 </div>
 {{ tag_options(all_tags) }}

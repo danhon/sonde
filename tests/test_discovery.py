@@ -40,7 +40,7 @@ def test_the_catch_all_site_kind_is_never_proposed():
 def test_an_organisation_with_several_people_is_already_a_group():
     out = organisation_candidates([{"name": "Wired", "members": 6}], set())
     assert out[0]["label"] == "Wired"
-    assert "already a group" in out[0]["why"]
+    assert "already a circle" in out[0]["why"]
 
 
 # ------------------------------------------------------------ phrases
@@ -174,7 +174,7 @@ async def test_the_discovery_page_renders(db):
     await add("did:plc:b", wikidata_occupations='["blogger"]')
     await store.discover_group_candidates()
     with TestClient(create_app()) as client:
-        page = client.get("/groups/discover")
+        page = client.get("/circles/discover")
     assert page.status_code == 200
     assert "Blogger" in page.text
 

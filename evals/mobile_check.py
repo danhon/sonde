@@ -40,21 +40,24 @@ VIEWPORTS = [(320, 568), (375, 667), (390, 844), (768, 1024),
              # a *desktop* nav collapse, and a mobile-only eval passed it.
              (1024, 768), (1280, 800), (1440, 900)]
 
-ROUTES = ["/", "/followers", "/influential", "/verified", "/groups",
-          "/groups/discover", "/institutions", "/relationships", "/changes",
+ROUTES = ["/", "/followers", "/influential", "/verified", "/circles",
+          "/circles/discover", "/institutions", "/relationships", "/changes",
           "/ignored", "/settings",
           # Sorted and filtered variants: the widest tables in the app, and the
           # state a phone is most likely to be left in.
           "/followers?order=followers&direction=desc",
           "/relationships?order=attention&direction=desc",
-          "/groups?slug=game-industry"]
+          "/circles?slug=game-industry",
+          # Gained bios under each handle in the Circles rename;
+          # the widest table in the app and not previously covered.
+          "/circles/discover/307"]
 
 # Apple and WCAG both land near this for a touch target.
 MIN_TAP_PX = 44
 
 # Every section of the app. Being in the DOM is not enough — these must be
 # visible and clickable.
-EXPECTED_LINKS = ["/followers", "/influential", "/verified", "/groups",
+EXPECTED_LINKS = ["/followers", "/influential", "/verified", "/circles",
                   "/institutions", "/relationships", "/changes", "/ignored",
                   "/settings"]
 

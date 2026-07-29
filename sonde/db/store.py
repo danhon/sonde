@@ -2188,7 +2188,7 @@ async def discover_latent_groups() -> dict:
             if hit > share:
                 best, share = slug, hit
         if best is None or share < 0.3:
-            return " Matches no existing group."
+            return " Matches no existing circle."
         return (f" {share:.0%} of them are already in {names[best]!r} — "
                 f"{'largely a duplicate' if share > 0.7 else 'overlapping but not the same'}.")
 
@@ -2320,7 +2320,7 @@ async def candidate_members(candidate_id: int, *, order: str = "influence",
             dids = json.loads(candidate["members"] or "[]")
         except (ValueError, TypeError):
             dids = []
-        evidence = {d: "clusters with this group in the follow graph" for d in dids}
+        evidence = {d: "clusters with this circle in the follow graph" for d in dids}
     else:
         # Measured at ~1.8s against the live database, nearly all of it inside
         # group_target_dids -> sweep_candidate_dids, which reads every current
@@ -2340,6 +2340,7 @@ async def candidate_members(candidate_id: int, *, order: str = "influence",
         placeholders = ",".join("?" for _ in dids)
         async with db.execute(
             f"""SELECT a.did, a.handle, a.display_name, a.avatar_url,
+                       a.description,
                        a.followers_count, a.influence_score, a.verified_status,
                        (mf.did IS NOT NULL) AS is_mutual,
                        (fs.did IS NOT NULL AND fs.is_current = 1) AS is_current
@@ -2389,7 +2390,7 @@ async def _apply_cluster_group(slug: str, members_json: str | None) -> int:
                VALUES (?,?,?,?,?,?)
                ON CONFLICT (group_id, did) DO NOTHING""",
             (group["id"], did, "cluster", PROPAGATION,
-             "clusters with this group in the follow graph", now),
+             "clusters with this circle in the follow graph", now),
         )
     await db.commit()
     return len(members)
@@ -2923,6 +2924,7 @@ async def group_members(slug: str, limit: int = 200, *, order: str = "influence"
     db = await _db()
     async with db.execute(
         f"""SELECT a.did, a.handle, a.display_name, a.avatar_url,
+                   a.description,
                    a.followers_count, a.influence_score, a.verified_status,
                    m.tier, m.confidence, m.evidence, m.confirmed,
                    (mf.did IS NOT NULL) AS is_mutual

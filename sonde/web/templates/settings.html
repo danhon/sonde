@@ -46,7 +46,11 @@
       </form>
       <span class="font-mono text-[10px] uppercase tracking-widest text-slate-400">{{ b.cost }}</span>
       <p class="w-full text-xs text-slate-600 sm:w-auto sm:flex-1">{{ b.why }}</p>
-      <span class="w-full font-mono text-[10px] text-slate-400">{{ b.steps | join(" → ") }}</span>
+      {#- Job labels, not the internal keys. The keys leaked the old "groups"
+          name onto the page long after the rename. -#}
+      <span class="w-full font-mono text-[10px] text-slate-400">
+        {{ b.steps | map('step_label') | join(" → ") }}
+      </span>
     </div>
     {% endfor %}
   </div>

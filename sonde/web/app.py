@@ -22,6 +22,21 @@ from sonde.jobs import registry
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
+def _step_label(key: str) -> str:
+    """A job key rendered as the label people read.
+
+    The batch summaries on /settings printed raw keys, so "groups" survived the
+    rename to Circles in the one place nobody thinks to look.
+    """
+    from sonde.joblist import BY_KEY
+
+    job = BY_KEY.get(key)
+    return job.label.lower() if job else key
+
+
+TEMPLATES.env.filters["step_label"] = _step_label
+
+
 def _as_int(value: str | int | None) -> int | None:
     """Coerce a query-string value, treating blank and junk as absent.
 
@@ -320,7 +335,19 @@ def create_app() -> FastAPI:
         await store.set_organisation_weight(name, weight)
         return RedirectResponse(f"/institutions?name={name}", status_code=303)
 
-    @app.get("/groups", response_class=HTMLResponse)
+    # Circles were called Groups until 2026-07-29. These keep every bookmark,
+    # and every link in a digest email already sent, working. 308 rather than
+    # 302 so browsers and crawlers learn the new address, and because it
+    # preserves the method — a POST to an old path still posts.
+    @app.api_route("/groups", methods=["GET", "POST"], include_in_schema=False)
+    @app.api_route("/groups/{rest:path}", methods=["GET", "POST"],
+                   include_in_schema=False)
+    async def circles_moved(request: Request, rest: str = "") -> RedirectResponse:
+        query = f"?{request.url.query}" if request.url.query else ""
+        suffix = f"/{rest}" if rest else ""
+        return RedirectResponse(f"/circles{suffix}{query}", status_code=308)
+
+    @app.get("/circles", response_class=HTMLResponse)
     async def groups_index(
         request: Request, slug: str | None = None,
         order: str = "influence", direction: str = "desc",
@@ -345,7 +372,7 @@ def create_app() -> FastAPI:
             },
         )
 
-    @app.get("/groups/discover", response_class=HTMLResponse)
+    @app.get("/circles/discover", response_class=HTMLResponse)
     async def discover(request: Request) -> HTMLResponse:
         from sonde.db import store
 
@@ -359,7 +386,7 @@ def create_app() -> FastAPI:
             },
         )
 
-    @app.get("/groups/discover/{candidate_id}", response_class=HTMLResponse)
+    @app.get("/circles/discover/{candidate_id}", response_class=HTMLResponse)
     async def preview_candidate(request: Request, candidate_id: int,
                                 order: str = "influence",
                                 direction: str = "desc",
@@ -381,7 +408,7 @@ def create_app() -> FastAPI:
             context={**preview, "settings": settings, "notice": notice},
         )
 
-    @app.post("/groups/discover/{candidate_id}")
+    @app.post("/circles/discover/{candidate_id}")
     async def decide(request: Request, candidate_id: int,
                      accept: bool = False,
                      did: list[str] = Form([]),
@@ -398,21 +425,21 @@ def create_app() -> FastAPI:
         if accept and subset:
             if not did:
                 return RedirectResponse(
-                    f"/groups/discover/{candidate_id}?notice=nobody",
+                    f"/circles/discover/{candidate_id}?notice=nobody",
                     status_code=303)
             slug = await store.decide_candidate(candidate_id, True, dids=did)
         else:
             slug = await store.decide_candidate(candidate_id, accept)
         return RedirectResponse(
-            f"/groups?slug={slug}" if slug else "/groups/discover", status_code=303
+            f"/circles?slug={slug}" if slug else "/circles/discover", status_code=303
         )
 
-    @app.post("/groups/{slug}/{did}/review")
+    @app.post("/circles/{slug}/{did}/review")
     async def review_group(slug: str, did: str, keep: bool = True) -> RedirectResponse:
         from sonde.db import store
 
         await store.review_group_member(slug, did, keep)
-        return RedirectResponse(f"/groups?slug={slug}", status_code=303)
+        return RedirectResponse(f"/circles?slug={slug}", status_code=303)
 
     async def _apply_tags(back: str, dids: list[str], tag: str,
                           action: str) -> RedirectResponse:
@@ -437,25 +464,25 @@ def create_app() -> FastAPI:
         changed = await store.tag_actors(slug, dids, add=(action == "add"))
         return RedirectResponse(f"{back}#tagged-{changed}", status_code=303)
 
-    @app.post("/groups/new")
+    @app.post("/circles/new")
     async def new_group(name: str = Form("")) -> RedirectResponse:
         from sonde.db import store
 
         result = await store.create_group(name)
         if result["status"] == "created":
-            return RedirectResponse(f"/groups?slug={result['slug']}", status_code=303)
+            return RedirectResponse(f"/circles?slug={result['slug']}", status_code=303)
         suffix = f"&slug={result['slug']}" if result["slug"] else ""
-        return RedirectResponse(f"/groups?notice={result['status']}{suffix}",
+        return RedirectResponse(f"/circles?notice={result['status']}{suffix}",
                                 status_code=303)
 
-    @app.post("/groups/{slug}/rename")
+    @app.post("/circles/{slug}/rename")
     async def rename_group(slug: str, name: str = Form("")) -> RedirectResponse:
         from sonde.db import store
 
         await store.rename_group(slug, name)
-        return RedirectResponse(f"/groups?slug={slug}", status_code=303)
+        return RedirectResponse(f"/circles?slug={slug}", status_code=303)
 
-    @app.post("/groups/{slug}/merge")
+    @app.post("/circles/{slug}/merge")
     async def merge_group(slug: str, into: str = Form("")) -> RedirectResponse:
         """Fold this group into another. The source is archived, not deleted."""
         from sonde.db import store
@@ -463,24 +490,24 @@ def create_app() -> FastAPI:
         result = await store.merge_groups(slug, (into or "").strip())
         if result["status"] != "merged":
             return RedirectResponse(
-                f"/groups?slug={slug}&notice={result['status']}", status_code=303)
+                f"/circles?slug={slug}&notice={result['status']}", status_code=303)
         # Both numbers, because "0 moved" alone reads as a failure when it
         # actually means the group was wholly redundant — which is the most
         # common reason to merge and happened on the first real one.
         return RedirectResponse(
-            f"/groups?slug={result['target']}"
+            f"/circles?slug={result['target']}"
             f"&notice=merged-{result['moved']}-{result['considered']}",
             status_code=303)
 
-    @app.post("/groups/{slug}/archive")
+    @app.post("/circles/{slug}/archive")
     async def archive_group(slug: str, undo: bool = False) -> RedirectResponse:
         from sonde.db import store
 
         await store.archive_group(slug, archived=not undo)
-        return RedirectResponse(f"/groups?slug={slug}" if undo else "/groups",
+        return RedirectResponse(f"/circles?slug={slug}" if undo else "/circles",
                                 status_code=303)
 
-    @app.post("/groups/apply")
+    @app.post("/circles/apply")
     async def apply_tags(request: Request, did: list[str] = Form([]),
                          tag: str = Form(""),
                          action: str = Form("add")) -> RedirectResponse:

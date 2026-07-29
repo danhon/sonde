@@ -41,11 +41,11 @@ JOBS: tuple[Job, ...] = (
     Job("external", "External reputation", "~100 calls", "Wikidata and pageviews"),
     Job("affiliations", "Rebuild affiliations", "none", "who works where"),
     Job("relevance", "Exact relevance", "~1,000 calls", "needs the app password"),
-    Job("groups", "Reclassify groups", "none", ""),
-    Job("discover", "Find new groups", "none", "proposals only"),
+    Job("groups", "Reclassify circles", "none", ""),
+    Job("discover", "Find new circles", "none", "proposals only"),
     Job("latent", "Find latent communities", "none",
         "clusters the follow graph; proposals only"),
-    Job("propagate", "Propagate groups", "none", "needs a fresh affinity index"),
+    Job("propagate", "Propagate circles", "none", "needs a fresh affinity index"),
     Job("affinity", "Rebuild affinity index", "~1,700 calls", "slow; monthly is enough"),
     Job("interactions", "Sync interactions", "~500 calls", "needs the app password"),
     Job("rescore-relationships", "Rescore relationships", "none", ""),
@@ -66,9 +66,9 @@ BATCHES: tuple[Batch, ...] = (
           "~700 calls",
           "Recent posts, Wikidata and Wikipedia, then work out who is affiliated "
           "with what. Needs hydrated profiles."),
-    Batch("regroup", "Rebuild groups", ("groups", "discover", "latent", "propagate"),
+    Batch("regroup", "Rebuild circles", ("groups", "discover", "latent", "propagate"),
           "none",
-          "Classify, propose groups nobody named, then fill the gaps rules "
+          "Classify, propose circles nobody named, then fill the gaps rules "
           "cannot reach. Needs enrichment first."),
     Batch("relationships", "Update relationships",
           ("interactions", "rescore-relationships"), "~500 calls",

@@ -1,5 +1,5 @@
 {#- Shared sorting macros. Extracted from followers.html so every table sorts
-    the same way and carries the same filters — the /groups table was built
+    the same way and carries the same filters — the /circles table was built
     without them and could not sort at all. -#}
 
 {%- macro qs(base, overrides={}) -%}
@@ -76,6 +76,21 @@
                 title="follow {{ row.handle }} back — writes a real follow to your account">+follow</button>
       </form>
     {%- endif -%}
+  {%- endif -%}
+{%- endmacro -%}
+
+{#- A follower's own bio, for deciding whether they belong somewhere.
+
+    Rendered under the handle rather than as its own column: the tables that
+    want this are already the widest in the app, and adding a column to them is
+    how M24 grew four overflow bugs. Truncated in Jinja rather than by CSS so
+    the cell cannot be blown open by a 300-character bio on a phone, with the
+    whole thing in the title attribute. Newlines collapse to spaces for the same
+    reason. -#}
+{%- macro bio(row, length=180) -%}
+  {%- if row.description %}
+  <span class="mt-0.5 block max-w-md text-xs leading-snug text-slate-500"
+        title="{{ row.description }}">{{ row.description | replace('\n', ' ') | truncate(length, true, '…') }}</span>
   {%- endif -%}
 {%- endmacro -%}
 

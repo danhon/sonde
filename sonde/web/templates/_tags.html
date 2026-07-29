@@ -1,15 +1,15 @@
-{#- Tag controls. Groups are tags: the machine proposes, a human decides, and
+{#- Tag controls. Circles are tags: the machine proposes, a human decides, and
     the human always wins. Every control here is a plain form — no JavaScript
     is required for any of it, matching the rest of the app. -#}
 
 {#- One tag, with the × that removes it. `did` is who the removal applies to. -#}
-{%- macro tag_chip(group, did) -%}
+{%- macro tag_chip(circle, did) -%}
 <span class="inline-flex items-center gap-1 rounded-sm bg-slate-100 py-0.5 pl-2 pr-1
              font-mono text-[10px] uppercase tracking-wider text-slate-700">
-  <a href="/groups?slug={{ group.slug }}" class="hover:text-red-800"
-     title="{{ group.evidence }} ({{ group.tier }})">{{ group.name }}</a>
+  <a href="/circles?slug={{ circle.slug }}" class="hover:text-red-800"
+     title="{{ circle.evidence }} ({{ circle.tier }})">{{ circle.name }}</a>
   <form method="post" action="/followers/{{ did }}/tags" class="inline">
-    <input type="hidden" name="tag" value="{{ group.name }}">
+    <input type="hidden" name="tag" value="{{ circle.name }}">
     <input type="hidden" name="action" value="remove">
     <button type="submit" class="px-1 text-slate-400 hover:text-red-800"
             title="remove this tag">×</button>
@@ -19,7 +19,7 @@
 
 {#- Add a tag. The datalist autocompletes existing tags; typing a name that is
     not in it creates that tag, which is why there is no separate "new tag"
-    step anywhere except the admin row on /groups. -#}
+    step anywhere except the admin row on /circles. -#}
 {%- macro tag_input(all_tags, action_url, label='Add tag') -%}
 <form method="post" action="{{ action_url }}" class="inline-flex items-center gap-1">
   <input type="hidden" name="action" value="add">

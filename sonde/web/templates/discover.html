@@ -1,17 +1,17 @@
 {% extends "base.html" %}
-{% block title %}Discover groups — sonde{% endblock %}
+{% block title %}Discover circles — sonde{% endblock %}
 {% block content %}
 
 <div class="flex flex-wrap items-baseline gap-4 border-b border-slate-300 pb-3">
-  <h1 class="font-mono text-xs font-semibold uppercase tracking-widest text-red-800">Discover groups</h1>
-  <a href="/groups" class="ml-auto font-mono text-xs text-slate-500 hover:text-red-800">← groups</a>
+  <h1 class="font-mono text-xs font-semibold uppercase tracking-widest text-red-800">Discover circles</h1>
+  <a href="/circles" class="ml-auto font-mono text-xs text-slate-500 hover:text-red-800">← circles</a>
 </div>
 
 <p class="mt-4 max-w-2xl text-sm text-slate-600">
-  The seeded groups were written by hand, so the interesting ones are whatever
+  The seeded circles were written by hand, so the interesting ones are whatever
   nobody thought of. These are proposals drawn from data already collected, at
-  no API cost. <strong>Nothing becomes a group until you accept it</strong>: a
-  group nobody wanted makes every other count untrustworthy.
+  no API cost. <strong>Nothing becomes a circle until you accept it</strong>: a
+  circle nobody wanted makes every other count untrustworthy.
 </p>
 
 <p class="mt-3 max-w-2xl text-sm text-slate-600">
@@ -19,13 +19,13 @@
   rows are different in kind from the rest. They come from the shape of the
   follow graph rather than from anything written in a bio, so they can find
   communities no rule describes — and the label, where there is one, is worked
-  out afterwards. A cluster reported as overlapping a group you already have is
+  out afterwards. A cluster reported as overlapping a circle you already have is
   not a duplicate to discard: it is the method agreeing with you.
 </p>
 
 {% if not candidates %}
 <p class="mt-10 border border-dashed border-slate-400 px-6 py-12 text-center text-sm text-slate-600">
-  Nothing new to propose. Run <strong>Find new groups</strong> from settings after
+  Nothing new to propose. Run <strong>Find new circles</strong> from settings after
   the next enrichment pass.
 </p>
 {% else %}
@@ -34,7 +34,7 @@
     <thead>
       <tr class="border-b border-slate-300 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
         <th class="py-2 pr-4 text-right">People</th>
-        <th class="py-2 pr-4">Proposed group</th>
+        <th class="py-2 pr-4">Proposed circle</th>
         <th class="py-2 pr-4">From</th>
         <th class="py-2 pr-4">Why</th>
         <th class="py-2 pr-4"></th>
@@ -52,13 +52,13 @@
         <td class="py-2 pr-4 text-xs text-slate-500">{{ c.why }}</td>
         <td class="py-2 pr-4">
           <div class="flex justify-end gap-3">
-            <a href="/groups/discover/{{ c.id }}"
+            <a href="/circles/discover/{{ c.id }}"
                class="font-mono text-xs text-red-800 hover:underline"
                title="see who is in it, and pick who to keep">preview</a>
-            <form method="post" action="/groups/discover/{{ c.id }}?accept=true">
+            <form method="post" action="/circles/discover/{{ c.id }}?accept=true">
               <button type="submit" class="font-mono text-xs text-emerald-700 hover:underline">accept all</button>
             </form>
-            <form method="post" action="/groups/discover/{{ c.id }}?accept=false">
+            <form method="post" action="/circles/discover/{{ c.id }}?accept=false">
               <button type="submit" class="font-mono text-xs text-slate-400 hover:text-red-800">reject</button>
             </form>
           </div>

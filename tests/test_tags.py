@@ -181,7 +181,7 @@ async def test_an_archived_tag_stops_gaining_members(db):
 
 
 async def test_seeding_does_not_resurrect_an_archived_seeded_tag(db):
-    """'journalists' is one of the 15 slugs in sonde/groups.py, and
+    """'journalists' is one of the 15 slugs in sonde/circles.py, and
     seed_groups() runs at the top of every classify job. The whole reason
     delete is archive: the surviving row is what makes the seeding upsert
     a no-op."""
@@ -383,7 +383,7 @@ async def test_the_batch_endpoint_tags_everyone_selected(db, client):
     for did in ("did:plc:a", "did:plc:b"):
         await add(did, is_verified=True)
 
-    response = client.post("/groups/apply", data={
+    response = client.post("/circles/apply", data={
         "did": ["did:plc:a", "did:plc:b"], "tag": "Cohort", "action": "add",
     }, follow_redirects=False)
 
@@ -396,7 +396,7 @@ async def test_the_batch_endpoint_creates_the_tag_when_adding(db, client):
     from tests.test_groups import add
 
     await add("did:plc:a", is_verified=True)
-    client.post("/groups/apply", data={"did": ["did:plc:a"], "tag": "Brand new",
+    client.post("/circles/apply", data={"did": ["did:plc:a"], "tag": "Brand new",
                                        "action": "add"}, follow_redirects=False)
 
     assert "brand-new" in {g["slug"] for g in await store.group_names()}
@@ -408,7 +408,7 @@ async def test_removing_with_an_unknown_tag_creates_nothing(db, client):
     from tests.test_groups import add
 
     await add("did:plc:a", is_verified=True)
-    client.post("/groups/apply", data={"did": ["did:plc:a"], "tag": "Typo",
+    client.post("/circles/apply", data={"did": ["did:plc:a"], "tag": "Typo",
                                        "action": "remove"}, follow_redirects=False)
 
     assert await store.group_names() == []
@@ -419,7 +419,7 @@ async def test_the_batch_endpoint_returns_you_to_the_page_you_came_from(db, clie
 
     await add("did:plc:a", is_verified=True)
     response = client.post(
-        "/groups/apply", data={"did": ["did:plc:a"], "tag": "X", "action": "add"},
+        "/circles/apply", data={"did": ["did:plc:a"], "tag": "X", "action": "add"},
         headers={"referer": "http://testserver/followers?page=2"},
         follow_redirects=False)
 
@@ -431,7 +431,7 @@ async def test_a_referer_pointing_off_site_cannot_redirect_off_site(db, client):
 
     await add("did:plc:a", is_verified=True)
     response = client.post(
-        "/groups/apply", data={"did": ["did:plc:a"], "tag": "X", "action": "add"},
+        "/circles/apply", data={"did": ["did:plc:a"], "tag": "X", "action": "add"},
         headers={"referer": "https://evil.example/phish"},
         follow_redirects=False)
 
@@ -439,13 +439,13 @@ async def test_a_referer_pointing_off_site_cannot_redirect_off_site(db, client):
 
 
 async def test_creating_a_tag_whose_slug_is_archived_redirects_with_a_notice(db, client):
-    """The route's half of this. Whether /groups then RENDERS the notice is
+    """The route's half of this. Whether /circles then RENDERS the notice is
     Task 8's assertion — the template does not know about `notice` yet, so do
     not assert on page text here."""
     await store.create_group("Gone")
     await store.archive_group("gone")
 
-    response = client.post("/groups/new", data={"name": "Gone"},
+    response = client.post("/circles/new", data={"name": "Gone"},
                            follow_redirects=False)
 
     assert response.status_code == 303
@@ -454,15 +454,15 @@ async def test_creating_a_tag_whose_slug_is_archived_redirects_with_a_notice(db,
 
 
 async def test_creating_a_brand_new_tag_redirects_straight_to_it(db, client):
-    response = client.post("/groups/new", data={"name": "Fresh"},
+    response = client.post("/circles/new", data={"name": "Fresh"},
                            follow_redirects=False)
 
-    assert response.headers["location"] == "/groups?slug=fresh"
+    assert response.headers["location"] == "/circles?slug=fresh"
 
 
 async def test_renaming_through_the_route(db, client):
     await store.create_group("Before")
-    client.post("/groups/before/rename", data={"name": "After"},
+    client.post("/circles/before/rename", data={"name": "After"},
                 follow_redirects=False)
 
     assert {g["name"] for g in await store.group_summary()} == {"After"}
@@ -471,10 +471,10 @@ async def test_renaming_through_the_route(db, client):
 async def test_archiving_and_restoring_through_the_route(db, client):
     await store.create_group("Temporary")
 
-    client.post("/groups/temporary/archive", follow_redirects=False)
+    client.post("/circles/temporary/archive", follow_redirects=False)
     assert await store.group_names() == []
 
-    client.post("/groups/temporary/archive?undo=true", follow_redirects=False)
+    client.post("/circles/temporary/archive?undo=true", follow_redirects=False)
     assert [g["slug"] for g in await store.group_names()] == ["temporary"]
 
 
@@ -516,25 +516,25 @@ def test_every_template_importing_the_tag_macros_does_so_with_context():
                 assert "with context" in line, f"{page.name} imports without context"
 
 
-# --------------------------------------------------------- the /groups page
+# --------------------------------------------------------- the /circles page
 
 async def test_the_groups_page_can_rename_archive_and_create(db, client):
     await store.create_group("Cohort")
 
-    page = client.get("/groups?slug=cohort")
+    page = client.get("/circles?slug=cohort")
 
-    assert 'action="/groups/cohort/rename"' in page.text
-    assert 'action="/groups/cohort/archive"' in page.text
-    assert 'action="/groups/new"' in page.text
+    assert 'action="/circles/cohort/rename"' in page.text
+    assert 'action="/circles/cohort/archive"' in page.text
+    assert 'action="/circles/new"' in page.text
 
 
 async def test_the_groups_page_lists_what_can_be_restored(db, client):
     await store.create_group("Gone")
     await store.archive_group("gone")
 
-    page = client.get("/groups")
+    page = client.get("/circles")
 
-    assert 'action="/groups/gone/archive?undo=true"' in page.text
+    assert 'action="/circles/gone/archive?undo=true"' in page.text
 
 
 async def test_the_member_table_can_untag_a_row_the_machine_got_right(db, client):
@@ -546,15 +546,15 @@ async def test_the_member_table_can_untag_a_row_the_machine_got_right(db, client
     await store.classify_groups()
     await store.tag_actor("journalists", "did:plc:j")   # confirmed = 1
 
-    page = client.get("/groups?slug=journalists")
+    page = client.get("/circles?slug=journalists")
 
     assert 'name="did" value="did:plc:j"' in page.text
 
 
 async def test_the_archived_notice_renders(db, client):
-    """Task 6 proved /groups/new redirects with notice=archived. This is the
+    """Task 6 proved /circles/new redirects with notice=archived. This is the
     other half: the page has to actually say something when it arrives."""
-    page = client.get("/groups?notice=archived&slug=gone")
+    page = client.get("/circles?notice=archived&slug=gone")
 
     assert page.status_code == 200
     assert "archived" in page.text.lower()
@@ -573,7 +573,7 @@ async def test_no_batch_page_ever_nests_a_form(db, client):
     await add("did:plc:a", is_verified=True, wikidata_occupations='["journalist"]')
     await store.classify_groups()
 
-    for url in ("/followers", "/groups?slug=journalists"):
+    for url in ("/followers", "/circles?slug=journalists"):
         body = client.get(url).text
         depth = 0
         for chunk in body.split("<form")[1:]:
@@ -590,7 +590,7 @@ async def test_the_followers_table_can_batch_tag(db, client):
 
     page = client.get("/followers")
 
-    assert 'action="/groups/apply"' in page.text
+    assert 'action="/circles/apply"' in page.text
     assert 'name="did" value="did:plc:a"' in page.text
 
 
@@ -601,7 +601,7 @@ async def test_the_follow_button_survives_on_batch_pages(db, client):
     await add("did:plc:a", is_verified=True, wikidata_occupations='["journalist"]')
     await store.classify_groups()
 
-    for url in ("/followers", "/groups?slug=journalists"):
+    for url in ("/followers", "/circles?slug=journalists"):
         assert "/followers/did:plc:a/follow" in client.get(url).text, (
             f"{url} lost the one-click follow-back control")
 
@@ -764,7 +764,7 @@ async def test_a_scheme_relative_referer_cannot_redirect_off_site(db, client):
     for evil in ("//evil.example/phish", "/\\evil.example/phish",
                  "https://evil.example//phish", "javascript:alert(1)"):
         response = client.post(
-            "/groups/apply",
+            "/circles/apply",
             data={"did": ["did:plc:a"], "tag": "X", "action": "add"},
             headers={"referer": evil}, follow_redirects=False)
         location = response.headers["location"]
@@ -780,7 +780,7 @@ async def test_an_ordinary_referer_still_comes_back(db, client):
 
     await add("did:plc:a", is_verified=True)
     response = client.post(
-        "/groups/apply", data={"did": ["did:plc:a"], "tag": "X", "action": "add"},
+        "/circles/apply", data={"did": ["did:plc:a"], "tag": "X", "action": "add"},
         headers={"referer": "http://testserver/followers?page=3&order=followers"},
         follow_redirects=False)
 
@@ -944,7 +944,7 @@ async def test_the_preview_page_renders_its_members(db, client):
     await add("did:plc:a", is_verified=True)
     cid = await seed_cluster(["did:plc:a"], "Cohort")
 
-    page = client.get(f"/groups/discover/{cid}")
+    page = client.get(f"/circles/discover/{cid}")
 
     assert page.status_code == 200
     assert 'name="did" value="did:plc:a"' in page.text
@@ -959,7 +959,7 @@ async def test_the_preview_page_does_not_nest_forms(db, client):
     await add("did:plc:a", is_verified=True)
     cid = await seed_cluster(["did:plc:a"], "Cohort")
 
-    body = client.get(f"/groups/discover/{cid}").text
+    body = client.get(f"/circles/discover/{cid}").text
 
     depth = 0
     for chunk in body.split("<form")[1:]:
@@ -975,7 +975,7 @@ async def test_ticking_nobody_creates_nothing(db, client):
     await add("did:plc:a", is_verified=True)
     cid = await seed_cluster(["did:plc:a"], "Cohort")
 
-    response = client.post(f"/groups/discover/{cid}?accept=true",
+    response = client.post(f"/circles/discover/{cid}?accept=true",
                            data={"subset": "1"}, follow_redirects=False)
 
     assert "notice=nobody" in response.headers["location"]
@@ -983,13 +983,13 @@ async def test_ticking_nobody_creates_nothing(db, client):
 
 
 async def test_an_unknown_candidate_page_is_a_404(db, client):
-    assert client.get("/groups/discover/4242").status_code == 404
+    assert client.get("/circles/discover/4242").status_code == 404
 
 
 async def test_a_candidate_matching_nobody_says_so(db, client):
     cid = await seed_phrase("nobodyhasthisinabio", "Nobody")
 
-    page = client.get(f"/groups/discover/{cid}")
+    page = client.get(f"/circles/discover/{cid}")
 
     assert page.status_code == 200
     assert "matches nobody now" in page.text
@@ -1238,10 +1238,10 @@ async def test_the_groups_page_offers_a_merge(db, client):
     await store.tag_actor("small", "did:plc:a")
     await store.tag_actor("large", "did:plc:a")
 
-    page = client.get("/groups?slug=small")
+    page = client.get("/circles?slug=small")
 
-    assert 'action="/groups/small/merge"' in page.text
-    assert "Groups that share members" in page.text
+    assert 'action="/circles/small/merge"' in page.text
+    assert "Circles that share members" in page.text
 
 
 async def test_merging_through_the_route(db, client):
@@ -1252,7 +1252,7 @@ async def test_merging_through_the_route(db, client):
     await store.create_group("Large")
     await store.tag_actor("small", "did:plc:a")
 
-    response = client.post("/groups/small/merge", data={"into": "large"},
+    response = client.post("/circles/small/merge", data={"into": "large"},
                            follow_redirects=False)
 
 
@@ -1271,9 +1271,89 @@ async def test_a_wholly_redundant_merge_says_nothing_moved(db, client):
     await store.tag_actor("small", "did:plc:a")
     await store.tag_actor("large", "did:plc:a")
 
-    response = client.post("/groups/small/merge", data={"into": "large"},
+    response = client.post("/circles/small/merge", data={"into": "large"},
                            follow_redirects=False)
     page = client.get(response.headers["location"])
 
     assert "notice=merged-0-1" in response.headers["location"]
     assert "already here" in page.text
+
+
+# ------------------------------------------------- bios where they help
+
+async def test_the_circle_member_table_shows_bios(db, client):
+    """Deciding whether somebody belongs in a circle needs their own words, not
+    just a handle and a score."""
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, description="Reporter at a paper",
+              wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+
+    page = client.get("/circles?slug=journalists")
+
+    assert "Reporter at a paper" in page.text
+
+
+async def test_the_candidate_preview_shows_bios(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True, description="Makes games for a living")
+    cid = await seed_cluster(["did:plc:a"], "Cohort")
+
+    page = client.get(f"/circles/discover/{cid}")
+
+    assert "Makes games for a living" in page.text
+
+
+async def test_a_long_bio_is_truncated_rather_than_widening_the_table(db, client):
+    """These are the widest tables in the app. An untruncated 300-character bio
+    is how a row stops fitting on a phone."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True, description="x" * 400)
+    cid = await seed_cluster(["did:plc:a"], "Cohort")
+
+    page = client.get(f"/circles/discover/{cid}")
+
+    assert "…" in page.text
+    assert "x" * 400 not in page.text.replace('title="' + "x" * 400 + '"', "")
+
+
+async def test_someone_with_no_bio_renders_nothing_extra(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True, description=None)
+    cid = await seed_cluster(["did:plc:a"], "Cohort")
+
+    assert client.get(f"/circles/discover/{cid}").status_code == 200
+
+
+# ------------------------------------- Groups became Circles on 2026-07-29
+
+async def test_old_group_urls_still_resolve(db, client):
+    """Bookmarks, and links in digest emails already sent, must keep working.
+    308 rather than 302 so the new address is learned and the method survives."""
+    for old, new in (
+        ("/groups", "/circles"),
+        ("/groups/discover", "/circles/discover"),
+        ("/groups/discover/7", "/circles/discover/7"),
+    ):
+        response = client.get(old, follow_redirects=False)
+        assert response.status_code == 308, old
+        assert response.headers["location"] == new, old
+
+
+async def test_an_old_url_keeps_its_query_string(db, client):
+    """/groups?slug=journalists is the shape of every real bookmark; dropping
+    the query would land you on the index having lost what you asked for."""
+    response = client.get("/groups?slug=journalists&order=followers",
+                          follow_redirects=False)
+
+    assert response.headers["location"] == "/circles?slug=journalists&order=followers"
+
+
+async def test_the_nav_says_circles(db, client):
+    page = client.get("/circles")
+    assert ">Circles<" in page.text
+    assert ">Groups<" not in page.text

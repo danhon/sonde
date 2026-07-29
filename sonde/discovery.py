@@ -112,7 +112,7 @@ def occupation_candidates(occupations: Counter, covered: set[str],
             "kind": "occupation", "label": occupation.title(),
             "term": occupation, "count": count,
             "why": f"{count} people list this Wikidata occupation, "
-                   f"and no group claims it",
+                   f"and no circle claims it",
         })
     return out
 
@@ -126,7 +126,7 @@ def link_candidates(kinds: Counter, covered: set[str],
             continue
         out.append({
             "kind": "link", "label": kind.title(), "term": kind, "count": count,
-            "why": f"{count} people declare a {kind} link, with no group for it",
+            "why": f"{count} people declare a {kind} link, with no circle for it",
         })
     return out
 
@@ -143,7 +143,7 @@ def organisation_candidates(orgs: list[dict], covered: set[str],
             "kind": "organisation", "label": org["name"], "term": org["name"],
             "count": members,
             "why": f"{members} people currently affiliated — an organisation "
-                   f"this size is already a group",
+                   f"this size is already a circle",
         })
     return out
 
@@ -179,7 +179,7 @@ def phrase_candidates(documents: list[str], covered_terms: set[str],
             "kind": "phrase", "label": phrase.title(), "term": phrase,
             "count": count,
             "why": f"appears in {count} bios or recent posts and matches no "
-                   f"existing group",
+                   f"existing circle",
         })
     return out[:40]
 

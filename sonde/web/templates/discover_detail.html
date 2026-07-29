@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_sort.html" import th, who with context %}
+{% from "_sort.html" import th, who, bio with context %}
 {% set base = {'order': order, 'direction': direction} %}
 {% block title %}{{ candidate.label }} — preview — sonde{% endblock %}
 {% block content %}
@@ -12,13 +12,13 @@
                {% if candidate.kind == 'cluster' %}text-red-800{% else %}text-slate-500{% endif %}">
     {{ candidate.kind }}
   </span>
-  <a href="/groups/discover" class="ml-auto font-mono text-xs text-slate-500 hover:text-red-800">← candidates</a>
+  <a href="/circles/discover" class="ml-auto font-mono text-xs text-slate-500 hover:text-red-800">← candidates</a>
 </div>
 
 {% if notice == 'nobody' %}
 <p class="mt-4 border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
-  Nothing was ticked, so no group was created. Accepting with an empty selection
-  would make an empty group; reject the candidate if that is what you meant.
+  Nothing was ticked, so no circle was created. Accepting with an empty selection
+  would make an empty circle; reject the candidate if that is what you meant.
 </p>
 {% endif %}
 
@@ -47,7 +47,7 @@
   This candidate matches nobody now. It may have been proposed against data that
   has since changed — rejecting it is the safe call.
 </p>
-<form method="post" action="/groups/discover/{{ candidate.id }}?accept=false" class="mt-4">
+<form method="post" action="/circles/discover/{{ candidate.id }}?accept=false" class="mt-4">
   <button type="submit" class="border border-slate-300 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-600 hover:border-red-800 hover:text-red-800">
     reject
   </button>
@@ -86,6 +86,7 @@
           <span class="font-mono text-[10px] uppercase tracking-wider text-slate-400"
                 title="no longer follows you">departed</span>
           {% endif %}
+          {{ bio(m) }}
         </td>
         <td class="py-2 pr-4">{{ m.display_name or "" }}</td>
         <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-600">
@@ -104,7 +105,7 @@
   </table>
 </div>
 
-<form method="post" action="/groups/discover/{{ candidate.id }}?accept=true" id="accept" data-batch
+<form method="post" action="/circles/discover/{{ candidate.id }}?accept=true" id="accept" data-batch
       class="sticky bottom-0 z-10 -mx-4 mt-4 flex flex-wrap items-center gap-3
              border-t border-slate-300 bg-white/95 px-4 py-3 backdrop-blur">
   <input type="hidden" name="subset" value="1">
@@ -113,13 +114,13 @@
   </span>
   <button type="submit"
           class="bg-slate-900 px-3 py-1 font-mono text-[10px] uppercase tracking-widest
-                 text-white hover:bg-red-800">create group with these</button>
+                 text-white hover:bg-red-800">create circle with these</button>
   <span class="text-xs text-slate-400">
     they are tagged by hand, so the classifier will not undo it
   </span>
 </form>
 
-<form method="post" action="/groups/discover/{{ candidate.id }}?accept=false" class="mt-3">
+<form method="post" action="/circles/discover/{{ candidate.id }}?accept=false" class="mt-3">
   <button type="submit" class="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-red-800">
     reject this candidate
   </button>

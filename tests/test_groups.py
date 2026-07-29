@@ -154,7 +154,7 @@ async def test_the_groups_page_renders(db):
     await add("did:plc:a", is_verified=True, wikidata_occupations='["journalist"]')
     await store.classify_groups()
     with TestClient(create_app()) as client:
-        assert client.get("/groups").status_code == 200
-        page = client.get("/groups?slug=journalists")
+        assert client.get("/circles").status_code == 200
+        page = client.get("/circles?slug=journalists")
     assert page.status_code == 200
     assert "a.bsky.social" in page.text
