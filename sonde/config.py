@@ -139,6 +139,22 @@ class Settings:
     build_sha: str = field(default_factory=lambda: os.environ.get("BUILD_SHA", "dev"))
     build_time: str = field(default_factory=lambda: os.environ.get("BUILD_TIME", ""))
 
+    # Comparing what is deployed against the default branch needs to ask GitHub,
+    # and the repository is private, so it needs a credential. Without one the
+    # build panel still shows what is running — it just cannot say whether that
+    # is current. A fine-grained token with read-only Contents on this one repo
+    # is enough; nothing here writes.
+    github_repo: str = field(
+        default_factory=lambda: os.environ.get("GITHUB_REPO", "danhon/sonde"))
+    github_token: str = field(
+        default_factory=lambda: os.environ.get("GITHUB_TOKEN", ""))
+    github_branch: str = field(
+        default_factory=lambda: os.environ.get("GITHUB_BRANCH", "main"))
+
+    @property
+    def can_check_for_updates(self) -> bool:
+        return bool(self.github_token and self.github_repo)
+
     @property
     def smtp_configured(self) -> bool:
         return bool(self.smtp_host and self.smtp_username and self.notify_to)

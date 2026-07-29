@@ -128,7 +128,12 @@ def test_the_two_nav_variants_are_mutually_exclusive():
     depends on overriding the other's native behaviour.
     """
     nav = BASE[BASE.index("<nav"):BASE.index("</nav>")]
-    details = nav[nav.index("<details"):nav.index("</details>")]
+    # By id, not "the first <details> in the nav". The build-status panel is
+    # also a <details> in this row, and matching positionally made this guard
+    # silently inspect the wrong element the moment it was added.
+    start = nav.index('id="nav"')
+    start = nav.rindex("<details", 0, start)
+    details = nav[start:nav.index("</details>", start)]
 
     assert "group-open:" not in details.split(">", 1)[1].split("</summary>")[-1], (
         "the disclosure panel is being revealed by a CSS override again"

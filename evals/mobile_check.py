@@ -211,7 +211,12 @@ async def main() -> int:
                     missing = set(EXPECTED_LINKS) - visible
                     opened_menu = False
                     if missing:
-                        summary = page.locator("nav details summary")
+                        # `details#nav`, not "the first details in the nav".
+                        # The build-status panel is also a <details> up there
+                        # and, being inside the desktop-only row, is invisible
+                        # at narrow widths — so matching positionally reported
+                        # "no usable menu" on every page at 1024px.
+                        summary = page.locator("nav details#nav summary")
                         # `is_visible` before clicking, and a short timeout: the
                         # regression left both the row and the menu button
                         # unpainted, and a blind click just hangs for 30s

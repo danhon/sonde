@@ -347,6 +347,18 @@ def create_app() -> FastAPI:
         suffix = f"/{rest}" if rest else ""
         return RedirectResponse(f"/circles{suffix}{query}", status_code=308)
 
+    @app.get("/build")
+    async def build_status() -> JSONResponse:
+        """What is deployed, and whether the branch has moved past it.
+
+        Behind Authelia like everything except /healthz. It reports commit
+        subjects from a private repository, which is not something to hang off
+        the one unguarded route.
+        """
+        from sonde.external import version
+
+        return JSONResponse(await version.build_status())
+
     @app.get("/circles", response_class=HTMLResponse)
     async def groups_index(
         request: Request, slug: str | None = None,

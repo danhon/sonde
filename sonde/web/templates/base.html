@@ -54,7 +54,26 @@
          class="font-mono text-xs uppercase tracking-widest text-slate-500 hover:text-red-800">{{ label }}</a>
       {%- endfor %}
       <span class="ml-auto font-mono text-xs uppercase tracking-widest text-slate-400">{{ settings.actor }}</span>
-      <span class="font-mono text-xs text-slate-400">{{ settings.build_sha }}</span>
+      {#- The build stamp opens a panel saying whether the branch has moved past
+          what is running. A native <details>, so with JavaScript off it still
+          opens and still shows the commit and the build time — only the
+          comparison, which has to be fetched, is missing. -#}
+      <details class="relative" id="build">
+        <summary class="cursor-pointer list-none font-mono text-xs text-slate-400 hover:text-red-800"
+                 title="what's deployed, and whether main has moved past it">
+          {{ settings.build_sha }}<span data-build-dot></span>
+        </summary>
+        <div class="absolute right-0 z-30 mt-2 w-80 border border-slate-300 bg-white p-3 text-left shadow-lg">
+          <p class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Deployed</p>
+          <p class="mt-1 font-mono text-xs">{{ settings.build_sha }}</p>
+          {% if settings.build_time %}
+          <p class="font-mono text-[10px] text-slate-400">built {{ settings.build_time[:16].replace("T", " ") }}</p>
+          {% endif %}
+          <div data-build-body class="mt-2 border-t border-slate-200 pt-2 text-xs text-slate-500">
+            checking…
+          </div>
+        </div>
+      </details>
     </div>
 
     {#- Below xl: — a native disclosure. The panel is only ever shown by the
@@ -196,6 +215,66 @@
       } else {
         poll();
       }
+    });
+  })();
+
+  (function () {
+    // Fetched when the panel is first opened, not on page load. Nobody needs
+    // this except in the moment they wonder, and polling it would spend GitHub
+    // rate limit answering a question nobody asked.
+    const panel = document.getElementById("build");
+    if (!panel) return;
+    const body = panel.querySelector("[data-build-body]");
+    const dot  = panel.querySelector("[data-build-dot]");
+    let asked = false;
+
+    const escape = (s) => String(s == null ? "" : s).replace(/[<>&"]/g,
+      (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+
+    function render(d) {
+      if (d.status === "current") {
+        body.innerHTML = '<span class="text-emerald-700">Up to date with '
+          + escape(d.branch) + ".</span>";
+        return;
+      }
+      if (d.status === "unknown") {
+        body.textContent = d.detail || "Cannot tell.";
+        return;
+      }
+      const parts = [];
+      if (d.behind) {
+        parts.push('<span class="font-semibold text-red-800">' + d.behind
+          + " commit" + (d.behind === 1 ? "" : "s") + " behind " + escape(d.branch)
+          + ".</span>");
+        dot.textContent = " ●";
+        dot.className = "text-red-700";
+      }
+      if (d.ahead) {
+        parts.push('<span class="text-amber-700">Running ' + d.ahead
+          + " commit" + (d.ahead === 1 ? "" : "s") + " that " + escape(d.branch)
+          + " does not have.</span>");
+      }
+      if (d.commits && d.commits.length) {
+        parts.push('<ul class="mt-2 space-y-1">' + d.commits.map((c) =>
+          '<li class="truncate"><span class="font-mono text-[10px] text-slate-400">'
+          + escape(c.sha) + "</span> " + escape(c.message) + "</li>").join("")
+          + "</ul>");
+      }
+      if (d.compare_url) {
+        parts.push('<a class="mt-2 inline-block text-red-800 hover:underline" '
+          + 'target="_blank" rel="noreferrer" href="' + escape(d.compare_url)
+          + '">see the diff →</a>');
+      }
+      body.innerHTML = parts.join("");
+    }
+
+    panel.addEventListener("toggle", function () {
+      if (!panel.open || asked) return;
+      asked = true;
+      fetch("/build", { headers: { "Accept": "application/json" } })
+        .then((r) => r.json())
+        .then(render)
+        .catch(() => { body.textContent = "Could not check."; });
     });
   })();
 
