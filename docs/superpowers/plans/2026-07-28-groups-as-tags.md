@@ -218,13 +218,21 @@ async def test_renaming_to_blank_is_refused(db):
 
 # ------------------------------------------------------------ archiving
 
-async def test_archiving_hides_a_tag_and_restoring_brings_it_back(db):
+async def test_archiving_stamps_the_column_and_restoring_clears_it(db):
+    """This task owns the writer only. Whether the reads then hide the tag is
+    Task 3's job and is asserted there — do not reach for group_summary here,
+    it does not filter archived rows yet."""
     await store.create_group("Temporary")
-    await store.archive_group("temporary")
-    assert "temporary" not in {g["slug"] for g in await store.group_summary()}
 
-    await store.archive_group("temporary", archived=False)
-    assert "temporary" in {g["slug"] for g in await store.group_summary()}
+    assert await store.archive_group("temporary")
+    assert [g["slug"] for g in await store.archived_groups()] == ["temporary"]
+
+    assert await store.archive_group("temporary", archived=False)
+    assert await store.archived_groups() == []
+
+
+async def test_archiving_a_tag_that_does_not_exist_reports_failure(db):
+    assert not await store.archive_group("never-existed")
 
 
 async def test_the_archived_list_shows_what_can_be_restored(db):
@@ -355,12 +363,10 @@ with:
 
 - [ ] **Step 4: Run the tests**
 
-Run: `uv run pytest tests/test_tags.py -v`
-Expected: the archiving tests still FAIL (`group_summary` does not filter archived yet — that is Task 3). Creating/renaming tests PASS.
+Run: `uv run pytest tests/test_tags.py -v && uv run pytest -q`
+Expected: **all green**, and the existing suite unchanged. This task adds new functions and touches one line of `decide_candidate`; nothing else may move.
 
-If `test_archiving_hides_a_tag...` passes at this point, something is wrong — stop and check you are reading `group_summary` and not a stale DB.
-
-- [ ] **Step 5: Commit the part that is done**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add sonde/db/store.py tests/test_tags.py
