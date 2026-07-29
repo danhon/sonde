@@ -157,20 +157,34 @@ kept and manual rows, not only unreviewed ones.
 The referer sanitiser inside `follow_back` becomes a shared helper rather than
 being copy-pasted into five new write routes.
 
-## Measurement gate: tags in the digest
+## Measurement gate: tags in the digest — **measured, and dropped**
 
-Whether arrivals carry any tags at the moment the digest runs is unknown. A new
-follower has no hand-tags by definition, and may have no rule hits either — the
-grouping set is the top 500 by influence plus verified accounts, which most
-arrivals are not.
+Measured 2026-07-29 against a production snapshot (10,038 current followers).
+The rule set before running it was: below half, the line is mostly blank and the
+change dies.
 
-This could not be measured locally. The only database on the development
-machine is `sonde-backups/sonde-2026-07-27.db`: gitignored, zero rows in every
-table, an artefact of a local backup-job test. Querying it would have returned
-"0% of arrivals carry a group", which is true of any empty database and means
-nothing — the same trap CLAUDE.md documents for `DB_PATH` and the mobile eval.
+| cohort | n | carry a group |
+|---|---|---|
+| all current followers | 10,038 | 417 (4.2%) |
+| 90-day arrivals | 547 | 22 (4.0%) |
+| 30-day arrivals | 146 | **7 (4.8%)** |
 
-Run this against production before building the digest change:
+4.8% against a 50% bar. **The digest change is dropped.**
+
+The reasoning that motivated the gate turned out to be right for the wrong
+reason. The design guessed arrivals would be *specially* ungrouped — no
+hand-tags yet, too new to be classified. They are not: 4.8% against a 4.2%
+base rate is no different from anyone else. Nor is it a hydration artefact,
+which was the other candidate explanation: 145 of those 146 arrivals were
+hydrated, and only 1 was verified.
+
+The real cause is coverage. The grouping set is the top 500 by influence plus
+verified accounts plus sweep matches, and that is roughly 4% of the list — so
+*any* line reading group membership is blank about 95% of the time, on the
+digest or anywhere else. Building it would have added a mostly-empty field and
+taught nobody anything.
+
+The measurement query, for whoever revisits this:
 
 ```sql
 SELECT COUNT(*) AS arrivals_30d,
@@ -182,9 +196,8 @@ SELECT COUNT(*) AS arrivals_30d,
  WHERE COALESCE(fs.followed_at, fs.first_seen_at) >= date('now','-30 day');
 ```
 
-If materially fewer than half of arrivals carry a group, the digest line is
-mostly blank and the change is dropped — the M24 precedent, where two
-visualisations were killed by measuring what data existed before drawing them.
+Worth revisiting only if group coverage rises a long way above 4%, which
+hand-tagging — the point of this milestone — is the most likely way to achieve.
 
 ## Testing
 

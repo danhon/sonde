@@ -591,6 +591,7 @@ Sub-steps for the scoring work are sequenced in
 | M22 | Interaction leaderboards | ✅ done | One tab per kind, inbound by default; fixed `by_kind` conflating directions |
 | M23 | One-click follow-back | ✅ done | The first write to Bluesky; guarded, reversible, logged |
 | M24 | Five visualisations | ✅ done | Found four overflow bugs invisible against an empty DB |
+| M25 | Groups become tags | ✅ done | Hand decisions outrank every job. Archive, not delete — seeded slugs resurrect. Digest line killed at 4.8% coverage |
 | M13 | Remaining extras | ⬜ optional | Bluesky list writing, RSS, per-DID rate-limit test |
 
 ### Detail on what is done
