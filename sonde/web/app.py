@@ -195,7 +195,8 @@ def create_app() -> FastAPI:
         person["breakdown"] = await store.interaction_breakdown(did)
         return TEMPLATES.TemplateResponse(
             request=request, name="detail.html",
-            context={"p": person, "settings": settings},
+            context={"p": person, "settings": settings,
+                      "all_tags": await store.group_names()},
         )
 
     @app.get("/export.csv")

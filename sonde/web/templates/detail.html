@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_sort.html" import since with context %}
+{% from "_tags.html" import tag_chip, tag_input, tag_options with context %}
 {% block title %}{{ p.handle }} — sonde{% endblock %}
 {% block content %}
 
@@ -174,15 +175,11 @@
   {% endif %}
 </section>
 
-{% if p.groups %}
-<div class="mt-4 flex flex-wrap gap-2">
-  {% for g in p.groups %}
-  <a href="/groups?slug={{ g.slug }}"
-     class="rounded-sm bg-slate-100 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-slate-700 hover:bg-red-50 hover:text-red-800"
-     title="{{ g.evidence }} ({{ g.tier }})">{{ g.name }}</a>
-  {% endfor %}
+<div class="mt-4 flex flex-wrap items-center gap-2">
+  {% for g in p.groups %}{{ tag_chip(g, p.did) }}{% endfor %}
+  {{ tag_input(all_tags, "/followers/" ~ p.did ~ "/tags") }}
 </div>
-{% endif %}
+{{ tag_options(all_tags) }}
 
 {% if p.affiliations %}
 <section class="mt-8">

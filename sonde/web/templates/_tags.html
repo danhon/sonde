@@ -1,0 +1,67 @@
+{#- Tag controls. Groups are tags: the machine proposes, a human decides, and
+    the human always wins. Every control here is a plain form — no JavaScript
+    is required for any of it, matching the rest of the app. -#}
+
+{#- One tag, with the × that removes it. `did` is who the removal applies to. -#}
+{%- macro tag_chip(group, did) -%}
+<span class="inline-flex items-center gap-1 rounded-sm bg-slate-100 py-0.5 pl-2 pr-1
+             font-mono text-[10px] uppercase tracking-wider text-slate-700">
+  <a href="/groups?slug={{ group.slug }}" class="hover:text-red-800"
+     title="{{ group.evidence }} ({{ group.tier }})">{{ group.name }}</a>
+  <form method="post" action="/followers/{{ did }}/tags" class="inline">
+    <input type="hidden" name="tag" value="{{ group.name }}">
+    <input type="hidden" name="action" value="remove">
+    <button type="submit" class="px-1 text-slate-400 hover:text-red-800"
+            title="remove this tag">×</button>
+  </form>
+</span>
+{%- endmacro -%}
+
+{#- Add a tag. The datalist autocompletes existing tags; typing a name that is
+    not in it creates that tag, which is why there is no separate "new tag"
+    step anywhere except the admin row on /groups. -#}
+{%- macro tag_input(all_tags, action_url, label='Add tag') -%}
+<form method="post" action="{{ action_url }}" class="inline-flex items-center gap-1">
+  <input type="hidden" name="action" value="add">
+  <input type="text" name="tag" list="all-tags" placeholder="{{ label }}"
+         class="w-40 border border-slate-300 px-2 py-0.5 text-xs
+                focus:border-red-800 focus:outline-none">
+  <button type="submit"
+          class="border border-slate-300 px-2 py-0.5 font-mono text-[10px]
+                 uppercase tracking-wider text-slate-600
+                 hover:border-red-800 hover:text-red-800">add</button>
+</form>
+{%- endmacro -%}
+
+{#- The datalist itself, rendered once per page that uses tag_input. -#}
+{%- macro tag_options(all_tags) -%}
+<datalist id="all-tags">
+  {%- for t in all_tags %}<option value="{{ t.name }}"></option>{% endfor -%}
+</datalist>
+{%- endmacro -%}
+
+{#- The batch bar. Belongs INSIDE a <form method="post" action="/groups/apply">
+    that also wraps the table, so the checkboxes and these controls post
+    together. Sticky by CSS; the count is filled in by the enhancement script in
+    base.html and reads "0 selected" without it. -#}
+{%- macro batch_bar(all_tags) -%}
+<div class="sticky bottom-0 z-10 -mx-4 mt-4 flex flex-wrap items-center gap-3
+            border-t border-slate-300 bg-white/95 px-4 py-3 backdrop-blur">
+  <span class="font-mono text-[10px] uppercase tracking-widest text-slate-500">
+    <span data-selection-count>0</span> selected
+  </span>
+  <input type="text" name="tag" list="all-tags" placeholder="tag name"
+         class="w-48 border border-slate-300 px-2 py-1 text-sm
+                focus:border-red-800 focus:outline-none">
+  <button type="submit" name="action" value="add"
+          class="bg-slate-900 px-3 py-1 font-mono text-[10px] uppercase
+                 tracking-widest text-white hover:bg-red-800">add tag</button>
+  <button type="submit" name="action" value="remove"
+          class="border border-slate-300 px-3 py-1 font-mono text-[10px]
+                 uppercase tracking-widest text-slate-600
+                 hover:border-red-800 hover:text-red-800">remove tag</button>
+  <span class="text-xs text-slate-400">
+    an unfamiliar name creates that tag
+  </span>
+</div>
+{%- endmacro -%}

@@ -486,3 +486,30 @@ async def test_tagging_one_person_from_their_detail_page(db, client):
                 follow_redirects=False)
 
     assert [g["slug"] for g in await store.groups_for("did:plc:solo")] == ["neighbours"]
+
+
+async def test_the_detail_page_offers_a_tag_control(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:solo", is_verified=True)
+    await store.create_group("Neighbours")
+    await store.tag_actor("neighbours", "did:plc:solo")
+
+    page = client.get("/followers/did:plc:solo")
+
+    assert page.status_code == 200
+    assert 'action="/followers/did:plc:solo/tags"' in page.text
+    assert "Neighbours" in page.text
+
+
+def test_every_template_importing_the_tag_macros_does_so_with_context():
+    """A macro imported without context cannot see `settings`, and the control
+    silently never renders — exactly how the follow button disappeared in M23."""
+    from pathlib import Path
+
+    root = Path("sonde/web/templates")
+    for page in root.glob("*.html"):
+        text = page.read_text()
+        for line in text.splitlines():
+            if '_tags.html' in line and 'import' in line:
+                assert "with context" in line, f"{page.name} imports without context"
