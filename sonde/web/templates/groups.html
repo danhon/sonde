@@ -101,17 +101,19 @@
 {% endif %}
 {% endif %}
 
-{#- follow=false below: this table is itself inside <form action="/groups/apply">,
-    and who()'s follow-back control is its own <form> — nested forms are invalid
-    HTML and the browser silently drops the inner one, so it must stay off here. -#}
+{#- The table is NOT wrapped in a form. who() renders follow-back as its own
+    <form>, so wrapping the table would nest a form inside a form — invalid
+    HTML, silently dropped by browsers. Row checkboxes instead join the batch
+    bar's form via form="batch", which HTML5 allows for a control outside the
+    form's subtree. -#}
 {% if slug and members %}
-<form method="post" action="/groups/apply" data-batch>
   <div class="mt-8 overflow-x-auto">
     <table class="w-full text-sm">
       <thead>
         <tr class="border-b border-slate-300 text-left">
           <th class="w-8 py-2 pr-2">
-            <input type="checkbox" data-select-all aria-label="select all on this page">
+            <input type="checkbox" data-select-all form="batch"
+                   aria-label="select all on this page">
           </th>
           {{ th(base, 'handle', 'Handle') }}
           {{ th(base, 'name', 'Name') }}
@@ -124,10 +126,10 @@
         {% for m in members %}
         <tr class="border-b border-slate-100 hover:bg-slate-50">
           <td class="py-2 pr-2">
-            <input type="checkbox" name="did" value="{{ m.did }}"
+            <input type="checkbox" name="did" value="{{ m.did }}" form="batch"
                    aria-label="select {{ m.handle }}">
           </td>
-          <td class="py-2 pr-4">{{ who(m, follow=false) }}</td>
+          <td class="py-2 pr-4">{{ who(m) }}</td>
           <td class="py-2 pr-4">{{ m.display_name or "" }}</td>
           <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-600">
             {% if m.followers_count is not none %}{{ "{:,}".format(m.followers_count) }}{% else %}—{% endif %}
@@ -144,8 +146,7 @@
       </tbody>
     </table>
   </div>
-  {{ batch_bar(all_tags) }}
-</form>
+{{ batch_bar(all_tags, "/groups/apply") }}
 {{ tag_options(all_tags) }}
 {% elif slug %}
 <p class="mt-8 text-sm text-slate-500">Nobody in this group yet.</p>

@@ -40,13 +40,17 @@
 </datalist>
 {%- endmacro -%}
 
-{#- The batch bar. Belongs INSIDE a <form method="post" action="/groups/apply">
-    that also wraps the table, so the checkboxes and these controls post
-    together. Sticky by CSS; the count is filled in by the enhancement script in
-    base.html and reads "0 selected" without it. -#}
-{%- macro batch_bar(all_tags) -%}
-<div class="sticky bottom-0 z-10 -mx-4 mt-4 flex flex-wrap items-center gap-3
-            border-t border-slate-300 bg-white/95 px-4 py-3 backdrop-blur">
+{#- The batch bar. IT owns the form — the table it sits below is never wrapped
+    in one. Row checkboxes join via `form="batch"` instead, which HTML5 allows
+    for a control outside the form's subtree. That is deliberate and
+    load-bearing: who() renders follow-back as its own <form>, so wrapping the
+    table would nest a form inside a form, which is invalid HTML and silently
+    dropped by browsers. Sticky by CSS; the count is filled in by the
+    enhancement script in base.html and reads "0 selected" without it. -#}
+{%- macro batch_bar(all_tags, action_url) -%}
+<form method="post" action="{{ action_url }}" id="batch" data-batch
+      class="sticky bottom-0 z-10 -mx-4 mt-4 flex flex-wrap items-center gap-3
+             border-t border-slate-300 bg-white/95 px-4 py-3 backdrop-blur">
   <span class="font-mono text-[10px] uppercase tracking-widest text-slate-500">
     <span data-selection-count>0</span> selected
   </span>
@@ -63,5 +67,5 @@
   <span class="text-xs text-slate-400">
     an unfamiliar name creates that tag
   </span>
-</div>
+</form>
 {%- endmacro -%}

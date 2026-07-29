@@ -557,3 +557,38 @@ async def test_the_archived_notice_renders(db, client):
 
     assert page.status_code == 200
     assert "archived" in page.text.lower()
+
+
+# -------------------------------------------- no nested forms, ever again
+
+async def test_no_batch_page_ever_nests_a_form(db, client):
+    """A <form> inside another <form> is invalid HTML and browsers silently drop
+    the inner one — the control renders perfectly and does nothing. Real, not
+    theoretical: who() emits follow-back as its own form, so any page wrapping
+    its follower table in the batch form would break follow-back with no visible
+    symptom. Hence form="batch" rather than a wrapper."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+
+    for url in ("/followers", "/groups?slug=journalists"):
+        body = client.get(url).text
+        depth = 0
+        for chunk in body.split("<form")[1:]:
+            depth += 1
+            assert depth == 1, f"{url} nests a form inside another form"
+            depth -= chunk.count("</form>")
+            assert depth >= 0, f"{url} has an unbalanced </form>"
+
+
+async def test_the_follow_button_survives_on_batch_pages(db, client):
+    """The reason nesting was avoided rather than worked around."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+
+    for url in ("/followers", "/groups?slug=journalists"):
+        assert "/followers/did:plc:a/follow" in client.get(url).text, (
+            f"{url} lost the one-click follow-back control")
