@@ -745,3 +745,42 @@ async def test_the_export_omits_untagged_and_archived(db):
 
 async def test_the_csv_header_includes_tags(db, client):
     assert "tags" in client.get("/export.csv").text.splitlines()[0]
+
+
+# ------------------------------------------------- redirect safety
+
+async def test_a_scheme_relative_referer_cannot_redirect_off_site(db, client):
+    """`referer` is attacker-controllable and lands in a Location header.
+
+    "//evil.example/phish" contains no "://", so a check for that alone waves it
+    through — and a browser resolves a scheme-relative Location off-site. The
+    bug shipped with follow_back in M23 and M25 took it from one call site to
+    six, which is what made it worth fixing rather than noting.
+    """
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    for evil in ("//evil.example/phish", "/\\evil.example/phish",
+                 "https://evil.example//phish", "javascript:alert(1)"):
+        response = client.post(
+            "/groups/apply",
+            data={"did": ["did:plc:a"], "tag": "X", "action": "add"},
+            headers={"referer": evil}, follow_redirects=False)
+        location = response.headers["location"]
+        assert location.startswith("/"), f"{evil!r} -> {location!r}"
+        assert not location.startswith("//"), f"{evil!r} -> {location!r}"
+        assert "evil.example" not in location, f"{evil!r} -> {location!r}"
+
+
+async def test_an_ordinary_referer_still_comes_back(db, client):
+    """The guard must not throw away legitimate in-app returns — the whole
+    point of the helper is landing you back where you were working."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    response = client.post(
+        "/groups/apply", data={"did": ["did:plc:a"], "tag": "X", "action": "add"},
+        headers={"referer": "http://testserver/followers?page=3&order=followers"},
+        follow_redirects=False)
+
+    assert response.headers["location"].startswith("/followers?page=3&order=followers")

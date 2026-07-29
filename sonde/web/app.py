@@ -39,14 +39,25 @@ def _as_int(value: str | int | None) -> int | None:
 def _safe_back(request: Request, fallback: str) -> str:
     """Where to send the operator after a write.
 
-    Only ever a page inside sonde, never an absolute URL from a header we do
-    not control. Extracted from `follow_back` when the tag routes became the
-    fifth caller.
+    Only ever a path inside sonde. `referer` is attacker-controllable and goes
+    straight into a Location header, so this is a trust boundary rather than a
+    convenience.
+
+    Stripping the scheme and host is not sufficient on its own, which is how
+    this was wrong from M23 until M25. A scheme-relative "//evil.example/phish"
+    contains no "://" at all, so a check for that alone passes it through
+    untouched — and a browser resolves a scheme-relative Location off-site.
+    Anything that does not end up as a single-slash-rooted path is therefore
+    discarded in favour of the caller's own fallback: backslashes because
+    browsers normalise them to slashes, and "javascript:" and friends because
+    they are not paths at all.
     """
     back = request.headers.get("referer") or fallback
     if "://" in back:
         rest = back.split("://", 1)[1]
         back = "/" + rest.split("/", 1)[1] if "/" in rest else "/"
+    if not back.startswith("/") or back[:2] in ("//", "/\\"):
+        return fallback
     return back
 
 STARTED_AT = time.time()
