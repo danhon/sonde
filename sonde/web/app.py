@@ -706,6 +706,7 @@ def create_app() -> FastAPI:
                 "q": q or "", "verified": verified, "mutual": mutual,
                 "min_followers": floor,
                 "counts": await store.counts(), "settings": settings,
+                "all_tags": await store.group_names(),
             },
         )
 

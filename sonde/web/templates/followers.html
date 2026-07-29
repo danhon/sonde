@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_sort.html" import who, since with context %}
+{% from "_tags.html" import batch_bar, tag_options with context %}
 {% block title %}Followers — sonde{% endblock %}
 
 {#- Build a query string carrying the current filters, so sorting and paging
@@ -81,6 +82,10 @@
   <table class="w-full text-sm">
     <thead>
       <tr class="border-b border-slate-300 text-left">
+        <th class="w-8 py-2 pr-2">
+          <input type="checkbox" data-select-all form="batch"
+                 aria-label="select all on this page">
+        </th>
         {{ th('handle', 'Handle') }}
         {{ th('name', 'Name') }}
         {{ th('followers', 'Followers', 'right') }}
@@ -92,6 +97,10 @@
     <tbody>
       {% for row in rows %}
       <tr class="border-b border-slate-100 hover:bg-slate-50">
+        <td class="py-2 pr-2">
+          <input type="checkbox" name="did" value="{{ row.did }}" form="batch"
+                 aria-label="select {{ row.handle }}">
+        </td>
         <td class="py-2 pr-4">
           {{ who(row) }}
         </td>
@@ -111,6 +120,8 @@
     </tbody>
   </table>
 </div>
+{{ batch_bar(all_tags, "/groups/apply") }}
+{{ tag_options(all_tags) }}
 
 <div class="mt-6 flex items-baseline gap-4 font-mono text-xs">
   {% if page > 1 %}<a class="text-red-800 hover:underline" href="{{ qs({'page': page - 1}) }}">← previous</a>{% endif %}

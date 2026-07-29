@@ -582,6 +582,17 @@ async def test_no_batch_page_ever_nests_a_form(db, client):
             assert depth >= 0, f"{url} has an unbalanced </form>"
 
 
+async def test_the_followers_table_can_batch_tag(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+
+    page = client.get("/followers")
+
+    assert 'action="/groups/apply"' in page.text
+    assert 'name="did" value="did:plc:a"' in page.text
+
+
 async def test_the_follow_button_survives_on_batch_pages(db, client):
     """The reason nesting was avoided rather than worked around."""
     from tests.test_groups import add
