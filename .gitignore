@@ -24,3 +24,6 @@ sonde-backups/
 evals/last_run.json
 evals/eval.db
 evals/eval.db-*
+
+# Subagent-driven-development scratch: ledgers, briefs, review packages.
+.superpowers/
