@@ -706,3 +706,42 @@ async def test_the_full_timeline_still_shows_departures(db):
     await store.add_event("did:plc:gone", "departed")
 
     assert [e["event"] for e in await store.recent_changes(50)] == ["departed"]
+
+
+# ------------------------------------------------------- CSV export
+
+async def test_the_export_carries_tags(db):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    await store.create_group("Neighbours")
+    await store.create_group("Cohort")
+    await store.tag_actor("neighbours", "did:plc:a")
+    await store.tag_actor("cohort", "did:plc:a")
+
+    rows = await store.export_rows()
+
+    assert rows[0]["tags"] == "cohort;neighbours"
+
+
+async def test_the_export_leaves_untagged_people_blank(db):
+    from tests.test_groups import add
+
+    await add("did:plc:none", is_verified=True)
+
+    assert (await store.export_rows())[0]["tags"] == ""
+
+
+async def test_the_export_omits_untagged_and_archived(db):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    await store.create_group("Gone")
+    await store.tag_actor("gone", "did:plc:a")
+    await store.archive_group("gone")
+
+    assert (await store.export_rows())[0]["tags"] == ""
+
+
+async def test_the_csv_header_includes_tags(db, client):
+    assert "tags" in client.get("/export.csv").text.splitlines()[0]

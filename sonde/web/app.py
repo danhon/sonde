@@ -221,6 +221,8 @@ def create_app() -> FastAPI:
             # an export that silently conflated them would be wrong forever.
             "following_since", "following_since_exact", "first_seen_at", "list_rank",
             "is_mutual", "is_private",
+            # Semicolon-joined slugs, sorted, so the column diffs cleanly.
+            "tags",
         ]
         writer = csv.DictWriter(buffer, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()

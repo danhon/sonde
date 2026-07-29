@@ -1221,14 +1221,25 @@ async def export_rows() -> list[dict]:
                    (fs.followed_at IS NOT NULL) AS following_since_exact,
                    fs.list_rank,
                    (mf.did IS NOT NULL) AS is_mutual,
-                   (COALESCE(a.labels,'') LIKE '%no-unauthenticated%') AS is_private
+                   (COALESCE(a.labels,'') LIKE '%no-unauthenticated%') AS is_private,
+                   (SELECT GROUP_CONCAT(g.slug, ';')
+                      FROM group_members m
+                      JOIN groups g ON g.id = m.group_id
+                     WHERE m.did = a.did
+                       AND COALESCE(m.confirmed, 1) = 1
+                       AND g.archived_at IS NULL) AS tags
               FROM actors a
               JOIN follower_state fs USING (did)
               LEFT JOIN my_follows mf USING (did)
              WHERE {where}
              ORDER BY a.influence_score DESC NULLS LAST"""
     ) as cur:
-        return [dict(r) for r in await cur.fetchall()]
+        rows = [dict(r) for r in await cur.fetchall()]
+    # GROUP_CONCAT has no ordering guarantee in SQLite, and a file people diff
+    # must not reshuffle its own cells between runs.
+    for row in rows:
+        row["tags"] = ";".join(sorted(row["tags"].split(";"))) if row["tags"] else ""
+    return rows
 
 
 # ------------------------------------------------------- M6 institutions
