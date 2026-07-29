@@ -4,6 +4,7 @@ from collections import Counter
 
 import pytest
 
+from sonde import discovery
 from sonde.db import store
 from sonde.discovery import (
     covered_terms, link_candidates, occupation_candidates,
@@ -176,3 +177,54 @@ async def test_the_discovery_page_renders(db):
         page = client.get("/groups/discover")
     assert page.status_code == 200
     assert "Blogger" in page.text
+
+
+# ------------------------------- the proposer and the matcher must agree
+
+def test_a_bigram_is_built_from_tokens_not_from_the_raw_string():
+    """"wrote a book" yields "wrote book" — a string nobody typed. The matcher
+    used a literal LIKE against it and could never find a soul, so a candidate
+    was proposed with 10 people and matched zero of them."""
+    assert "wrote book" in discovery.bigrams("wrote a book about it")
+    assert "wrote book" not in "wrote a book about it"
+
+
+def test_bigrams_do_not_span_punctuation():
+    assert "rights human" not in discovery.bigrams("digital rights, human dignity")
+
+
+def test_the_proposer_uses_the_shared_bigram_definition():
+    """If these two drifted apart again, nothing else would notice.
+
+    Padded with unrelated bios on purpose: phrase_candidates caps a candidate at
+    15% of the corpus, because a phrase in every document is filler rather than
+    a community. A test corpus of nothing but the phrase proposes nothing."""
+    documents = ["wrote a book"] * 6 + [f"unrelated bio number {i}" for i in range(94)]
+
+    proposed = {c["term"] for c in discovery.phrase_candidates(documents, set())}
+
+    assert "wrote book" in proposed
+    assert proposed <= set().union(*(discovery.bigrams(d) for d in documents))
+
+
+def test_pure_function_words_are_not_proposed_as_groups():
+    """"But Only", "Does Anyone" and "Every Time" were all offered as groups
+    against the live follower list."""
+    documents = (["but only if does anyone every time"] * 8
+                 + [f"unrelated bio number {i}" for i in range(92)])
+
+    proposed = {c["term"] for c in discovery.phrase_candidates(documents, set())}
+
+    assert proposed == set()
+
+
+def test_domain_phrases_still_survive_the_stopword_list():
+    """The list stays short on purpose. Filtering hard enough to kill the junk
+    must not also kill what discovery exists to find."""
+    documents = (["civic technology and open data"] * 8
+                 + [f"unrelated bio number {i}" for i in range(92)])
+
+    proposed = {c["term"] for c in discovery.phrase_candidates(documents, set())}
+
+    assert "civic technology" in proposed
+    assert "open data" in proposed

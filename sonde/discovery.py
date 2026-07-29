@@ -38,6 +38,18 @@ STOPWORDS = {
     "on", "of", "to", "a", "an", "is", "be", "by", "or", "as", "my", "we",
     "us", "me", "it", "do", "if", "no", "so", "up", "am", "via", "http",
     "https", "com", "www",
+    # Added after reading what discovery actually proposed against the live
+    # list: "But Only", "Does Anyone", "Every Time" and "Last Week" were all
+    # offered as groups. Every word here is a pure function word — the list
+    # stays deliberately short, and nothing domain-bearing goes in it, because
+    # over-filtering hides the phrases worth finding.
+    "but", "only", "does", "did", "doing", "done", "anyone", "everyone",
+    "every", "any", "because", "been", "being", "were", "would", "could",
+    "should", "still", "even", "back", "well", "want", "wants", "know",
+    "knows", "think", "thinks", "really", "actually", "maybe", "probably",
+    "many", "most", "other", "others", "same", "such", "these", "those",
+    "their", "theirs", "yours", "ours", "which", "while", "where", "after",
+    "before", "again", "always", "never", "sometimes", "often",
 }
 
 WORD = re.compile(r"[a-z][a-z'&-]{1,}", re.I)
@@ -66,6 +78,27 @@ def _clauses(text: str) -> list[list[str]]:
 
 def _tokens(text: str) -> list[str]:
     return [w for clause in _clauses(text) for w in clause]
+
+
+def bigrams(text: str) -> set[str]:
+    """Adjacent token pairs within one clause, after stopwords are dropped.
+
+    The single definition of "this text contains that phrase", shared by the
+    rule that proposes a phrase candidate and the rule that later finds its
+    members. They used to differ, and both ways it went wrong were live:
+
+    A bigram is built from the token stream, so "wrote a book" yields "wrote
+    book" — a string nobody typed. The matcher looked for that with a literal
+    LIKE and could never find it, so the candidate was proposed with 10 people
+    and matched zero.
+
+    And the proposer read bios *and* posts while the matcher read only bios, so
+    "data center" — 21 people's posts, nobody's bio — proposed a group that
+    would have been created empty.
+    """
+    return {f"{a} {b}"
+            for clause in _clauses(text)
+            for a, b in zip(clause, clause[1:])}
 
 
 def occupation_candidates(occupations: Counter, covered: set[str],
@@ -125,12 +158,7 @@ def phrase_candidates(documents: list[str], covered_terms: set[str],
     """
     counts: Counter = Counter()
     for document in documents:
-        seen = {
-            f"{a} {b}"
-            for clause in _clauses(document)
-            for a, b in zip(clause, clause[1:])
-        }
-        counts.update(seen)
+        counts.update(bigrams(document))
 
     # "trans rights human rights" yields both "human rights" and "rights human"
     # as adjacent bigrams. Keep whichever is commoner and drop the mirror.

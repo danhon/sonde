@@ -2457,13 +2457,32 @@ async def _discovered_matches(kind: str, term: str) -> list[tuple[str, str]]:
             matched = [(r["did"], f"currently affiliated with {term}")
                        for r in await cur.fetchall()]
     elif kind == "phrase":
-        like = f"%{term}%"
+        # Same tokenisation and the same two sources the proposer used. A
+        # literal LIKE over bios alone disagreed with it on both counts — see
+        # discovery.bigrams for what that cost.
+        from sonde import discovery
+
+        texts: dict[str, list[str]] = {}
         async with db.execute(
-            f"SELECT did FROM actors WHERE did IN ({placeholders}) "
-            f"AND LOWER(COALESCE(description,'')) LIKE ?",
-            (*targets, like),
+            f"SELECT did, description FROM actors WHERE did IN ({placeholders}) "
+            f"AND description IS NOT NULL AND description != ''",
+            tuple(targets),
         ) as cur:
-            matched = [(r["did"], f"bio mentions {term!r}") for r in await cur.fetchall()]
+            for row in await cur.fetchall():
+                texts.setdefault(row["did"], []).append(row["description"])
+        async with db.execute(
+            f"SELECT did, text FROM posts WHERE did IN ({placeholders}) "
+            f"AND text IS NOT NULL",
+            tuple(targets),
+        ) as cur:
+            for row in await cur.fetchall():
+                texts.setdefault(row["did"], []).append(row["text"])
+
+        matched = [
+            (did, f"bio or recent posts mention {term!r}")
+            for did, documents in texts.items()
+            if any(term in discovery.bigrams(document) for document in documents)
+        ]
 
     return matched
 

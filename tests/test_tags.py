@@ -830,12 +830,14 @@ async def test_a_rule_based_preview_is_recomputed_from_the_rule(db):
     from tests.test_groups import add
 
     await add("did:plc:w", is_verified=True, description="Public sector wonk")
-    cid = await seed_phrase("wonk", "Wonks")
+    # A real phrase candidate is always a bigram — phrase_candidates only ever
+    # emits "{a} {b}" — so a one-word term is not a case that occurs.
+    cid = await seed_phrase("public sector", "Public Sector")
 
     preview = await store.candidate_members(cid)
 
     assert [m["did"] for m in preview["members"]] == ["did:plc:w"]
-    assert "wonk" in preview["members"][0]["evidence"]
+    assert "public sector" in preview["members"][0]["evidence"]
 
 
 async def test_previewing_writes_nothing(db):
@@ -844,7 +846,7 @@ async def test_previewing_writes_nothing(db):
     from tests.test_groups import add
 
     await add("did:plc:w", is_verified=True, description="Public sector wonk")
-    cid = await seed_phrase("wonk", "Wonks")
+    cid = await seed_phrase("public sector", "Public Sector")
     before = await store._scalar("SELECT COUNT(*) FROM group_members")
     groups_before = await store._scalar("SELECT COUNT(*) FROM groups")
 
@@ -990,3 +992,69 @@ async def test_a_candidate_matching_nobody_says_so(db, client):
 
     assert page.status_code == 200
     assert "matches nobody now" in page.text
+
+
+# ------------------------- the phrase matcher agrees with the proposer
+
+async def add_post(did: str, text: str) -> None:
+    conn = await store._db()
+    await conn.execute(
+        """INSERT INTO posts (did, uri, text, indexed_at, fetched_at)
+           VALUES (?,?,?,?,?)""",
+        (did, f"at://{did}/{abs(hash(text))}", text, store.utcnow(), store.utcnow()))
+    await store.commit()
+
+
+async def test_a_phrase_in_posts_is_matched_not_just_one_in_a_bio(db):
+    """The proposer counted bios AND posts; the matcher read bios only. On the
+    live list "data center" appeared in 21 people's posts and nobody's bio, so
+    it was proposed with a count of 10 and would have created an empty group."""
+    from tests.test_groups import add
+
+    await add("did:plc:poster", is_verified=True, description="nothing relevant")
+    await add_post("did:plc:poster", "touring a data center today")
+    cid = await seed_phrase("data center", "Data Center")
+
+    preview = await store.candidate_members(cid)
+
+    assert [m["did"] for m in preview["members"]] == ["did:plc:poster"]
+
+
+async def test_a_phrase_matches_across_a_dropped_stopword(db):
+    """"wrote a book" tokenises to the bigram "wrote book", which appears
+    nowhere verbatim. A literal LIKE found nobody, every time."""
+    from tests.test_groups import add
+
+    await add("did:plc:author", is_verified=True, description="I wrote a book")
+    cid = await seed_phrase("wrote book", "Wrote Book")
+
+    preview = await store.candidate_members(cid)
+
+    assert [m["did"] for m in preview["members"]] == ["did:plc:author"]
+
+
+async def test_a_phrase_does_not_match_across_punctuation(db):
+    """The matcher must not become so permissive that it matches things the
+    proposer would never have counted."""
+    from tests.test_groups import add
+
+    await add("did:plc:x", is_verified=True, description="digital rights, human dignity")
+    cid = await seed_phrase("rights human", "Rights Human")
+
+    assert (await store.candidate_members(cid))["members"] == []
+
+
+async def test_accepting_a_phrase_candidate_populates_it_with_who_was_previewed(db):
+    """The preview and the accept run the same matcher, so what you saw is what
+    you get. That was not true before: they were separate code."""
+    from tests.test_groups import add
+
+    await add("did:plc:poster", is_verified=True, description="nothing relevant")
+    await add_post("did:plc:poster", "touring a data center today")
+    cid = await seed_phrase("data center", "Data Center")
+    previewed = {m["did"] for m in (await store.candidate_members(cid))["members"]}
+
+    slug = await store.decide_candidate(cid, True)
+
+    assert {m["did"] for m in await store.group_members(slug)} == previewed
+    assert previewed == {"did:plc:poster"}
