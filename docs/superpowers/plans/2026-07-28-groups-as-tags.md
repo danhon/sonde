@@ -407,7 +407,7 @@ async def surfaces_showing(slug: str) -> set[str]:
         found.add("group_summary")
     if await store.group_members(slug):
         found.add("group_members")
-    if slug in {g["slug"] for g in await store.groups_for("did:plc:tagged")}:
+    if slug in {g["slug"] for g in await store.groups_for("did:plc:j")}:
         found.add("groups_for")
     if slug in {g["slug"] for g in (await store.composition())["groups"]}:
         found.add("composition")
@@ -417,54 +417,36 @@ async def surfaces_showing(slug: str) -> set[str]:
 
 
 async def test_an_archived_tag_disappears_from_every_read_path(db):
+    """Membership comes from the rules here, not from tag_actor: this task is
+    about the reads, and it must not depend on a writer Task 5 has not built."""
     from tests.test_groups import add
 
-    await add("did:plc:tagged", is_verified=True)
-    await store.create_group("Doomed")
-    await store.tag_actor("doomed", "did:plc:tagged")
-    assert await surfaces_showing("doomed"), "precondition: it should be visible first"
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+    assert await surfaces_showing("journalists"), "precondition: visible first"
 
-    await store.archive_group("doomed")
+    await store.archive_group("journalists")
 
-    assert await surfaces_showing("doomed") == set()
+    assert await surfaces_showing("journalists") == set()
 
 
 async def test_restoring_brings_the_members_back_untouched(db):
     from tests.test_groups import add
 
-    await add("did:plc:tagged", is_verified=True)
-    await store.create_group("Doomed")
-    await store.tag_actor("doomed", "did:plc:tagged")
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
 
-    await store.archive_group("doomed")
-    await store.archive_group("doomed", archived=False)
+    await store.archive_group("journalists")
+    await store.archive_group("journalists", archived=False)
 
-    assert [m["did"] for m in await store.group_members("doomed")] == ["did:plc:tagged"]
-
-
-async def test_hand_tagging_someone_outside_the_grouping_set_widens_the_denominator(db):
-    """The composition chart says 'N of M in scope'. A hand-applied tag is a
-    fact about a person however uninfluential they are, so manual members exist
-    outside the top-500-plus-verified target set — and a denominator that
-    ignored them would start under-reporting the first time one was tagged."""
-    from tests.test_groups import add
-
-    # Not verified and not influential: outside the grouping set by construction.
-    await add("did:plc:nobody")
-    before = (await store.composition())["in_scope"]
-
-    await store.create_group("Neighbours")
-    await store.tag_actor("neighbours", "did:plc:nobody")
-
-    assert (await store.composition())["in_scope"] == before + 1
+    assert [m["did"] for m in await store.group_members("journalists")] == ["did:plc:j"]
 ```
-
-This test depends on `tag_actor`, which Task 5 builds. Write the test now, expect the import-time failure, and leave it failing until Task 5 — or reorder Tasks 3 and 5 locally if you prefer a green bar at every step. The plan orders them this way because the archive filters are what Task 5's tests need in place.
 
 - [ ] **Step 2: Run and confirm it fails**
 
 Run: `uv run pytest tests/test_tags.py::test_an_archived_tag_disappears_from_every_read_path -v`
-Expected: FAIL — `AttributeError: ... has no attribute 'tag_actor'`
+Expected: FAIL — after archiving, the tag is still visible in every surface, so
+the assertion that the set is empty fails and names the surfaces still showing it.
 
 - [ ] **Step 3: Add the filter to all four queries**
 
@@ -502,62 +484,23 @@ Expected: FAIL — `AttributeError: ... has no attribute 'tag_actor'`
               AND fs.is_current = 1 AND fs.ignored_at IS NULL
 ```
 
-- [ ] **Step 4: Fix the `in_scope` denominator in `composition`**
+The `in_scope` denominator in `composition()` also has to change, but it depends
+on hand-tagged rows existing — so it belongs with the writer that creates them
+and is **Task 5's** job, not this task's. Leave that line alone here.
 
-The design requires this: hand-tagging someone outside the top-500-plus-verified set makes `"N of M in scope"` lie the moment it happens. Replace the `in_scope` line at the end of `composition()`:
-
-```python
-            "in_scope": len(await group_target_dids(top_n=settings.posts_top_n)),
-```
-
-with:
-
-```python
-            "in_scope": await _in_scope_count(),
-```
-
-and add above `composition()`:
-
-```python
-async def _in_scope_count() -> int:
-    """The grouping set, plus anyone a human tagged by hand.
-
-    A hand-applied tag is a fact about a person regardless of how influential
-    they are, so manual members exist outside the target set — and a
-    denominator that excluded them would under-report the moment the first one
-    was tagged.
-    """
-    targets = set(await group_target_dids(top_n=settings.posts_top_n))
-    db = await _db()
-    async with db.execute(
-        """SELECT DISTINCT m.did FROM group_members m
-             JOIN groups g ON g.id = m.group_id
-             JOIN follower_state fs ON fs.did = m.did
-            WHERE m.tier = 'manual' AND COALESCE(m.confirmed, 1) = 1
-              AND g.archived_at IS NULL
-              AND fs.is_current = 1 AND fs.ignored_at IS NULL"""
-    ) as cur:
-        targets.update(r["did"] for r in await cur.fetchall())
-    return len(targets)
-```
-
-- [ ] **Step 5: Run the full suite**
+- [ ] **Step 4: Run the full suite**
 
 Run: `uv run pytest -q`
-Expected: the two archive tests still fail on `tag_actor` (Task 5); **nothing else may break**. If `test_groups.py` or `test_web.py` regress, an archive filter has been added to a query that also feeds a job — recheck you edited only the four read functions.
+Expected: **everything green, including the whole existing suite.** If `test_groups.py` or `test_web.py` regress, an archive filter has been added to a query that also feeds a job — recheck you edited only the four read functions.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add sonde/db/store.py tests/test_tags.py
 git commit -m "M25: archived tags vanish from every read path
 
 Table-driven over the surfaces rather than one assertion each, so a read path
-added later fails by omission instead of passing unnoticed.
-
-The composition denominator now counts hand-tagged people too. Manual tags are
-not restricted to the grouping set, so 'N of M in scope' would have started
-under-reporting the first time anyone outside it was tagged."
+added later fails by omission instead of passing unnoticed."
 ```
 
 ---
@@ -936,12 +879,73 @@ async def tag_actors(slug: str, dids: list[str], *, add: bool) -> int:
     return changed
 ```
 
-- [ ] **Step 5: Run the tests, then the whole suite**
+- [ ] **Step 5: Widen the composition denominator**
+
+Now that hand-tagged rows can exist, `composition()`'s `"N of M in scope"` line
+starts lying: manual tags are not restricted to the grouping set. Replace the
+`in_scope` line at the end of `composition()`:
+
+```python
+            "in_scope": len(await group_target_dids(top_n=settings.posts_top_n)),
+```
+
+with:
+
+```python
+            "in_scope": await _in_scope_count(),
+```
+
+and add above `composition()`:
+
+```python
+async def _in_scope_count() -> int:
+    """The grouping set, plus anyone a human tagged by hand.
+
+    A hand-applied tag is a fact about a person regardless of how influential
+    they are, so manual members exist outside the target set — and a
+    denominator that excluded them would under-report the moment the first one
+    was tagged.
+    """
+    targets = set(await group_target_dids(top_n=settings.posts_top_n))
+    db = await _db()
+    async with db.execute(
+        """SELECT DISTINCT m.did FROM group_members m
+             JOIN groups g ON g.id = m.group_id
+             JOIN follower_state fs ON fs.did = m.did
+            WHERE m.tier = 'manual' AND COALESCE(m.confirmed, 1) = 1
+              AND g.archived_at IS NULL
+              AND fs.is_current = 1 AND fs.ignored_at IS NULL"""
+    ) as cur:
+        targets.update(r["did"] for r in await cur.fetchall())
+    return len(targets)
+```
+
+Its test, appended to `tests/test_tags.py`:
+
+```python
+async def test_hand_tagging_outside_the_grouping_set_widens_the_denominator(db):
+    """The composition chart says 'N of M in scope'. A hand-applied tag is a
+    fact about a person however uninfluential they are, so manual members exist
+    outside the top-500-plus-verified target set — and a denominator ignoring
+    them would under-report from the first tag onwards."""
+    from tests.test_groups import add
+
+    # Neither verified nor influential: outside the grouping set by construction.
+    await add("did:plc:nobody")
+    before = (await store.composition())["in_scope"]
+
+    await store.create_group("Neighbours")
+    await store.tag_actor("neighbours", "did:plc:nobody")
+
+    assert (await store.composition())["in_scope"] == before + 1
+```
+
+- [ ] **Step 6: Run the tests, then the whole suite**
 
 Run: `uv run pytest tests/test_tags.py -v && uv run pytest -q`
-Expected: all of `test_tags.py` passes, including the two archive tests deferred from Task 3. Whole suite green.
+Expected: all of `test_tags.py` passes. Whole suite green.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add sonde/groups.py sonde/db/store.py tests/test_tags.py
