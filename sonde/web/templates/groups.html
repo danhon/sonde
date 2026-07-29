@@ -36,6 +36,24 @@
     making a second one.
   {% elif notice == 'exists' %}
     That tag already exists.
+  {% elif notice and notice.startswith('merged-') %}
+    {% set moved = notice.split('-')[1] | int %}
+    {% set considered = notice.split('-')[2] | int %}
+    {% if moved %}
+    Merged — {{ moved }} of {{ considered }} moved across. The rest were already
+    here, or had been deliberately removed from here, and were left exactly as
+    they were.
+    {% else %}
+    Merged. Nothing moved: all {{ considered }} were already here, so that group
+    was a second name for people you already had.
+    {% endif %}
+    It is archived below rather than deleted.
+  {% elif notice == 'same-group' %}
+    A group cannot be merged into itself.
+  {% elif notice == 'unknown-group' %}
+    Pick a group to merge into.
+  {% elif notice == 'target-archived' %}
+    That group is archived. Restore it first if you want to merge into it.
   {% else %}
     That name has no usable slug — try one with letters or numbers in it.
   {% endif %}
@@ -90,6 +108,24 @@
   <span class="font-mono text-[10px] text-slate-400"
         title="the slug is the URL key and cannot change — renaming only
                changes the display name">/groups?slug={{ slug }}</span>
+  <form method="post" action="/groups/{{ slug }}/merge"
+        class="flex items-center gap-2">
+    <label class="font-mono text-[10px] uppercase tracking-widest text-slate-500">
+      merge into
+    </label>
+    <select name="into" class="w-44 border border-slate-300 px-2 py-1 text-sm
+                               focus:border-red-800 focus:outline-none">
+      <option value="">choose a group…</option>
+      {% for g in summary %}{% if g.slug != slug %}
+      <option value="{{ g.slug }}">{{ g.name }}</option>
+      {% endif %}{% endfor %}
+    </select>
+    <button type="submit"
+            class="border border-slate-300 px-2 py-1 font-mono text-[10px]
+                   uppercase tracking-wider text-slate-600
+                   hover:border-red-800 hover:text-red-800"
+            title="move these members into that group and archive this one">merge</button>
+  </form>
   <form method="post" action="/groups/{{ slug }}/archive" class="ml-auto">
     <button type="submit"
             class="font-mono text-[10px] uppercase tracking-wider text-slate-400
@@ -154,6 +190,66 @@
 <p class="mt-8 text-sm text-slate-500">Pick a group above.</p>
 {% endif %}
 
+{% if overlaps %}
+<section class="mt-12 border-t border-slate-200 pt-4">
+  <h2 class="font-mono text-[10px] uppercase tracking-widest text-slate-500">
+    Groups that share members
+  </h2>
+  <p class="mt-1 max-w-2xl text-xs text-slate-500">
+    Most contained pair first. <strong>High overlap is usually correct</strong> —
+    a novelist is a writer, and membership overlaps on purpose — so this is a
+    list to read rather than a list to action. What it is good for is spotting
+    the pair that is genuinely one group under two names, which shows up as
+    something close to 100%. Name similarity is not the signal: two groups can
+    sound identical and share almost nobody.
+  </p>
+  <div class="mt-3 overflow-x-auto">
+    <table class="w-full max-w-3xl text-sm">
+      <thead>
+        <tr class="border-b border-slate-300 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
+          <th class="py-2 pr-4 text-right">Contained</th>
+          <th class="py-2 pr-4">Smaller</th>
+          <th class="py-2 pr-4">Larger</th>
+          <th class="py-2 pr-4 text-right">Shared</th>
+          <th class="py-2 pr-4"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in overlaps %}
+        {% set small = o.a_slug if o.a_n <= o.b_n else o.b_slug %}
+        {% set small_name = o.a_name if o.a_n <= o.b_n else o.b_name %}
+        {% set small_n = o.a_n if o.a_n <= o.b_n else o.b_n %}
+        {% set big_name = o.b_name if o.a_n <= o.b_n else o.a_name %}
+        {% set big_n = o.b_n if o.a_n <= o.b_n else o.a_n %}
+        <tr class="border-b border-slate-100 hover:bg-slate-50">
+          <td class="py-2 pr-4 text-right font-mono font-semibold tabular-nums
+                     {% if o.containment >= 95 %}text-red-800{% else %}text-slate-500{% endif %}">
+            {{ o.containment }}%
+          </td>
+          <td class="py-2 pr-4">
+            <a href="{{ qs(base, {'slug': small, 'page': 1}) }}" class="text-red-800 hover:underline">{{ small_name }}</a>
+            <span class="font-mono text-[10px] text-slate-400">{{ small_n }}</span>
+          </td>
+          <td class="py-2 pr-4">
+            <a href="{{ qs(base, {'slug': o.target, 'page': 1}) }}" class="hover:underline">{{ big_name }}</a>
+            <span class="font-mono text-[10px] text-slate-400">{{ big_n }}</span>
+          </td>
+          <td class="py-2 pr-4 text-right font-mono tabular-nums text-slate-600">{{ o.shared }}</td>
+          <td class="py-2 pr-4 text-right">
+            <form method="post" action="/groups/{{ o.source }}/merge">
+              <input type="hidden" name="into" value="{{ o.target }}">
+              <button type="submit" class="font-mono text-xs text-slate-400 hover:text-red-800"
+                      title="merge {{ small_name }} into {{ big_name }}">merge →</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
 {% if archived %}
 <section class="mt-12 border-t border-slate-200 pt-4">
   <h2 class="font-mono text-[10px] uppercase tracking-widest text-slate-500">
@@ -168,6 +264,12 @@
     <li class="flex items-center gap-2 border border-slate-200 px-2 py-1">
       <span class="font-mono text-xs text-slate-500">{{ a.name }}</span>
       <span class="font-mono text-[10px] tabular-nums text-slate-400">{{ a.members }}</span>
+      {% if a.merged_into %}
+      <span class="font-mono text-[10px] uppercase tracking-wider text-slate-400"
+            title="its members were moved there; restoring this would give you both again">
+        → {{ a.merged_into_name or a.merged_into }}
+      </span>
+      {% endif %}
       <form method="post" action="/groups/{{ a.slug }}/archive?undo=true">
         <button type="submit"
                 class="font-mono text-[10px] uppercase tracking-wider text-slate-400

@@ -177,7 +177,11 @@ CREATE TABLE IF NOT EXISTS groups (
     created_at  TEXT,
     -- Delete is archive. The row surviving is exactly what stops seed_groups()
     -- re-inserting a seeded slug on the next classify run.
-    archived_at TEXT
+    archived_at TEXT,
+    -- Slug of the group this one was merged into, if it was. The source is
+    -- archived rather than deleted so its URL keeps resolving and the trail
+    -- back to where its members went is not lost.
+    merged_into TEXT
 );
 
 -- Many-to-many: a follower can be a journalist AND a newsletter writer.

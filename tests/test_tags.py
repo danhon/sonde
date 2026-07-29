@@ -21,6 +21,7 @@ def test_the_new_columns_are_also_in_the_migration_list():
     a column missing from MIGRATIONS is an OperationalError on the first
     request after deploy — passing tests and a broken site."""
     assert ("archived_at", "TEXT") in store.MIGRATIONS["groups"]
+    assert ("merged_into", "TEXT") in store.MIGRATIONS["groups"]
     assert ("decided_at", "TEXT") in store.MIGRATIONS["group_members"]
 
 
@@ -1058,3 +1059,221 @@ async def test_accepting_a_phrase_candidate_populates_it_with_who_was_previewed(
 
     assert {m["did"] for m in await store.group_members(slug)} == previewed
     assert previewed == {"did:plc:poster"}
+
+
+# ================================================== merging two groups
+
+async def test_merging_moves_members_and_archives_the_source(db):
+    from tests.test_groups import add
+
+    for did in ("did:plc:a", "did:plc:b"):
+        await add(did, is_verified=True)
+    await store.create_group("Game Dev")
+    await store.create_group("Game industry")
+    await store.tag_actor("game-dev", "did:plc:a")
+    await store.tag_actor("game-dev", "did:plc:b")
+
+    result = await store.merge_groups("game-dev", "game-industry")
+
+    assert result["status"] == "merged" and result["moved"] == 2
+    assert {m["did"] for m in await store.group_members("game-industry")} == {
+        "did:plc:a", "did:plc:b"}
+    assert "game-dev" not in {g["slug"] for g in await store.group_summary()}
+
+
+async def test_the_source_is_archived_not_deleted(db):
+    """Its URL keeps resolving and the trail to where its people went survives."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    await store.create_group("Game Dev")
+    await store.create_group("Game industry")
+    await store.tag_actor("game-dev", "did:plc:a")
+
+    await store.merge_groups("game-dev", "game-industry")
+
+    archived = {a["slug"]: a for a in await store.archived_groups()}
+    assert archived["game-dev"]["merged_into"] == "game-industry"
+    assert archived["game-dev"]["merged_into_name"] == "Game industry"
+
+
+async def test_a_merge_does_not_resurrect_someone_untagged_from_the_target(db):
+    """The guarantee the whole tagging model rests on. Absorbing a group must
+    not overrule a hand decision already made on the target."""
+    from tests.test_groups import add
+
+    await add("did:plc:no", is_verified=True)
+    await store.create_group("Source")
+    await store.create_group("Target")
+    await store.tag_actor("source", "did:plc:no")
+    await store.tag_actor("target", "did:plc:no")
+    await store.untag_actor("target", "did:plc:no")
+
+    await store.merge_groups("source", "target")
+
+    assert await store.group_members("target") == []
+
+
+async def test_the_targets_own_evidence_wins_on_a_shared_member(db):
+    """They were already a member of the target on the target's own terms.
+    Overwriting that would discard why they are there."""
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+    await store.create_group("Hacks")
+    await store.tag_actor("hacks", "did:plc:j")
+
+    await store.merge_groups("hacks", "journalists")
+
+    row = (await store.group_members("journalists"))[0]
+    assert row["tier"] == "wikidata"
+    assert row["evidence"] == "Wikidata occupation: journalist"
+
+
+async def test_a_merged_member_keeps_the_reason_it_came_with(db):
+    """Someone the target did not already have arrives with the source's
+    evidence, because that is the true record of why they are in the group."""
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+    await store.create_group("Hacks")
+
+    await store.merge_groups("journalists", "hacks")
+
+    row = (await store.group_members("hacks"))[0]
+    assert row["tier"] == "wikidata"
+    assert row["evidence"] == "Wikidata occupation: journalist"
+
+
+async def test_a_group_cannot_be_merged_into_itself(db):
+    await store.create_group("Solo")
+    assert (await store.merge_groups("solo", "solo"))["status"] == "same-group"
+
+
+async def test_merging_into_an_archived_group_is_refused(db):
+    """It would move people somewhere invisible that also stops gaining members."""
+    await store.create_group("Source")
+    await store.create_group("Gone")
+    await store.archive_group("gone")
+
+    assert (await store.merge_groups("source", "gone"))["status"] == "target-archived"
+
+
+async def test_merging_an_unknown_group_is_refused(db):
+    await store.create_group("Real")
+    assert (await store.merge_groups("real", "imaginary"))["status"] == "unknown-group"
+    assert (await store.merge_groups("imaginary", "real"))["status"] == "unknown-group"
+
+
+async def test_a_merged_member_survives_a_reclassify(db):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    await store.create_group("Source")
+    await store.create_group("Target")
+    await store.tag_actor("source", "did:plc:a")
+    await store.merge_groups("source", "target")
+
+    await store.classify_groups()
+
+    assert [m["did"] for m in await store.group_members("target")] == ["did:plc:a"]
+
+
+# ------------------------------------------------------ the overlap table
+
+async def test_overlaps_report_containment_of_the_smaller_group(db):
+    from tests.test_groups import add
+
+    for did in ("did:plc:a", "did:plc:b", "did:plc:c"):
+        await add(did, is_verified=True)
+    await store.create_group("Small")
+    await store.create_group("Large")
+    await store.tag_actor("small", "did:plc:a")
+    for did in ("did:plc:a", "did:plc:b", "did:plc:c"):
+        await store.tag_actor("large", did)
+
+    row = (await store.group_overlaps())[0]
+
+    assert row["shared"] == 1
+    assert row["containment"] == 100
+    assert (row["source"], row["target"]) == ("small", "large")
+
+
+async def test_overlaps_ignore_archived_groups(db):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    await store.create_group("One")
+    await store.create_group("Two")
+    await store.tag_actor("one", "did:plc:a")
+    await store.tag_actor("two", "did:plc:a")
+    assert await store.group_overlaps()
+
+    await store.archive_group("two")
+
+    assert await store.group_overlaps() == []
+
+
+async def test_groups_sharing_nobody_are_not_listed(db):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    await add("did:plc:b", is_verified=True)
+    await store.create_group("One")
+    await store.create_group("Two")
+    await store.tag_actor("one", "did:plc:a")
+    await store.tag_actor("two", "did:plc:b")
+
+    assert await store.group_overlaps() == []
+
+
+async def test_the_groups_page_offers_a_merge(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    await store.create_group("Small")
+    await store.create_group("Large")
+    await store.tag_actor("small", "did:plc:a")
+    await store.tag_actor("large", "did:plc:a")
+
+    page = client.get("/groups?slug=small")
+
+    assert 'action="/groups/small/merge"' in page.text
+    assert "Groups that share members" in page.text
+
+
+async def test_merging_through_the_route(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    await store.create_group("Small")
+    await store.create_group("Large")
+    await store.tag_actor("small", "did:plc:a")
+
+    response = client.post("/groups/small/merge", data={"into": "large"},
+                           follow_redirects=False)
+
+
+    assert "notice=merged-1-1" in response.headers["location"]
+    assert [m["did"] for m in await store.group_members("large")] == ["did:plc:a"]
+
+
+async def test_a_wholly_redundant_merge_says_nothing_moved(db, client):
+    """The first real merge moved 0 of 17, because game-dev sat entirely inside
+    game-industry. "0 moved" alone reads as a failure; it is the opposite."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    await store.create_group("Small")
+    await store.create_group("Large")
+    await store.tag_actor("small", "did:plc:a")
+    await store.tag_actor("large", "did:plc:a")
+
+    response = client.post("/groups/small/merge", data={"into": "large"},
+                           follow_redirects=False)
+    page = client.get(response.headers["location"])
+
+    assert "notice=merged-0-1" in response.headers["location"]
+    assert "already here" in page.text

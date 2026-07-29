@@ -124,6 +124,9 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
     ],
     "groups": [
         ("archived_at", "TEXT"),
+        # Where a merged group went. Kept so an archived source can say what
+        # absorbed it, rather than looking like it was thrown away.
+        ("merged_into", "TEXT"),
     ],
     "group_members": [
         ("decided_at", "TEXT"),
@@ -2674,10 +2677,126 @@ async def archive_group(slug: str, archived: bool = True) -> bool:
     return bool(cur.rowcount)
 
 
+async def merge_groups(source_slug: str, target_slug: str) -> dict:
+    """Fold one group into another, then archive the source.
+
+    Three rules, in descending order of how much trouble breaking them causes:
+
+    A hand decision on the target outranks the merge. If somebody was
+    deliberately untagged from the target, absorbing a group they belong to must
+    not quietly put them back — that is the same guarantee the whole tagging
+    model rests on, and a merge is not a licence to overrule it.
+
+    The target's own evidence wins where both groups hold a row for the same
+    person. Their membership of the target was already decided on its own terms;
+    the source's reasoning does not improve it and would overwrite why they are
+    there.
+
+    The source is archived, never deleted. Its URL keeps resolving, its
+    memberships stay on disk, and `merged_into` records where its people went,
+    so a merge you regret is legible rather than a hole.
+    """
+    if source_slug == target_slug:
+        return {"status": "same-group", "moved": 0}
+
+    db = await _db()
+    async with db.execute(
+        "SELECT slug, id, archived_at FROM groups WHERE slug IN (?,?)",
+        (source_slug, target_slug),
+    ) as cur:
+        found = {r["slug"]: dict(r) for r in await cur.fetchall()}
+    source, target = found.get(source_slug), found.get(target_slug)
+    if source is None or target is None:
+        return {"status": "unknown-group", "moved": 0}
+    if target["archived_at"]:
+        return {"status": "target-archived", "moved": 0}
+
+    async with db.execute(
+        """SELECT did, tier, confidence, evidence, source_url
+             FROM group_members
+            WHERE group_id = ? AND COALESCE(confirmed, 1) = 1""",
+        (source["id"],),
+    ) as cur:
+        members = [dict(r) for r in await cur.fetchall()]
+
+    now = utcnow()
+    moved = 0
+    for member in members:
+        # DO NOTHING covers both cases the docstring names at once: an existing
+        # row on the target is left exactly as it is, whether it says the person
+        # is a member or says a human removed them.
+        result = await db.execute(
+            """INSERT INTO group_members
+                 (group_id, did, tier, confidence, evidence, source_url, created_at)
+               VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT (group_id, did) DO NOTHING""",
+            (target["id"], member["did"], member["tier"], member["confidence"],
+             member["evidence"], member["source_url"], now),
+        )
+        moved += result.rowcount or 0
+
+    await db.execute(
+        "UPDATE groups SET archived_at = ?, merged_into = ? WHERE slug = ?",
+        (now, target_slug, source_slug),
+    )
+    await db.commit()
+    return {"status": "merged", "moved": moved,
+            "considered": len(members), "target": target_slug}
+
+
+async def group_overlaps(min_shared: int = 1, limit: int = 40) -> list[dict]:
+    """Pairs of live groups sharing members, most contained first.
+
+    Presented as a fact rather than a recommendation, deliberately. High overlap
+    is often correct — 81% of novelists are also writers, and a novelist IS a
+    writer — so this cannot say which pairs are duplicates. What it can do is
+    put the numbers next to each other: game-dev sits 100% inside game-industry
+    and is a real duplicate, while bafta-games-game shares only 21% with it
+    despite the name, and merging on the name would have destroyed a group the
+    rules never found.
+    """
+    db = await _db()
+    async with db.execute(
+        """WITH live AS (
+               SELECT g.id, g.slug, g.name, m.did
+                 FROM groups g
+                 JOIN group_members m ON m.group_id = g.id
+                WHERE COALESCE(m.confirmed, 1) = 1 AND g.archived_at IS NULL),
+           sizes AS (SELECT id, COUNT(*) AS n FROM live GROUP BY id)
+           SELECT a.slug AS a_slug, a.name AS a_name, sa.n AS a_n,
+                  b.slug AS b_slug, b.name AS b_name, sb.n AS b_n,
+                  COUNT(*) AS shared
+             FROM live a
+             JOIN live b ON a.did = b.did AND a.id < b.id
+             JOIN sizes sa ON sa.id = a.id
+             JOIN sizes sb ON sb.id = b.id
+            GROUP BY a.id, b.id
+           HAVING shared >= ?
+            ORDER BY (1.0 * shared / MIN(sa.n, sb.n)) DESC, shared DESC
+            LIMIT ?""",
+        (min_shared, limit),
+    ) as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+
+    for row in rows:
+        smaller = min(row["a_n"], row["b_n"])
+        row["containment"] = round(100 * row["shared"] / smaller) if smaller else 0
+        # Which way round a merge would naturally go: the smaller into the
+        # larger, since that is the one that loses its name.
+        if row["a_n"] <= row["b_n"]:
+            row["source"], row["target"] = row["a_slug"], row["b_slug"]
+        else:
+            row["source"], row["target"] = row["b_slug"], row["a_slug"]
+    return rows
+
+
 async def archived_groups() -> list[dict]:
     db = await _db()
     async with db.execute(
-        """SELECT g.slug, g.name, g.archived_at, COUNT(m.did) AS members
+        """SELECT g.slug, g.name, g.archived_at, g.merged_into,
+                  (SELECT name FROM groups t WHERE t.slug = g.merged_into)
+                    AS merged_into_name,
+                  COUNT(m.did) AS members
              FROM groups g
              LEFT JOIN group_members m ON m.group_id = g.id
                    AND COALESCE(m.confirmed, 1) = 1

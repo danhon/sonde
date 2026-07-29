@@ -341,6 +341,7 @@ def create_app() -> FastAPI:
                 "notice": notice,
                 "all_tags": await store.group_names(),
                 "archived": await store.archived_groups(),
+                "overlaps": await store.group_overlaps(),
             },
         )
 
@@ -453,6 +454,23 @@ def create_app() -> FastAPI:
 
         await store.rename_group(slug, name)
         return RedirectResponse(f"/groups?slug={slug}", status_code=303)
+
+    @app.post("/groups/{slug}/merge")
+    async def merge_group(slug: str, into: str = Form("")) -> RedirectResponse:
+        """Fold this group into another. The source is archived, not deleted."""
+        from sonde.db import store
+
+        result = await store.merge_groups(slug, (into or "").strip())
+        if result["status"] != "merged":
+            return RedirectResponse(
+                f"/groups?slug={slug}&notice={result['status']}", status_code=303)
+        # Both numbers, because "0 moved" alone reads as a failure when it
+        # actually means the group was wholly redundant — which is the most
+        # common reason to merge and happened on the first real one.
+        return RedirectResponse(
+            f"/groups?slug={result['target']}"
+            f"&notice=merged-{result['moved']}-{result['considered']}",
+            status_code=303)
 
     @app.post("/groups/{slug}/archive")
     async def archive_group(slug: str, undo: bool = False) -> RedirectResponse:
