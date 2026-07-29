@@ -106,3 +106,51 @@ async def test_the_datalist_offers_live_tags_only(db):
     await store.archive_group("gone")
 
     assert [g["slug"] for g in await store.group_names()] == ["alive"]
+
+
+# ------------------------------------------- archive applies everywhere
+
+async def surfaces_showing(slug: str) -> set[str]:
+    """Every read path that can expose a group, by name.
+
+    Table-driven on purpose: a surface added later and not listed here fails by
+    omission rather than passing because nobody remembered to assert on it.
+    """
+    found = set()
+    if slug in {g["slug"] for g in await store.group_summary()}:
+        found.add("group_summary")
+    if await store.group_members(slug):
+        found.add("group_members")
+    if slug in {g["slug"] for g in await store.groups_for("did:plc:j")}:
+        found.add("groups_for")
+    if slug in {g["slug"] for g in (await store.composition())["groups"]}:
+        found.add("composition")
+    if slug in {g["slug"] for g in await store.group_names()}:
+        found.add("group_names")
+    return found
+
+
+async def test_an_archived_tag_disappears_from_every_read_path(db):
+    """Membership comes from the rules here, not from tag_actor: this task is
+    about the reads, and it must not depend on a writer Task 5 has not built."""
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+    assert await surfaces_showing("journalists"), "precondition: visible first"
+
+    await store.archive_group("journalists")
+
+    assert await surfaces_showing("journalists") == set()
+
+
+async def test_restoring_brings_the_members_back_untouched(db):
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+
+    await store.archive_group("journalists")
+    await store.archive_group("journalists", archived=False)
+
+    assert [m["did"] for m in await store.group_members("journalists")] == ["did:plc:j"]

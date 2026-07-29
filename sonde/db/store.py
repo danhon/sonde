@@ -1717,7 +1717,7 @@ async def composition() -> dict:
         """SELECT g.slug, g.name, COUNT(DISTINCT m.did) AS n
              FROM groups g JOIN group_members m ON m.group_id = g.id
              JOIN follower_state fs ON fs.did = m.did
-            WHERE COALESCE(m.confirmed, 1) = 1
+            WHERE COALESCE(m.confirmed, 1) = 1 AND g.archived_at IS NULL
               AND fs.is_current = 1 AND fs.ignored_at IS NULL
             GROUP BY g.id HAVING n > 0 ORDER BY n DESC"""
     ) as cur:
@@ -2607,6 +2607,7 @@ async def group_summary() -> list[dict]:
              FROM groups g
              LEFT JOIN group_members m ON m.group_id = g.id
                    AND COALESCE(m.confirmed, 1) = 1
+            WHERE g.archived_at IS NULL
             GROUP BY g.id ORDER BY members DESC, g.name"""
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]
@@ -2638,7 +2639,8 @@ async def group_members(slug: str, limit: int = 200, *, order: str = "influence"
               JOIN groups g ON g.id = m.group_id
               JOIN actors a USING (did)
               LEFT JOIN my_follows mf ON mf.did = a.did
-             WHERE g.slug = ? AND COALESCE(m.confirmed, 1) = 1
+             WHERE g.slug = ? AND g.archived_at IS NULL
+               AND COALESCE(m.confirmed, 1) = 1
              ORDER BY {column} {arrow} NULLS LAST, a.handle ASC LIMIT ?""",
         (slug, limit),
     ) as cur:
@@ -2650,7 +2652,8 @@ async def groups_for(did: str) -> list[dict]:
     async with db.execute(
         """SELECT g.slug, g.name, m.tier, m.confidence, m.evidence, m.confirmed
              FROM group_members m JOIN groups g ON g.id = m.group_id
-            WHERE m.did = ? AND COALESCE(m.confirmed, 1) = 1
+            WHERE m.did = ? AND g.archived_at IS NULL
+              AND COALESCE(m.confirmed, 1) = 1
             ORDER BY m.confidence DESC""",
         (did,),
     ) as cur:
