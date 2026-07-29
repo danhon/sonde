@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% from "_charts.html" import frame, column_chart, scatter_chart, small_multiples, bar_list with context %}
 {% from "_sort.html" import who with context %}
+{% from "_notices.html" import notices with context %}
 {% block content %}
+{{ notices(notices_list, "/", tone="red") }}
 {% if cohort_plot and cohort_plot.bars|length > 2 %}
 {% call frame("When your audience joined Bluesky",
               "accounts by the month they were created",

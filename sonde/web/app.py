@@ -173,6 +173,10 @@ def create_app() -> FastAPI:
             context={
                 "stats": stats, "settings": settings,
                 "cohorts": cohorts,
+                # Operational faults belong on the page you land on, not buried
+                # on /settings where nobody was looking when the backup broke.
+                "notices_list": await store.active_notices(
+                    kinds=("backup_failing",)),
                 "cohort_plot": charts.columns(
                     [(r["month"], r["n"]) for r in cohorts],
                     charts.Box(height=180)),
@@ -528,6 +532,7 @@ def create_app() -> FastAPI:
                 "runs": await store.recent_runs(15),
                 "active": sorted(await store.active_score_components()),
                 "last_backup": await backup.last_backup(),
+                "backup_attempts": await store.backup_attempts(),
                 "auth": authenticator.status(),
                 "lists": await store.moderation_lists(),
                 "dismissals": await store.dismissal_log(),
@@ -722,7 +727,10 @@ def create_app() -> FastAPI:
             context={
                 "reach": await store.verification_reach(),
                 "v": summary,
-                "notices": await store.active_notices(),
+                # `notices` is the macro's name in the template, so the data
+                # cannot also be called that.
+                "notices_list": await store.active_notices(
+                    kinds=("invalid_verification",)),
                 "settings": settings,
             },
         )

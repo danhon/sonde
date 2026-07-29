@@ -161,3 +161,79 @@ async def test_dismiss_redirects_somewhere_safe(client):
         follow_redirects=False,
     )
     assert r.headers["location"] == "/verified"
+
+
+# ----------------------------------------------------- backup failures
+
+async def fail_backup(day: str = "2026-07-29", error: str = "unable to open database") -> None:
+    conn = await store._db()
+    await conn.execute(
+        "INSERT INTO sync_runs (kind, started_at, status, error) VALUES (?,?,?,?)",
+        ("backup", f"{day}T03:17:00+00:00", "failed", error))
+    await store.commit()
+
+
+async def test_a_failing_backup_raises_a_notice():
+    """It shipped broken and stayed broken: the bind mount kept the host's
+    ownership, the container runs as uid 10001, and every VACUUM INTO failed.
+    Each failure was written to sync_runs and read by nobody."""
+    await fail_backup()
+
+    notices = await store.active_notices(kinds=("backup_failing",))
+
+    assert len(notices) == 1
+    assert "never once succeeded" in notices[0]["summary"]
+    assert "unable to open database" in notices[0]["detail"]
+
+
+async def test_a_backup_that_has_never_run_is_not_a_fault():
+    """A fresh install has no snapshot and that is not a warning."""
+    assert await store.active_notices(kinds=("backup_failing",)) == []
+
+
+async def test_a_healthy_backup_raises_nothing():
+    conn = await store._db()
+    await conn.execute(
+        "INSERT INTO sync_runs (kind, started_at, status, completed) VALUES (?,?,?,1)",
+        ("backup", store.utcnow(), "ok"))
+    await store.set_meta("last_backup_at", store.utcnow())
+    await store.commit()
+
+    assert await store.active_notices(kinds=("backup_failing",)) == []
+
+
+async def test_tomorrows_failure_returns_after_todays_is_dismissed():
+    """The whole point. A standing risk of losing the only irreplaceable table
+    must not be silenceable once and forgotten."""
+    await fail_backup(day="2026-07-29")
+    first = (await store.active_notices(kinds=("backup_failing",)))[0]
+    await store.dismiss_notice(first["kind"], first["signature"])
+    assert await store.active_notices(kinds=("backup_failing",)) == []
+
+    await fail_backup(day="2026-07-30")
+
+    assert len(await store.active_notices(kinds=("backup_failing",))) == 1
+
+
+async def test_a_stalled_backup_is_a_notice_even_with_no_failure():
+    """The scheduler dying leaves no failed run to notice — only silence."""
+    conn = await store._db()
+    await conn.execute(
+        "INSERT INTO sync_runs (kind, started_at, status, completed) VALUES (?,?,?,1)",
+        ("backup", "2026-07-01T03:00:00+00:00", "ok"))
+    await store.set_meta("last_backup_at", "2026-07-01T03:00:00+00:00")
+    await store.commit()
+
+    notices = await store.active_notices(kinds=("backup_failing",))
+
+    assert len(notices) == 1
+    assert "stalled" in notices[0]["detail"]
+
+
+async def test_the_dashboard_shows_a_failing_backup(client):
+    await fail_backup()
+
+    page = client.get("/")
+
+    assert page.status_code == 200
+    assert "never once succeeded" in page.text

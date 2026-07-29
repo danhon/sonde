@@ -173,7 +173,17 @@
     <code class="font-mono text-xs">{{ last_backup.path }}</code>
   </p>
   {% else %}
-  <p class="mt-3 text-sm text-amber-800">No snapshot has been taken yet.</p>
+  <p class="mt-3 text-sm text-red-800">
+    {#- "No snapshot yet" read as *not scheduled yet* for as long as the job was
+        failing every night, which is how a broken backup went unnoticed. Say
+        which of the two it is. -#}
+    {% if backup_attempts %}
+    <strong>No snapshot has ever succeeded</strong>, across
+    {{ backup_attempts }} attempt(s). The event history is unprotected.
+    {% else %}
+    No snapshot has been taken yet — the job has not run.
+    {% endif %}
+  </p>
   {% endif %}
   <p class="mt-2 max-w-2xl text-xs text-slate-500">
     The event history is the only data here that can't be re-fetched from Bluesky.

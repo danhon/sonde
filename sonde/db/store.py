@@ -3314,16 +3314,90 @@ async def _invalid_verification_subjects() -> list[dict]:
         return [dict(r) for r in await cur.fetchall()]
 
 
-async def active_notices() -> list[dict]:
+async def backup_attempts() -> int:
+    """How many times the backup job has run, successfully or not."""
+    return await _scalar("SELECT COUNT(*) FROM sync_runs WHERE kind = 'backup'") or 0
+
+
+async def _backup_notice() -> dict | None:
+    """Warn when the nightly snapshot is failing or has stalled.
+
+    This exists because it happened. The bind mount at /backup keeps the host's
+    ownership, the container runs as uid 10001, and every VACUUM INTO since
+    deployment failed with "unable to open database". Each failure was dutifully
+    written to sync_runs and read by nobody, while /settings said "No snapshot
+    has been taken yet" — which reads as *not yet* rather than *never, and never
+    will*. follow_events is the one table that cannot be re-fetched from
+    Bluesky, so a silent backup failure is the most expensive kind there is.
+
+    The signature carries the day, so dismissing tonight's failure does not
+    silence tomorrow's. A persistent data-loss risk must not be dismissible once
+    and forgotten.
+    """
+    import hashlib
+
+    db = await _db()
+    async with db.execute(
+        "SELECT status, started_at, error FROM sync_runs WHERE kind = 'backup' "
+        "ORDER BY started_at DESC LIMIT 1"
+    ) as cur:
+        latest = await cur.fetchone()
+    if latest is None:
+        # Never attempted. A fresh install is not a fault; /settings says so.
+        return None
+
+    last_ok = await get_meta("last_backup_at")
+    problem = detail = None
+
+    if latest["status"] == "failed":
+        problem = "The nightly database snapshot is failing."
+        detail = (latest["error"] or "no error recorded").strip()
+        if not last_ok:
+            problem = "The nightly database snapshot has never once succeeded."
+    elif last_ok:
+        try:
+            age = (datetime.now(timezone.utc)
+                   - datetime.fromisoformat(last_ok)).total_seconds() / 3600
+        except ValueError:
+            age = None
+        if age is not None and age > 48:
+            problem = f"No database snapshot for {age / 24:.0f} days."
+            detail = "The backup job is scheduled nightly, so it has stalled."
+
+    if problem is None:
+        return None
+
+    day = (latest["started_at"] or "")[:10]
+    return {
+        "kind": "backup_failing",
+        "signature": hashlib.sha256(f"{day}|{detail}".encode()).hexdigest()[:16],
+        "summary": problem,
+        "detail": (
+            f"{detail} The event history is the only data here that cannot be "
+            f"re-fetched from Bluesky, and it is what these snapshots exist to "
+            f"protect. Run 'Backup now' on /settings once the cause is fixed."
+        ),
+        "subjects": [],
+    }
+
+
+async def active_notices(kinds: tuple[str, ...] | None = None) -> list[dict]:
     """Warnings not currently dismissed.
 
     The signature is the set of subjects, so dismissing "2 accounts" does not
     also silence a later "5 accounts" — the warning returns when what it is
     about actually changes.
+
+    `kinds` filters by notice kind: the dashboard wants the operational ones,
+    /verified wants the ones about verification.
     """
     import hashlib
 
     notices = []
+    backup = await _backup_notice()
+    if backup:
+        notices.append(backup)
+
     subjects = await _invalid_verification_subjects()
     if subjects:
         signature = hashlib.sha256(
@@ -3343,6 +3417,9 @@ async def active_notices() -> list[dict]:
             ),
             "subjects": subjects,
         })
+
+    if kinds is not None:
+        notices = [n for n in notices if n["kind"] in kinds]
 
     db = await _db()
     async with db.execute(

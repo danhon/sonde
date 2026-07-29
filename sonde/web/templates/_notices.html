@@ -1,0 +1,40 @@
+{#- Dismissible warnings.
+
+    Extracted from verified.html when the backup failure needed the same
+    treatment on two more pages. Dismissing hides the warning without hiding the
+    fact: the signature is what the warning is *about*, so it returns on its own
+    when that changes.
+
+    `tone` exists because these are not all the same weight. A verification
+    record that fails to validate is worth knowing; a backup that has never once
+    succeeded is a standing risk of losing the one table that cannot be
+    re-fetched, and it should not look like a footnote. -#}
+{%- macro notices(items, back, tone='amber', footnote=None) -%}
+{%- set edge = 'border-red-700' if tone == 'red' else 'border-amber-600' -%}
+{%- set wash = 'bg-red-50' if tone == 'red' else 'bg-amber-50' -%}
+{%- set head = 'text-red-900' if tone == 'red' else 'text-amber-900' -%}
+{%- set body = 'text-red-800' if tone == 'red' else 'text-amber-800' -%}
+{% for n in items %}
+<div class="mt-6 border-l-4 {{ edge }} {{ wash }} px-4 py-3">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <p class="text-sm font-semibold {{ head }}">{{ n.summary }}</p>
+    <form method="post" action="/notices/{{ n.kind }}/{{ n.signature }}/dismiss?back={{ back }}" class="ml-auto">
+      <button type="submit" class="font-mono text-xs uppercase tracking-widest {{ body }} hover:underline">
+        dismiss
+      </button>
+    </form>
+  </div>
+  <p class="mt-1 max-w-2xl text-sm {{ body }}">{{ n.detail }}</p>
+  {% if n.subjects %}
+  <ul class="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+    {% for s in n.subjects %}
+    <li><a class="font-mono text-xs {{ head }} hover:underline" href="/followers/{{ s.did }}">{{ s.handle }}</a></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if footnote %}
+  <p class="mt-2 font-mono text-[10px] uppercase tracking-widest {{ body }}">{{ footnote }}</p>
+  {% endif %}
+</div>
+{% endfor %}
+{%- endmacro -%}
