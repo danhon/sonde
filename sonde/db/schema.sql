@@ -174,7 +174,10 @@ CREATE TABLE IF NOT EXISTS groups (
     slug        TEXT NOT NULL UNIQUE,
     name        TEXT NOT NULL,
     description TEXT,
-    created_at  TEXT
+    created_at  TEXT,
+    -- Delete is archive. The row surviving is exactly what stops seed_groups()
+    -- re-inserting a seeded slug on the next classify run.
+    archived_at TEXT
 );
 
 -- Many-to-many: a follower can be a journalist AND a newsletter writer.
@@ -188,6 +191,10 @@ CREATE TABLE IF NOT EXISTS group_members (
     source_url TEXT,
     confirmed  INTEGER,            -- NULL = unreviewed, 1 = confirmed, 0 = rejected
     created_at TEXT NOT NULL,
+    -- When a human last tagged or untagged this row. created_at belongs to
+    -- whichever job inserted it first, so it cannot answer "what did I tag
+    -- this week".
+    decided_at TEXT,
     PRIMARY KEY (group_id, did)
 );
 

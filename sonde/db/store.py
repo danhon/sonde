@@ -122,6 +122,12 @@ MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("members", "TEXT"),           # JSON array of DIDs
         ("tier", "TEXT"),              # which naming tier produced the label
     ],
+    "groups": [
+        ("archived_at", "TEXT"),
+    ],
+    "group_members": [
+        ("decided_at", "TEXT"),
+    ],
 }
 
 
