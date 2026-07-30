@@ -50,15 +50,6 @@ hand.
 *Fix:* a job that rejects undecided candidates matching nobody under current
 rules. Bounded and auditable, and it must leave decided ones alone.
 
-**BUG-05 · A rule-based candidate preview takes ~1.8 seconds.** Measured; a
-cluster preview is 0.01s. Nearly all of it is `group_target_dids` calling
-`sweep_candidate_dids`, which reads every current follower's bio (~8,000) and
-runs the M18 regex set over them in Python. Pre-existing and invisible inside
-`classify_groups`; the preview is the first thing to put it behind a click.
-*Fix:* not caching — the preview must agree exactly with what accepting does.
-Either precompute sweep matches into a column, or narrow the target set for
-preview and prove the two still agree.
-
 ### P3 — cosmetic, dead, or preventive
 
 **BUG-06 · Stored `why` text still says "group".** Existing candidates keep the

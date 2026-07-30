@@ -1585,3 +1585,58 @@ async def test_the_row_circles_are_one_query_not_one_per_member(db):
 
 async def test_tags_for_many_handles_an_empty_batch(db):
     assert await store.tags_for_many([]) == {}
+
+
+# ================================ the bio sweep is memoised, carefully
+
+async def test_the_bio_sweep_is_not_recomputed_on_every_call(db, monkeypatch):
+    """It reads every current follower's bio and runs the M18 regex set over
+    each — 1.73s against 8,000 of them — and /circles paid it on every page
+    load, because composition asks for the scope denominator."""
+    from tests.test_groups import add
+
+    await add("did:plc:g", is_verified=True, description="I am a game developer")
+    calls = []
+    import sonde.groups as groups
+    real = groups.sweep_match
+    monkeypatch.setattr(groups, "sweep_match",
+                        lambda text: calls.append(1) or real(text))
+
+    first = await store.sweep_candidate_dids()
+    seen = len(calls)
+    second = await store.sweep_candidate_dids()
+
+    assert first == second
+    assert len(calls) == seen, "the second call recomputed the sweep"
+
+
+async def test_a_changed_bio_invalidates_the_sweep(db):
+    """The memo must not outlive the data. A bio edit can change who matches."""
+    from tests.test_groups import add
+
+    await add("did:plc:x", is_verified=True, description="nothing relevant")
+    assert await store.sweep_candidate_dids() == []
+
+    await add("did:plc:x", is_verified=True, description="I am a game developer")
+
+    assert await store.sweep_candidate_dids() == ["did:plc:x"]
+
+
+async def test_a_departure_invalidates_the_sweep(db):
+    from tests.test_groups import add
+
+    await add("did:plc:g", is_verified=True, description="I am a game developer")
+    assert await store.sweep_candidate_dids() == ["did:plc:g"]
+
+    await store.mark_departed(["did:plc:g"], "unfollow")
+
+    assert await store.sweep_candidate_dids() == []
+
+
+async def test_refresh_forces_a_recompute(db):
+    from tests.test_groups import add
+
+    await add("did:plc:g", is_verified=True, description="I am a game developer")
+    await store.sweep_candidate_dids()
+
+    assert await store.sweep_candidate_dids(refresh=True) == ["did:plc:g"]

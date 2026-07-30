@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -57,6 +58,12 @@ async def connect(path: str | None = None) -> aiosqlite.Connection:
     target = path or _override_path or settings.db_path
     if _conn is not None and _db_path == target:
         return _conn
+    # Past this point the target is genuinely changing, so any memo of the old
+    # database's contents has to go. It matters that this is HERE and not at the
+    # top of the function: `_db()` calls connect() on every single query, so
+    # clearing unconditionally wiped the sweep memo before every read and the
+    # cache never once hit. Measured — /circles stayed at 1.84s until this moved.
+    _clear_sweep_cache()
     if _conn is not None:
         await _conn.close()
     Path(target).parent.mkdir(parents=True, exist_ok=True)
@@ -168,6 +175,9 @@ async def upsert_actor(profile: dict) -> None:
     live on profileViewDetailed and are written by the hydration pass instead.
     Existing values are preserved when the incoming payload omits a field.
     """
+    # A changed bio can change what the sweep matches, so the memo cannot
+    # outlive the write.
+    _clear_sweep_cache()
     db = await _db()
     verification = profile.get("verification") or {}
     now = utcnow()
@@ -523,12 +533,44 @@ async def group_target_dids(top_n: int = 500) -> list[str]:
     return sorted(dids | set(await sweep_candidate_dids()))
 
 
-async def sweep_candidate_dids() -> list[str]:
-    """Followers whose own bio carries evidence precise enough to be in scope."""
+# Memo for the bio sweep below: (monotonic stamp, dids). Keyed by nothing —
+# there is one follower list.
+_SWEEP_CACHE: tuple[float, list[str]] | None = None
+# Long enough to take the sweep off the request path, far shorter than the 15
+# minutes between head sweeps, so it can never be more than one sweep stale.
+SWEEP_CACHE_SECONDS = 120
+
+
+def _clear_sweep_cache() -> None:
+    """Drop the memo. Called whenever the follower list itself changes."""
+    global _SWEEP_CACHE
+    _SWEEP_CACHE = None
+
+
+async def sweep_candidate_dids(refresh: bool = False) -> list[str]:
+    """Followers whose own bio carries evidence precise enough to be in scope.
+
+    Memoised, because this reads every current follower's bio and runs the M18
+    regex set over each one in Python — measured at 1.73s against 8,000 bios —
+    and `group_target_dids` calls it, which `composition` calls, which meant
+    every single /circles page load paid it. The page took 1.84s to render and
+    1.73s of that was this.
+
+    Safe to cache because the answer only changes when the follower list or a
+    bio changes, which happens on a sweep. Sweeps clear it explicitly; the TTL
+    is the backstop. `refresh=True` forces a recompute for the jobs that want to
+    be certain.
+    """
+    global _SWEEP_CACHE
     from sonde.groups import SWEEP_GROUPS, sweep_match
 
     if not SWEEP_GROUPS:
         return []
+    if not refresh and _SWEEP_CACHE is not None:
+        stamped, dids = _SWEEP_CACHE
+        if time.monotonic() - stamped < SWEEP_CACHE_SECONDS:
+            return dids
+
     db = await _db()
     async with db.execute(
         """SELECT a.did, a.description FROM actors a
@@ -536,8 +578,10 @@ async def sweep_candidate_dids() -> list[str]:
             WHERE fs.is_current = 1 AND fs.ignored_at IS NULL
               AND a.description IS NOT NULL AND a.description != ''"""
     ) as cur:
-        return [r["did"] for r in await cur.fetchall()
+        dids = [r["did"] for r in await cur.fetchall()
                 if sweep_match(r["description"])]
+    _SWEEP_CACHE = (time.monotonic(), dids)
+    return dids
 
 
 async def commit() -> None:
@@ -853,6 +897,8 @@ async def pending_departures() -> list[str]:
 
 
 async def mark_departed(dids: Sequence[str], reason: str) -> None:
+    # The bio sweep counts current followers only, so departures change it.
+    _clear_sweep_cache()
     db = await _db()
     now = utcnow()
     await db.executemany(
