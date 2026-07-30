@@ -5,17 +5,23 @@ A follower tracker for [Bluesky](https://bsky.app). Sweeps who follows
 departures over time, shows which followers are **verified**, and ranks which
 ones are **influential** — with a score it can explain.
 
-→ **[PLAN.md](PLAN.md)** — architecture, schema, milestones, open questions
+> **Status: in production**, deployed on ubuntuplex behind Authelia. All three
+> goals are answered, plus mutuals, circles, institutions, interaction
+> leaderboards, follow-back, five visualisations and a nightly snapshot.
+> 794 tests pass; the browser eval checks 226 page renders across two engines
+> and seven viewports.
 
-> **Status: M0–M6 built and verified against the live API.** All three goals are
-> answered, plus mutuals, detail pages, the affinity index and institutional
-> matching. Still to come — M7 (external reputation: Wikidata, Wikipedia, GDELT)
-> and M8 (digest, list writing, RSS). See [Milestones](PLAN.md#milestones).
->
-> 217 unit tests pass. Live evals against `@danhon.com` reproduce every measured
-> number: 115 pages, 10,042 followers, 147 verified across 7 issuers, 2,170
-> mutuals, mean page yield 87.3, newest-first ordering confirmed.
+This README is for running and deploying sonde. The reasoning behind it lives
+elsewhere:
 
+| | |
+|---|---|
+| [PLAN.md](PLAN.md) | The design — what was measured and what follows from it |
+| [HISTORY.md](HISTORY.md) | What was built, in order, and why |
+| [BUGS.md](BUGS.md) | What is currently wrong |
+| [SCORING.md](SCORING.md) | How the influence score is calculated |
+
+---
 ## What it does
 
 - **Spots new followers within 15 minutes** for about two API calls, because the follower list is ordered newest-first
@@ -24,31 +30,11 @@ ones are **influential** — with a score it can explain.
 - **Ranks influential followers** on an explainable 0–100 score built from reach, relevance, selectivity, output, and verification. Every row shows exactly what produced its number
 - **Tracks change over time** — arrivals, departures, returns, handle changes, and a daily growth chart, with guards so a failed sync can never masquerade as a mass unfollow
 - **Flags mutuals** by cross-referencing your own follow list
-- **Needs no credentials.** Everything above runs unauthenticated. An app password is optional and only unlocks the [extras](#optional-extras)
-
+- **Needs no credentials.** Everything above runs unauthenticated. An app password is optional and only unlocks the extras (exact affinity, interactions, follow-back, follow dates)
 ## Why "sonde"
 
 A sonde is an instrument you send up into something you can't observe directly,
 to take measurements and radio them back. Same idea.
-
-## What the numbers will look like
-
-Measured against the live API on 2026-07-26, so the app can be checked against
-reality on day one:
-
-| | |
-|---|---|
-| Followers Bluesky reports | 11,451 |
-| Followers actually enumerable | **10,041** |
-| Verified followers | **147** (1.46%) |
-| Followers who asked not to be shown logged-out | 1,838 (18.3%) |
-| Followers with broken handle resolution | 37 |
-
-**The two follower numbers will never match, and that's correct.** 1,410
-accounts still count as follow records while being unservable as profiles —
-deactivated, suspended, deleted, or blocking. sonde shows both numbers side by
-side rather than picking one and inviting a permanent "why is this wrong".
-
 ## Web UI
 
 **FastAPI** + **Jinja2** + **Tailwind CSS** (CDN), server-rendered. Behind
@@ -68,47 +54,33 @@ Authelia 2FA at `sonde.sgc.rayandhon.com`.
 Every page carries a live activity strip showing what is running, how far
 through it is, and when the next job is due — polling every 3s while a job runs
 and every 15s when idle.
+## Running
 
-## How the influence score works
+```bash
+uv run sonde                  # web UI only
+uv run sonde --once           # one full sweep (115 calls, ~38s) and exit
+uv run sonde --head           # one head sweep (1–2 calls) and exit
+uv run sonde --hydrate        # fill in follower counts; --limit N to cap
+uv run sonde --rescore        # recompute every influence score
+uv run sonde --backup         # daily rollup + snapshot
+uv run sonde --schedule       # web UI + scheduler (production mode)
+```
 
-Follower count answers "who is famous", which isn't quite the question. The
-score blends seven signals, all computed locally:
+A cold start needs `--once` before anything else: the head sweep deliberately
+no-ops without a baseline, since with nothing known every page looks new and it
+would walk all 115 pages every 15 minutes.
+## Local development
 
-| Component | Weight | What it captures |
-|---|---|---|
-| Reach | 18 | Follower count, log-scaled — the distribution is a power law |
-| Institution | 18 | Where they work — verification issuer, handle domain, bio, Wikipedia |
-| Affinity | 16 | How many selective accounts *you* follow also follow them |
-| Verified affinity | 13 | How many verified accounts in your network follow them |
-| Public profile | 12 | Wikidata notability, Wikipedia pageviews, news volume |
-| Selectivity | 11 | Followers ÷ following, ignored below 500 followers |
-| Liveness | 7 | Days since last post |
-| Verification | 5 | Trusted verifier > verified > neither |
+```bash
+# Install uv if needed
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-→ **[SCORING.md](SCORING.md)** — the full design: evidence, confidence tiers,
-worked examples, and what it deliberately refuses to do.
+uv sync
+cp .env.example .env
+$EDITOR .env
 
-The short version of why it looks like this. A Bluesky-verified NYT columnist and
-a 741k-follower engagement farm have the same reach; this score puts about 61
-points between them. Getting there needed four findings from the live data:
-
-- Only **10% of verified followers are verified by their institution** (the rest
-  by Bluesky, which says nothing about employer), so affiliation comes mostly
-  from bio text — trusted far more when something else corroborates it.
-- Counting an account's verified followers globally would cost **7,418 API calls
-  for one person**, so sonde reports a network-scoped count and says so.
-- Wikidata has a **Bluesky handle property**, so external reputation is one bulk
-  query — 10,563 pairs in under six seconds — rather than a lookup per follower.
-- Every component with a cheap approximation and an expensive truth **marks which
-  one it used** instead of blending them silently.
-
-Weights and the institution table are editable on `/settings`; changing either
-enqueues a rescore.
-
-**It's a sorting aid, not a verdict.** Reach and selectivity are gameable, bio
-text is self-reported, and all of it correlates with account age. The UI says
-"ranked by", not "top".
-
+uv run pytest
+```
 ## Configuration
 
 Copy `.env.example` to `.env` and fill it in. **Never commit `.env`.**
@@ -145,53 +117,6 @@ TIER3_TOP_N=500
 # DB_PATH=/data/sonde.db
 TZ=America/Los_Angeles
 ```
-
-## Running
-
-```bash
-uv run sonde                  # web UI only
-uv run sonde --once           # one full sweep (115 calls, ~38s) and exit
-uv run sonde --head           # one head sweep (1–2 calls) and exit
-uv run sonde --hydrate        # fill in follower counts; --limit N to cap
-uv run sonde --rescore        # recompute every influence score
-uv run sonde --backup         # daily rollup + snapshot
-uv run sonde --schedule       # web UI + scheduler (production mode)
-```
-
-A cold start needs `--once` before anything else: the head sweep deliberately
-no-ops without a baseline, since with nothing known every page looks new and it
-would walk all 115 pages every 15 minutes.
-
-## Evals
-
-Unit tests prove the logic is self-consistent; the evals prove it agrees with
-Bluesky. They make real API calls, so they're deliberately outside `pytest`.
-
-```bash
-uv run pytest                                   # 217 unit tests
-uv run python -m evals.live_sweep               # full sweep vs measured baseline
-uv run python -m evals.live_sweep --head        # head sweep cost
-uv run python -m evals.verified_check           # issuer distribution
-uv run python -m evals.score_check --limit 1500 # hydrate, then inspect the ranking
-uv run python -m evals.affinity_check           # affinity + institution signal
-```
-
-The baselines are the 2026-07-26 measurements. A failure means either the API
-changed or sonde did — both worth knowing.
-
-## Local development
-
-```bash
-# Install uv if needed
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-uv sync
-cp .env.example .env
-$EDITOR .env
-
-uv run pytest
-```
-
 ## Deploying (Docker — this is the live production deployment)
 
 Production runs as a Docker container behind Traefik + Authelia, following the
@@ -243,119 +168,22 @@ curl -sk -o /dev/null -w '%{http_code}\n' https://sonde.sgc.rayandhon.com/
 curl -sk -o /dev/null -w '%{http_code}\n' https://sonde.sgc.rayandhon.com/healthz
 # 200 — a 302 here means the health router lost its priority
 ```
+## Evals
 
-## Architecture
+Unit tests prove the logic is self-consistent; the evals prove it agrees with
+Bluesky. They make real API calls, so they're deliberately outside `pytest`.
 
-One container runs the web UI and the scheduler together, as buywanderbot does.
-
-```
-sonde/
-├── sonde/
-│   ├── main.py            # Entry point — --once, --schedule, or web-only
-│   ├── config.py          # Settings from .env
-│   ├── scheduler.py       # APScheduler — head sweep, full sweep, hydration, backup
-│   ├── scoring.py         # Influence score — weights and components in one place
-│   ├── jobs.py            # In-memory job progress + single-flight sync locks
-│   ├── api/
-│   │   ├── client.py      # httpx + token-bucket rate limiter, 429 backoff
-│   │   └── graph.py       # getFollowers / getProfiles / getFollows — cursor-only paging
-│   ├── sync/
-│   │   ├── followers.py   # Head + full sweeps, diff, departure rules
-│   │   ├── profiles.py    # Tier 1 — TTL hydration, DID-keyed result mapping
-│   │   ├── mutuals.py     # Tier 2 — my own follow list
-│   │   └── enrich.py      # Tier 3 — knownFollowers + last-post (optional, auth)
-│   ├── db/
-│   │   ├── schema.sql     # Base schema; migrations applied at startup
-│   │   └── store.py       # aiosqlite read/write helpers
-│   └── web/
-│       ├── app.py         # FastAPI application
-│       └── templates/     # Jinja2 (Tailwind via CDN)
-├── tests/
-├── Dockerfile
-├── compose.yml            # Two Traefik routers; labels read SERVICE_HOST /
-│                          # COMPOSE_PROJECT_NAME from the shell — only `make deploy` sets these
-├── Makefile               # deploy / preview / logs / stop
-├── .env                   # never committed — see .env.example
-├── .env.example
-├── pyproject.toml
-├── PLAN.md
-└── README.md
+```bash
+uv run pytest                                   # 217 unit tests
+uv run python -m evals.live_sweep               # full sweep vs measured baseline
+uv run python -m evals.live_sweep --head        # head sweep cost
+uv run python -m evals.verified_check           # issuer distribution
+uv run python -m evals.score_check --limit 1500 # hydrate, then inspect the ranking
+uv run python -m evals.affinity_check           # affinity + institution signal
 ```
 
-## Technical approach
-
-Bluesky's AppView exposes everything needed through read-only XRPC endpoints on
-the CDN-cached public host, no credentials required. Data is fetched in **tiers**,
-because cost and volatility differ by an order of magnitude.
-
-The key insight is that **the follower list is ordered newest-follow-first**
-(verified — page 115 contains no account created after Aug 2023, while page 1 has
-one created two days ago). So arrivals and departures have completely different
-costs and shouldn't share a schedule: a new follower is always on page 1, while a
-departure is an *absence* that can only be proven by walking all 115 pages.
-
-| Tier | Endpoint | Cost | Cadence | Buys |
-|---|---|---|---|---|
-| 0a | `graph.getFollowers` (head) | 1–2 calls | 15 min | Arrivals, fast |
-| 0b | `graph.getFollowers` (full) | 116 calls | 6h | Departures, drift, verification, labels |
-| 1 | `actor.getProfiles` | 402 calls (full) | New at once, rest on a 7d TTL | Follower / follow / post counts |
-| 2 | `graph.getFollows` | 46 calls | Daily | Mutual flag |
-| 3 | `graph.getKnownFollowers` | 1 call/actor | Top 500, 30d TTL | Overlap with your own network |
-
-Steady state is about **760 calls a day**. The limit is 3,000 requests per 5
-minutes **per IP** — shared with BlueBirdNET and atproto-labeler on the same box,
-which is why the default is 3 req/s rather than the 5 the arithmetic allows. The
-binding constraint is politeness to a shared IP, not the cap.
-
-The other non-obvious detail: **verification data is attached to every profile
-view, including the lightweight ones in the follower list, but follower counts are
-not.** So "who is verified" is free with the sweep, while "who is influential"
-needs a second pass over every follower in batches of 25.
-
-### Data integrity
-
-Absence from the follower list is how an unfollow is detected, which makes a
-half-finished sync dangerous. These rules keep the history honest — each one
-exists because probing the real API showed it was needed:
-
-1. **The cursor is the only end-of-list signal.** Pages come back short — mean
-   87.3 of a requested 100, only 5 of 115 full. Stopping when a page is
-   under-full would have ended the sweep on page 1 and recorded 90 followers as
-   the complete list.
-2. **Hydration maps results by DID, never by array position.** `getProfiles`
-   returns HTTP 200 with unresolvable actors silently omitted, so zipping the
-   request list against the response list assigns follower counts to the wrong
-   people — no error, anywhere. That omission is also the cleanest available
-   signal that an account is gone rather than merely unfollowed.
-3. Only a **full** sweep reaching the final cursor may compute departures. The
-   head sweep deliberately doesn't see most of the list, so it can never mark
-   anyone lost.
-4. A follower is marked lost after **two consecutive complete full sweeps** miss
-   them — which also absorbs page skips when the list shifts during pagination.
-   The cost is 12 hours of latency on unfollow detection.
-5. A sweep that would mark more than 2% of followers lost halts, records
-   `needs_review`, and shows a banner. The banner carries an **"accept this
-   sweep"** override, so a genuine mass departure can't wedge the app forever.
-
-Departures are labelled "gone" rather than "unfollowed" when the cause can't be
-distinguished — deactivation, deletion, suspension, and blocks all look identical
-to an unfollow from outside.
-
-Handle changes are recorded as events, not as a departure and an arrival: every
-table keys on DID, because handles churn and DIDs don't.
-
-## Optional extras
-
-None are needed for the core questions; all are post-M5 and independent:
-
-- **Tier-3 relevance** — needs an app password. Adds "how many accounts you
-  follow also follow this person", a better influence signal for your purposes
-  than raw fame, plus genuine last-post recency
-- **Email digest** of notable new followers via Fastmail SMTP (buywanderbot
-  pattern) — more useful now that arrivals surface within 15 minutes
-- **Bluesky list writing** — push the top N to a real list
-- **RSS feed** of notable arrivals
-
+The baselines are the 2026-07-26 measurements. A failure means either the API
+changed or sonde did — both worth knowing.
 ## Snapshots
 
 `follow_events` is the only data here that can't be re-fetched from Bluesky, so a
@@ -365,11 +193,3 @@ consistent snapshot of the live database taken without stopping the app.
 **It is on-box only, by choice.** It guards against DB corruption or a bad
 migration, not against losing the host — off-box backup isn't a priority for this
 app. Don't read the snapshots as disaster recovery.
-
-## Database schema
-
-See [PLAN.md — Database schema](PLAN.md#database-schema) for full definitions.
-In short: `actors` (everything known about a person), `follower_state` (whether
-they follow me and since when), `follow_events` (append-only history),
-`my_follows` (for mutuals), `daily_snapshots` (growth), `sync_runs` (what each
-sync did).

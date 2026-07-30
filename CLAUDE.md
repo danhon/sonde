@@ -7,9 +7,20 @@ for anything that isn't specific to this repo. In particular
 [python-apps.md](../reverse-proxy/docs-site/docs/services/python-apps.md) is the
 canonical deploy pattern this app follows.
 
-Design docs in this repo: [PLAN.md](PLAN.md) for the app, [SCORING.md](SCORING.md)
-for the influence score. Both are grounded in measurements taken against the live
-API on 2026-07-26 — if you change a number, re-measure rather than re-estimate.
+Docs in this repo, split by what they answer:
+
+| | |
+|---|---|
+| [README.md](README.md) | Running, configuring and deploying it |
+| [PLAN.md](PLAN.md) | The design — what was measured, what follows from it, and the rules the code must obey |
+| [HISTORY.md](HISTORY.md) | What was built, in order, and why. Where a threshold's justification lives |
+| [BUGS.md](BUGS.md) | Reproduced defects, ranked. Delete an entry when it is fixed |
+| [SCORING.md](SCORING.md) | The influence score in full |
+
+All grounded in measurements against the live API from 2026-07-26 onward — if
+you change a number, re-measure rather than re-estimate. Put new milestone
+narrative in HISTORY.md, not PLAN.md: that is how PLAN.md reached 1,888 lines,
+three quarters of which was changelog appended to a design document.
 
 ## Deployment: always `make deploy`, never bare `docker compose`
 
