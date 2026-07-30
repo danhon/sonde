@@ -28,6 +28,18 @@ as a query parameter the way `/circles` does.
 
 ### P2 — misleading, or friction the design meant to remove
 
+**BUG-11 · Institution matching is switched off in production.** `institutions`
+and `institution_roster` are both empty in the 2026-07-29 snapshot, so
+`institution_name` is NULL for all 10,038 followers and the M6/M15a/M20 path
+contributes nothing. Handle-domain matching — worth 0.95 confidence, the
+strongest employer signal sonde has — therefore never fires. Employer coverage
+is currently 41 people, all of it Wikidata `affiliations`. Found while
+investigating byline sources: the question "which outlet does this journalist
+write for" is unanswered mostly because a feature that answers it is dormant.
+*Fix:* find out why seeding never ran — `seed_institutions()` exists — then run
+it and the matcher. Check whether this is a fresh-deploy gap or something that
+wiped.
+
 **BUG-02 · Batch tagging still bounces you to the top of the list.** M32 fixed
 this for profiles by redirecting to `#circles`; the batch bar still redirects to
 `#tagged`, and nothing on any page has that id. Confirmed by grep. Less painful

@@ -1135,3 +1135,50 @@ Implementation sits in **M8** alongside the affiliation work, since both turn on
 enabling the app password.
 
 ---
+
+### Byline directories for journalists — investigated, nothing to buy
+
+*"Is there an open directory of professional journalists' bylines we could
+enrich profiles from?"* Investigated 2026-07-29. **No, and the best available
+signal is already in the database.**
+
+**Muck Rack** is the obvious candidate and is closed. `robots.txt` is itself
+behind a Cloudflare managed challenge, a profile URL returns 403 to a non-browser
+client, and there is no public API — it is a paid product sold to PR teams.
+Getting past the challenge would be circumventing an access control, so it is
+not on the table regardless of what the data is worth.
+
+**MuckRock** — the FOIA platform, a different organisation with a confusingly
+similar name — was checked first by mistake and is also closed: every `api_v1`
+endpoint returns 401, including `foia`, `news` and `jurisdiction`. Its
+addressable population here is four people, all of whom already say so in their
+bio, so it would add nothing even with credentials.
+
+Everything else open is the wrong population. OpenAlex, ORCID and Crossref index
+academic authorship, not journalism. Authory, Contently and Clippings host
+self-serve portfolios with no directory to query. **Wikidata** is the one real
+open source and is already integrated — it accounts for 29 of the 70 people in
+the journalists circle, which is exactly the famous tail it is good at.
+
+Two things the investigation turned up that matter more than the answer:
+
+**Verification issuers are an unused employer attestation.** Of 148 verified
+followers, 135 are verified by `bsky.app` and **14 by news organisations** —
+wired.com (6), washingtonpost.com (3), financialtimes.com (2), nbcnews.com,
+ms.now, nytimes.com. That is an employer asserting employment, recorded in the
+follower's own profile, already fetched at zero API cost, and currently used
+only to draw a badge and group the /verified page. Promoting it into
+`affiliations` would give 14 people an attributed outlet from data already on
+disk — better evidence than any third-party directory, because the outlet said
+it rather than an aggregator inferring it.
+
+**Handle domains are not a byline source on this list.** 1,736 followers have a
+custom-domain handle and 1,595 of those domains are unique. The shared ones are
+hosting providers — eurosky.social (41), brid.gy (20), myatproto.social (16),
+blacksky.app (10) — not employers. Exactly one follower has an outlet-domain
+handle: `tomhannen.ft.com`. The mechanism works and there is almost nobody to
+apply it to.
+
+The residual gap is real but small and unserved: 41 people are in the
+journalists circle on bio text alone, with no employer known. No open directory
+covers them, because the ones that would are commercial.
