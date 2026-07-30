@@ -233,6 +233,7 @@ def create_app() -> FastAPI:
         person["moderation_lists"] = await store.lists_matching(did)
         person["affiliations"] = await store.affiliations_for(did)
         person["circles"] = await store.groups_for(did)
+        person["shared"] = await store.shared_connections(did)
         person["interactions"] = await store.interactions_for(did)
         person["breakdown"] = await store.interaction_breakdown(did)
         return TEMPLATES.TemplateResponse(
@@ -587,6 +588,32 @@ def create_app() -> FastAPI:
         finally:
             await client.aclose()
         return RedirectResponse(f"/followers/{did}", status_code=303)
+
+    @app.post("/followers/{did}/known")
+    async def fetch_known_now(did: str) -> RedirectResponse:
+        """Exact shared connections for one person, on demand.
+
+        The affinity index answers this for free but only from a sample of the
+        accounts you follow, so it can say "at least these". This asks Bluesky
+        directly — one to three calls, and it needs the app password, which is
+        why it is a button rather than something that happens on page load.
+        """
+        from sonde.api.auth import authenticator
+        from sonde.api.client import BlueskyClient
+        from sonde.db import store
+        from sonde.sync.relevance import known_followers
+
+        if not await authenticator.token():
+            return RedirectResponse(f"/followers/{did}#shared", status_code=303)
+
+        client = BlueskyClient()
+        try:
+            count, known = await known_followers(client, did)
+            await store.record_exact_affinity(did, count)
+            await store.save_known_followers(did, known)
+        finally:
+            await client.aclose()
+        return RedirectResponse(f"/followers/{did}#shared", status_code=303)
 
     @app.post("/followers/{did}/follow")
     async def follow_back(request: Request, did: str,

@@ -324,3 +324,20 @@ CREATE TABLE IF NOT EXISTS interactions (
 CREATE INDEX IF NOT EXISTS idx_int_did  ON interactions (did, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_int_time ON interactions (occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_int_thread ON interactions (thread);
+
+-- Who you and a follower both know: accounts you follow that also follow them.
+-- Exactly what `getKnownFollowers` returns, stored because the relevance job
+-- already pages through these profiles and previously kept only the count.
+--
+-- Separate from `affinity_edges` on purpose. That table is a SAMPLE — 590 of
+-- 4,435 follows — and answers the same question approximately for everyone.
+-- This is exact and complete, and only exists for actors the job has reached.
+-- Merging them would make a partial answer indistinguishable from a full one.
+CREATE TABLE IF NOT EXISTS known_followers (
+    did        TEXT NOT NULL,     -- the follower whose page this is
+    known_did  TEXT NOT NULL,     -- someone I follow who also follows them
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (did, known_did)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kf_did ON known_followers (did);

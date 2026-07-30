@@ -1640,3 +1640,113 @@ async def test_refresh_forces_a_recompute(db):
     await store.sweep_candidate_dids()
 
     assert await store.sweep_candidate_dids(refresh=True) == ["did:plc:g"]
+
+
+# ================================= people you and a follower both know
+
+async def add_edge(source: str, did: str) -> None:
+    conn = await store._db()
+    await conn.execute(
+        "INSERT INTO affinity_edges (source_did, did) VALUES (?,?) "
+        "ON CONFLICT DO NOTHING", (source, did))
+    await store.commit()
+
+
+async def test_the_sampled_index_answers_when_there_is_no_exact_list(db):
+    from tests.test_groups import add
+
+    await add("did:plc:them", is_verified=True)
+    await add("did:plc:mutualfriend", is_verified=True)
+    await add_edge("did:plc:mutualfriend", "did:plc:them")
+
+    shared = await store.shared_connections("did:plc:them")
+
+    assert [p["did"] for p in shared["people"]] == ["did:plc:mutualfriend"]
+    assert shared["exact"] is False
+    assert shared["total"] == 1
+
+
+async def test_a_sampled_answer_is_never_presented_as_complete(db, client):
+    """The index samples a fraction of the accounts you follow, so it can only
+    ever say "at least these". Reporting it as a total would suggest you share
+    nobody with someone you may share thirty with."""
+    from tests.test_groups import add
+
+    await add("did:plc:them", is_verified=True)
+    await add("did:plc:friend", is_verified=True)
+    await add_edge("did:plc:friend", "did:plc:them")
+
+    page = client.get("/followers/did:plc:them").text
+
+    assert "At least" in page
+    assert "complete list" not in page
+
+
+async def test_an_exact_list_replaces_the_sampled_one(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:them", is_verified=True)
+    await add("did:plc:sampled", is_verified=True)
+    await add("did:plc:exact", is_verified=True)
+    await add_edge("did:plc:sampled", "did:plc:them")
+
+    await store.save_known_followers("did:plc:them", ["did:plc:exact"])
+    shared = await store.shared_connections("did:plc:them")
+
+    assert [p["did"] for p in shared["people"]] == ["did:plc:exact"]
+    assert shared["exact"] is True
+    assert "complete list" in client.get("/followers/did:plc:them").text
+
+
+async def test_saving_an_exact_list_replaces_it_wholesale(db):
+    """A snapshot of a live graph. A stale entry for somebody who has since
+    unfollowed is worse than no entry."""
+    from tests.test_groups import add
+
+    await add("did:plc:them", is_verified=True)
+    await add("did:plc:a", is_verified=True)
+    await add("did:plc:b", is_verified=True)
+
+    await store.save_known_followers("did:plc:them", ["did:plc:a", "did:plc:b"])
+    await store.save_known_followers("did:plc:them", ["did:plc:b"])
+
+    shared = await store.shared_connections("did:plc:them")
+    assert [p["did"] for p in shared["people"]] == ["did:plc:b"]
+
+
+async def test_nobody_in_common_says_so_without_claiming_certainty(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:lonely", is_verified=True)
+
+    page = client.get("/followers/did:plc:lonely").text
+
+    assert "Nobody found yet" in page
+    assert "frequently finds nobody" in page
+
+
+async def test_the_exact_button_is_offered_only_while_the_answer_is_a_floor(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:them", is_verified=True)
+    assert 'action="/followers/did:plc:them/known"' in client.get(
+        "/followers/did:plc:them").text
+
+    await add("did:plc:x", is_verified=True)
+    await store.save_known_followers("did:plc:them", ["did:plc:x"])
+
+    assert 'action="/followers/did:plc:them/known"' not in client.get(
+        "/followers/did:plc:them").text
+
+
+async def test_shared_connections_are_ranked_by_influence(db):
+    from tests.test_groups import add
+
+    await add("did:plc:them", is_verified=True)
+    for did, score in (("did:plc:low", 1.0), ("did:plc:high", 90.0)):
+        await add(did, is_verified=True, influence_score=score)
+        await add_edge(did, "did:plc:them")
+
+    people = (await store.shared_connections("did:plc:them"))["people"]
+
+    assert [p["did"] for p in people] == ["did:plc:high", "did:plc:low"]

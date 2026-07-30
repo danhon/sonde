@@ -36,9 +36,18 @@ PAGE_SIZE = 100
 MAX_PAGES = -(-AFFINITY_EXACT_FULL // PAGE_SIZE) + 1
 
 
-async def known_follower_count(client: BlueskyClient, did: str) -> int | None:
-    """Exact count, capped at the point where more stops changing the score."""
+async def known_followers(client: BlueskyClient, did: str) -> tuple[int, list[str]]:
+    """Who you and this actor both know: the count, and who they are.
+
+    The count is capped at the point where more stops changing the score, so
+    the DIDs are capped with it — this is the same walk, not a second one.
+
+    The profiles were always being fetched and thrown away; only the length of
+    the array was kept. Returning them costs nothing and is the difference
+    between "you share 31 people" and being able to see which.
+    """
     total = 0
+    dids: list[str] = []
     cursor: str | None = None
     for _ in range(MAX_PAGES):
         params: dict[str, object] = {"actor": did, "limit": PAGE_SIZE}
@@ -47,9 +56,16 @@ async def known_follower_count(client: BlueskyClient, did: str) -> int | None:
         data = await client.xrpc("app.bsky.graph.getKnownFollowers", params, authed=True)
         followers = data.get("followers") or []
         total += len(followers)
+        dids.extend(f["did"] for f in followers if f.get("did"))
         cursor = data.get("cursor")
         if not cursor or total >= AFFINITY_EXACT_FULL:
             break
+    return total, dids
+
+
+async def known_follower_count(client: BlueskyClient, did: str) -> int | None:
+    """Just the count. Kept for callers that only score."""
+    total, _ = await known_followers(client, did)
     return total
 
 
@@ -84,12 +100,15 @@ async def enrich(client: BlueskyClient | None = None, *, limit: int | None = Non
             registry.progress("relevance", index, len(targets), "accounts",
                               f"{enriched:,} counted")
             try:
-                count = await known_follower_count(client, did)
+                count, known = await known_followers(client, did)
             except Exception:
                 failed += 1
                 log.debug("known followers unavailable for %s", did, exc_info=True)
                 continue
             await store.record_exact_affinity(did, count)
+            # The same page walk already had these. Storing them is what turns
+            # a number on a profile into a list you can read.
+            await store.save_known_followers(did, known)
             enriched += 1
             if index % 25 == 0:
                 await store.record_progress(run_id, actors=enriched, calls=client.calls)

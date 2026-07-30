@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_sort.html" import since with context %}
+{% from "_sort.html" import since, who with context %}
 {% from "_tags.html" import circle_toggles, tag_input, tag_options with context %}
 {% block title %}{{ p.handle }} — sonde{% endblock %}
 {% block content %}
@@ -187,6 +187,67 @@
   </div>
 </section>
 {{ tag_options(all_tags) }}
+
+{#- Guarded: tests render this page from partial dicts on purpose, and a
+    template that hard-requires a key breaks on the first caller that has not
+    got it. -#}
+{% if p.shared %}
+<section id="shared" class="mt-8">
+  <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+    People you both know
+  </h2>
+
+  {% if p.shared.people %}
+  <p class="mt-2 max-w-2xl text-xs text-slate-500">
+    {% if p.shared.exact %}
+    All <strong>{{ p.shared.total }}</strong> of the accounts you follow who also
+    follow {{ p.handle }} — asked of Bluesky directly, so this is the complete list.
+    {% else %}
+    <strong>At least {{ p.shared.total }}</strong> of the accounts you follow also
+    follow {{ p.handle }}. Worked out from the affinity index, which samples
+    {{ "{:,}".format(p.shared.sampled_sources) }} of the
+    {{ "{:,}".format(p.shared.follows_total) }} accounts you follow — so the real
+    number is higher and this list is a floor, not a total.
+    {% endif %}
+  </p>
+
+  <ul class="mt-3 flex flex-wrap gap-x-6 gap-y-1">
+    {% for s in p.shared.people %}
+    <li class="flex min-w-0 items-baseline gap-2 text-sm">
+      {{ who(s, 'h-5 w-5') }}
+      <span class="font-mono text-[10px] tabular-nums text-slate-400">
+        {{ s.influence_score if s.influence_score is not none else "" }}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if p.shared.total > p.shared.people|length %}
+  <p class="mt-2 font-mono text-[10px] uppercase tracking-widest text-slate-400">
+    showing {{ p.shared.people|length }} of {{ p.shared.total }}
+  </p>
+  {% endif %}
+
+  {% else %}
+  <p class="mt-3 text-sm text-slate-500">
+    Nobody found yet. The affinity index samples
+    {{ "{:,}".format(p.shared.sampled_sources) }} of the
+    {{ "{:,}".format(p.shared.follows_total) }} accounts you follow, so it
+    frequently finds nobody even where there is somebody.
+  </p>
+  {% endif %}
+
+  {% if not p.shared.exact %}
+  <form method="post" action="/followers/{{ p.did }}/known" class="mt-3">
+    <button type="submit"
+            class="border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs
+                   hover:border-red-800 hover:text-red-800"
+            title="asks Bluesky directly — one to three API calls, needs the app password">
+      Get the exact list
+    </button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
 
 {% if p.affiliations %}
 <section class="mt-8">

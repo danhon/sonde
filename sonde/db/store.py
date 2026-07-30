@@ -3026,6 +3026,80 @@ async def group_members(slug: str, limit: int = 200, *, order: str = "influence"
     return rows
 
 
+async def save_known_followers(did: str, known_dids: Sequence[str]) -> int:
+    """Replace who we both know for one follower.
+
+    Wholesale, not merged: the answer is a snapshot of a live graph, and a
+    stale row that nobody follows any more is worse than no row.
+    """
+    db = await _db()
+    now = utcnow()
+    await db.execute("DELETE FROM known_followers WHERE did = ?", (did,))
+    await db.executemany(
+        "INSERT INTO known_followers (did, known_did, fetched_at) VALUES (?,?,?) "
+        "ON CONFLICT (did, known_did) DO NOTHING",
+        [(did, k, now) for k in known_dids],
+    )
+    await db.commit()
+    return len(known_dids)
+
+
+async def shared_connections(did: str, limit: int = 60) -> dict:
+    """People you follow who also follow this person.
+
+    Two sources, and which one answered matters enough to return it rather than
+    blur them. `getKnownFollowers` is exact and complete but costs API calls and
+    needs auth, so it only exists where the relevance job has been. The affinity
+    index approximates the same relation for free from public data — but it is
+    drawn from a sample of the accounts you follow, so it can only ever say "at
+    least these", never "these".
+
+    Saying which is which is the whole point. A partial list presented as
+    complete invites the conclusion that you share nobody with someone you
+    actually share thirty with.
+    """
+    db = await _db()
+    async with db.execute(
+        "SELECT COUNT(*) FROM known_followers WHERE did = ?", (did,)) as cur:
+        exact_total = (await cur.fetchone())[0]
+
+    if exact_total:
+        sql = """SELECT a.did, a.handle, a.display_name, a.avatar_url,
+                        a.followers_count, a.influence_score, a.verified_status,
+                        (mf.did IS NOT NULL) AS is_mutual
+                   FROM known_followers k
+                   JOIN actors a ON a.did = k.known_did
+                   LEFT JOIN my_follows mf ON mf.did = a.did
+                  WHERE k.did = ?
+                  ORDER BY a.influence_score DESC NULLS LAST, a.handle LIMIT ?"""
+        total, exact = exact_total, True
+    else:
+        sql = """SELECT a.did, a.handle, a.display_name, a.avatar_url,
+                        a.followers_count, a.influence_score, a.verified_status,
+                        (mf.did IS NOT NULL) AS is_mutual
+                   FROM affinity_edges e
+                   JOIN actors a ON a.did = e.source_did
+                   LEFT JOIN my_follows mf ON mf.did = a.did
+                  WHERE e.did = ?
+                  ORDER BY a.influence_score DESC NULLS LAST, a.handle LIMIT ?"""
+        async with db.execute(
+            "SELECT COUNT(*) FROM affinity_edges WHERE did = ?", (did,)) as cur:
+            total = (await cur.fetchone())[0]
+        exact = False
+
+    async with db.execute(sql, (did, limit)) as cur:
+        people = [dict(r) for r in await cur.fetchall()]
+
+    # Some sources are known only as a DID — the affinity sweep records the edge
+    # without necessarily having hydrated that account. Counting them keeps the
+    # total honest against the list actually shown.
+    return {"people": people, "total": total, "exact": exact,
+            "unresolved": max(total - len(people), 0) if total <= limit else 0,
+            "sampled_sources": await _scalar(
+                "SELECT COUNT(*) FROM affinity_sources") or 0,
+            "follows_total": await _scalar("SELECT COUNT(*) FROM my_follows") or 0}
+
+
 async def tags_for_many(dids: Sequence[str]) -> dict[str, list[dict]]:
     """Circles for a batch of people, in one query.
 
