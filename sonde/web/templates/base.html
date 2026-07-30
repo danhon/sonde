@@ -224,13 +224,12 @@
     // only thing lost is the reload. Which is worth losing: the block sits well
     // down a long profile, and tagging three people is six page loads.
     const grid = document.querySelector("[data-circle-toggles]");
-    if (!grid) return;
 
     const ON = ["border-red-800", "bg-red-50", "text-red-800"];
     const OFF = ["border-slate-300", "bg-white", "text-slate-500",
                  "hover:border-red-800", "hover:text-red-800"];
 
-    grid.addEventListener("submit", function (event) {
+    if (grid) grid.addEventListener("submit", function (event) {
       const form = event.target.closest("form");
       const chip = form && form.querySelector("[data-circle-chip]");
       if (!chip) return;
@@ -250,10 +249,15 @@
       fetch(form.getAttribute("action"), {
         method: "POST",
         body: new FormData(form),
-        // The endpoint answers 303 to a page; we only care that it worked.
-        redirect: "follow",
+        // manual, NOT follow. The endpoint answers 303 to a full page, and
+        // following it costs a complete render this code then discards —
+        // measured at 1.8s for /circles. An opaqueredirect IS the success
+        // signal here: the browser will not show us the 303, but reaching one
+        // means the POST was accepted.
+        redirect: "manual",
       }).then(function (response) {
-        if (!response.ok) throw new Error(response.status);
+        if (!response.ok && response.type !== "opaqueredirect")
+          throw new Error(response.status);
         const on = action === "add";
         chip.classList.remove.apply(chip.classList, on ? OFF : ON);
         chip.classList.add.apply(chip.classList, on ? ON : OFF);
@@ -270,6 +274,36 @@
       }).finally(function () {
         chip.disabled = false;
         chip.style.opacity = "";
+      });
+    });
+  })();
+
+  (function () {
+    // The same idea one table over. A row chip only ever removes, so the chip
+    // goes away rather than flipping. Adding from a row still posts normally:
+    // building the new chip client-side would mean duplicating its markup in
+    // JavaScript, and a reload after adding one circle is not the tedium this
+    // set out to fix.
+    document.querySelectorAll("form[data-row-tag]").forEach(function (form) {
+      form.addEventListener("submit", function (event) {
+        const chip = form.querySelector("[data-row-chip]");
+        if (!chip) return;
+        event.preventDefault();
+        chip.disabled = true;
+        chip.style.opacity = "0.5";
+        // getAttribute, not form.action — a control named "action" shadows it.
+        fetch(form.getAttribute("action"), {
+          method: "POST", body: new FormData(form), redirect: "manual",
+        }).then(function (response) {
+          if (!response.ok && response.type !== "opaqueredirect")
+            throw new Error(response.status);
+          form.remove();
+        }).catch(function () {
+          chip.disabled = false;
+          chip.style.opacity = "";
+          chip.title = "That did not save — reload the page.";
+          chip.style.outline = "2px solid #991b1b";
+        });
       });
     });
   })();

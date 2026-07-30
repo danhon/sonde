@@ -1488,3 +1488,100 @@ async def test_the_composition_chart_renders_on_the_circles_page(db, client):
 
     assert "What your audience is made of" in page.text
     assert "in scope" in page.text
+
+
+# ==================================== circles shown and edited in a row
+
+async def test_a_member_row_lists_every_circle_that_person_is_in(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+    await store.create_group("Neighbours")
+    await store.tag_actor("neighbours", "did:plc:j")
+
+    row = client.get("/circles?slug=journalists").text
+
+    assert 'value="Neighbours"' in row
+    assert "data-row-chip" in row
+
+
+async def test_a_row_offers_a_box_for_a_new_or_existing_circle(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+
+    page = client.get("/circles?slug=journalists").text
+
+    assert 'aria-label="add a circle to j.bsky.social"' in page
+    assert 'list="all-tags"' in page
+
+
+async def test_removing_from_a_row_returns_to_the_table(db, client):
+    """Not the top of /circles. The composition chart, the chip row and the
+    admin controls all sit above the table."""
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    # A second member, so the table still renders after the first is removed —
+    # an empty table has no anchor to return to, which is correct.
+    await add("did:plc:k", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+
+    response = client.post("/followers/did:plc:j/tags",
+                           data={"tag": "Journalists", "action": "remove",
+                                 "anchor": "members"},
+                           headers={"referer": "http://testserver/circles?slug=journalists"},
+                           follow_redirects=False)
+
+    assert response.headers["location"] == "/circles?slug=journalists#members"
+    assert 'id="members"' in client.get("/circles?slug=journalists").text
+
+
+async def test_an_unknown_anchor_cannot_be_injected(db, client):
+    """The anchor lands in a Location header, so it is not free text."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    await store.create_group("Neighbours")
+
+    response = client.post("/followers/did:plc:a/tags",
+                           data={"tag": "Neighbours", "action": "add",
+                                 "anchor": "evil\nX-Injected: 1"},
+                           follow_redirects=False)
+
+    assert response.headers["location"].endswith("#circles")
+
+
+async def test_adding_from_a_row_creates_a_circle_that_did_not_exist(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+
+    client.post("/followers/did:plc:j/tags",
+                data={"tag": "Brand new", "action": "add", "anchor": "members"},
+                follow_redirects=False)
+
+    assert "brand-new" in {c["slug"] for c in await store.groups_for("did:plc:j")}
+
+
+async def test_the_row_circles_are_one_query_not_one_per_member(db):
+    """groups_for per row is 200 queries for a full table. It was already being
+    used that way by the candidate preview."""
+    from tests.test_groups import add
+
+    for i in range(5):
+        await add(f"did:plc:{i}", is_verified=True,
+                  wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+
+    rows = await store.group_members("journalists")
+
+    assert len(rows) == 5
+    assert all(r["tags"] and r["tags"][0]["slug"] == "journalists" for r in rows)
+
+
+async def test_tags_for_many_handles_an_empty_batch(db):
+    assert await store.tags_for_many([]) == {}

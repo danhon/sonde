@@ -58,6 +58,52 @@
 </div>
 {%- endmacro -%}
 
+{#- One row's circles, editable in place.
+
+    The full toggle grid is right for a profile and impossible in a table: 18
+    chips across 200 rows is 3,600 controls. A row therefore shows only the
+    circles that account is actually in, each removable, plus one box to add
+    another — existing or new, same as everywhere else.
+
+    Hidden below `lg`. This is a dense desktop affordance; the table is already
+    the widest thing in the app and a phone should tag from the profile, where
+    the targets are 44px and there is room for them. Being genuinely absent
+    rather than merely small is also why the eval's tap check does not trip on
+    it — `checkVisibility()` skips it.
+
+    Legal because the member table is NOT wrapped in a form: these are sibling
+    forms in a cell, not nested ones. That is the same property that lets the
+    checkboxes join the batch bar by id. -#}
+{%- macro row_tags(member, all_tags) -%}
+<div class="flex flex-wrap items-center gap-1">
+  {%- for t in member.tags %}
+  <form method="post" action="/followers/{{ member.did }}/tags" class="inline"
+        data-row-tag>
+    <input type="hidden" name="tag" value="{{ t.name }}">
+    <input type="hidden" name="action" value="remove">
+    <input type="hidden" name="anchor" value="members">
+    <button type="submit" data-row-chip
+            title="{{ t.evidence }} ({{ t.tier }}) — click to remove"
+            class="inline-flex items-center gap-1 border border-slate-200 bg-slate-50
+                   px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider
+                   text-slate-600 hover:border-red-800 hover:text-red-800">
+      {{ t.name }}<span aria-hidden="true" class="text-slate-400">×</span>
+    </button>
+  </form>
+  {%- else %}
+  <span class="font-mono text-[10px] text-slate-300">none</span>
+  {%- endfor %}
+  <form method="post" action="/followers/{{ member.did }}/tags" class="inline-flex">
+    <input type="hidden" name="action" value="add">
+    <input type="hidden" name="anchor" value="members">
+    <input type="text" name="tag" list="all-tags" placeholder="+ circle"
+           aria-label="add a circle to {{ member.handle }}"
+           class="w-24 border border-slate-200 px-1 py-0.5 text-[11px]
+                  focus:border-red-800 focus:outline-none">
+  </form>
+</div>
+{%- endmacro -%}
+
 {#- Add a tag. The datalist autocompletes existing tags; typing a name that is
     not in it creates that tag, which is why there is no separate "new tag"
     step anywhere except the admin row on /circles. -#}

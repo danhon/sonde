@@ -546,11 +546,20 @@ def create_app() -> FastAPI:
 
     @app.post("/followers/{did}/tags")
     async def tag_one(request: Request, did: str, tag: str = Form(""),
-                      action: str = Form("add")) -> RedirectResponse:
-        # Back to the chips you clicked, not the top of the profile.
+                      action: str = Form("add"),
+                      anchor: str = Form("circles")) -> RedirectResponse:
+        """Tag one person, from wherever they were tagged.
+
+        `anchor` is where to land afterwards: the chip grid on a profile, the
+        member table on /circles. Without it every write returned you to the top
+        of whichever page you were reading.
+        """
+        # Anchors go into a Location header, so they are not free text.
+        if anchor not in ("circles", "members"):
+            anchor = "circles"
         return await _apply_tags(
             _safe_back(request, f"/followers/{did}"), [did], tag, action,
-            anchor="circles")
+            anchor=anchor)
 
     @app.get("/ignored", response_class=HTMLResponse)
     async def ignored(request: Request) -> HTMLResponse:

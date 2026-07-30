@@ -2385,9 +2385,10 @@ async def candidate_members(candidate_id: int, *, order: str = "influence",
         ) as cur:
             members = [dict(r) for r in await cur.fetchall()]
 
+    tags = await tags_for_many([m["did"] for m in members])
     for member in members:
         member["evidence"] = evidence.get(member["did"], "")
-        member["tags"] = await groups_for(member["did"])
+        member["tags"] = tags.get(member["did"], [])
 
     # A cluster's members were captured when it was found, so some may have
     # departed since. Showing them marked beats dropping them silently: a
@@ -2969,7 +2970,39 @@ async def group_members(slug: str, limit: int = 200, *, order: str = "influence"
              ORDER BY {column} {arrow} NULLS LAST, a.handle ASC LIMIT ?""",
         (slug, limit),
     ) as cur:
-        return [dict(r) for r in await cur.fetchall()]
+        rows = [dict(r) for r in await cur.fetchall()]
+
+    # Every circle each member is in, so a row can show and edit them without
+    # a trip to the profile. One query for the table, not one per row.
+    tags = await tags_for_many([r["did"] for r in rows])
+    for row in rows:
+        row["tags"] = tags.get(row["did"], [])
+    return rows
+
+
+async def tags_for_many(dids: Sequence[str]) -> dict[str, list[dict]]:
+    """Circles for a batch of people, in one query.
+
+    `groups_for` per row is an N+1: fine for one profile, 200 queries for a
+    member table and 92 for a candidate preview, which is where it was already
+    being used that way.
+    """
+    if not dids:
+        return {}
+    db = await _db()
+    placeholders = ",".join("?" for _ in dids)
+    async with db.execute(
+        f"""SELECT m.did, g.slug, g.name, m.tier, m.evidence, m.confidence
+              FROM group_members m JOIN groups g ON g.id = m.group_id
+             WHERE m.did IN ({placeholders}) AND g.archived_at IS NULL
+               AND COALESCE(m.confirmed, 1) = 1
+             ORDER BY m.confidence DESC, g.name""",
+        tuple(dids),
+    ) as cur:
+        out: dict[str, list[dict]] = {}
+        for row in await cur.fetchall():
+            out.setdefault(row["did"], []).append(dict(row))
+    return out
 
 
 async def groups_for(did: str) -> list[dict]:
