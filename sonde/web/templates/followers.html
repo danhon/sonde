@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_sort.html" import who, since with context %}
 {% from "_tags.html" import batch_bar, tag_options with context %}
+{% from "_charts.html" import frame, column_chart with context %}
 {% block title %}Followers — sonde{% endblock %}
 
 {#- Build a query string carrying the current filters, so sorting and paging
@@ -138,6 +139,37 @@
   <span class="text-slate-400">page {{ page }}</span>
   {% if rows|length == 100 %}<a class="text-red-800 hover:underline" href="{{ qs({'page': page + 1}) }}">next →</a>{% endif %}
 </div>
+{% endif %}
+
+{% if cohort_plot and cohort_plot.bars|length > 2 %}
+{% call frame("When your audience joined Bluesky",
+              "accounts by the month they were created",
+              "{:,} of your followers".format(cohorts|sum(attribute='n'))) %}
+  {{ column_chart(cohort_plot, 'accounts', 4) }}
+  <p class="mt-2 max-w-2xl text-xs text-slate-500">
+    Creation date, not follow date — this is when they arrived on Bluesky, not
+    when they found you. Followers whose account date is unknown are not shown.
+  </p>
+  <details class="mt-2">
+    <summary class="cursor-pointer font-mono text-[10px] uppercase tracking-widest text-slate-400 hover:text-red-800">
+      table
+    </summary>
+    <div class="mt-2 overflow-x-auto">
+      <table class="w-full max-w-md text-xs">
+        <tbody>
+          {% for r in cohorts | sort(attribute='n', reverse=true) %}
+          {% if loop.index <= 12 %}
+          <tr class="border-b border-slate-100">
+            <td class="py-1 pr-4 font-mono text-slate-500">{{ r.month }}</td>
+            <td class="py-1 pr-4 text-right font-mono tabular-nums">{{ "{:,}".format(r.n) }}</td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+{% endcall %}
 {% endif %}
 
 {% endblock %}

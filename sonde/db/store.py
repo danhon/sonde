@@ -1698,6 +1698,38 @@ async def account_cohorts() -> list[dict]:
         return [dict(r) for r in await cur.fetchall()]
 
 
+async def weekly_arrivals(weeks: int = 4) -> list[dict]:
+    """New followers per rolling week, oldest first.
+
+    Rolling seven-day windows counted back from today, not calendar weeks: the
+    homepage answers "what happened lately", and a calendar bucket makes the
+    current week look like a collapse every Monday.
+
+    `followed_at` where the authenticated sweep decoded it from the follow
+    record, `first_seen_at` otherwise — the same COALESCE every other "since"
+    reading in the app uses, so the numbers agree with /changes.
+    """
+    db = await _db()
+    async with db.execute(
+        """SELECT CAST(julianday('now') - julianday(
+                      COALESCE(fs.followed_at, fs.first_seen_at)) AS INTEGER) / 7
+                    AS weeks_ago,
+                  COUNT(*) AS n
+             FROM follower_state fs
+            WHERE COALESCE(fs.followed_at, fs.first_seen_at) >= date('now', ?)
+              AND fs.ignored_at IS NULL
+            GROUP BY weeks_ago""",
+        (f"-{weeks * 7} day",),
+    ) as cur:
+        counts = {row["weeks_ago"]: row["n"] for row in await cur.fetchall()}
+
+    # Every bucket present, including the empty ones. A quiet week is a fact
+    # about the week, and a chart that silently omits it misreports the trend.
+    return [{"label": "this week" if ago == 0 else f"{ago + 1}w ago",
+             "weeks_ago": ago, "n": counts.get(ago, 0)}
+            for ago in range(weeks - 1, -1, -1)]
+
+
 async def attention_points(limit: int = 2000) -> list[dict]:
     """Hydrated followers as (follows, followers) for the scarcity scatter."""
     db = await _db()

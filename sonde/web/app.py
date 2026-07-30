@@ -193,19 +193,22 @@ def create_app() -> FastAPI:
         from sonde import charts
 
         stats = await store.dashboard_stats()
-        cohorts = await store.account_cohorts()
+        # Arrivals, not account-creation cohorts: the homepage answers "what
+        # happened lately". The full creation history lives on /followers, where
+        # there is room for six years of it.
+        arrivals = await store.weekly_arrivals()
         return TEMPLATES.TemplateResponse(
             request=request, name="index.html",
             context={
                 "stats": stats, "settings": settings,
-                "cohorts": cohorts,
+                "arrivals": arrivals,
                 # Operational faults belong on the page you land on, not buried
                 # on /settings where nobody was looking when the backup broke.
                 "notices_list": await store.active_notices(
                     kinds=("backup_failing",)),
-                "cohort_plot": charts.columns(
-                    [(r["month"], r["n"]) for r in cohorts],
-                    charts.Box(height=180)),
+                "arrivals_plot": charts.columns(
+                    [(r["label"], r["n"]) for r in arrivals],
+                    charts.Box(height=140)),
             },
         )
 
@@ -802,11 +805,16 @@ def create_app() -> FastAPI:
         floor = _as_int(min_followers)
         direction = "asc" if direction == "asc" else "desc"
 
+        from sonde import charts
+
         rows = await store.ranked_followers(
             limit=per_page, offset=(page_num - 1) * per_page, order=order,
             direction=direction, verified_only=verified, mutual_only=mutual,
             min_followers=floor, query=q, tag=tag,
         )
+        # Moved off the homepage, which only wants the last few weeks. Six years
+        # of monthly cohorts needs a page you have chosen to look at.
+        cohorts = await store.account_cohorts()
         # Every link on the page has to carry the current filters, or
         # paginating or re-sorting silently drops them.
         filters = {"q": q or "", "verified": verified, "mutual": mutual,
@@ -822,6 +830,10 @@ def create_app() -> FastAPI:
                 "min_followers": floor, "tag": tag or "",
                 "counts": await store.counts(), "settings": settings,
                 "all_tags": await store.group_names(),
+                "cohorts": cohorts,
+                "cohort_plot": charts.columns(
+                    [(r["month"], r["n"]) for r in cohorts],
+                    charts.Box(height=180)),
             },
         )
 

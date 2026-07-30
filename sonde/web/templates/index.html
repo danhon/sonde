@@ -4,37 +4,21 @@
 {% from "_notices.html" import notices with context %}
 {% block content %}
 {{ notices(notices_list, "/", tone="red") }}
-{% if cohort_plot and cohort_plot.bars|length > 2 %}
-{% call frame("When your audience joined Bluesky",
-              "accounts by the month they were created",
-              "{:,} of your followers".format(cohorts|sum(attribute='n'))) %}
-  {{ column_chart(cohort_plot, 'accounts', 4) }}
+
+{% if arrivals %}
+{% call frame("Who found you lately",
+              "new followers per week, most recent last",
+              "{:,} in four weeks".format(arrivals|sum(attribute='n'))) %}
+  {{ column_chart(arrivals_plot, 'followers', 1) }}
   <p class="mt-2 max-w-2xl text-xs text-slate-500">
-    Creation date, not follow date — this is when they arrived on Bluesky, not
-    when they found you. Followers whose account date is unknown are not shown.
+    Rolling seven-day windows counted back from today, not calendar weeks — a
+    calendar bucket makes the current week look like a collapse every Monday.
+    When these people <em>joined Bluesky</em>, as opposed to when they found
+    you, is on <a href="/followers" class="text-red-800 hover:underline">the
+    followers page</a>.
   </p>
-  <details class="mt-2">
-    <summary class="cursor-pointer font-mono text-[10px] uppercase tracking-widest text-slate-400 hover:text-red-800">
-      table
-    </summary>
-    <div class="mt-2 overflow-x-auto">
-      <table class="w-full max-w-md text-xs">
-        <tbody>
-          {% for r in cohorts | sort(attribute='n', reverse=true) %}
-          {% if loop.index <= 12 %}
-          <tr class="border-b border-slate-100">
-            <td class="py-1 pr-4 font-mono text-slate-500">{{ r.month }}</td>
-            <td class="py-1 pr-4 text-right font-mono tabular-nums">{{ "{:,}".format(r.n) }}</td>
-          </tr>
-          {% endif %}
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </details>
 {% endcall %}
 {% endif %}
-
 
 {% if stats.needs_review %}
 <div class="mb-8 border-l-4 border-red-700 bg-red-50 px-5 py-4">

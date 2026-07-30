@@ -13,8 +13,19 @@ from pathlib import Path
 import pytest
 
 from sonde import charts
+from sonde.db import store
 
 TEMPLATES = Path(__file__).resolve().parents[1] / "sonde" / "web" / "templates"
+
+
+@pytest.fixture
+def client():
+    from fastapi.testclient import TestClient
+
+    from sonde.web.app import create_app
+
+    with TestClient(create_app()) as c:
+        yield c
 
 
 # ------------------------------------------------- scales
@@ -194,3 +205,83 @@ def test_every_page_with_a_chart_imports_the_macros():
         head = source.split("{% block content %}")[0]
         assert '_charts.html" import' in head, f"{name} never imports the macros"
         assert "with context" in head
+
+
+# ------------------------------------- weekly arrivals on the homepage
+
+async def test_arrivals_are_counted_in_rolling_weeks(db):
+    """Rolling seven-day windows, not calendar weeks: a calendar bucket makes
+    the current week look like a collapse every Monday."""
+    from tests.test_groups import add
+
+    await add("did:plc:now", is_verified=True)
+    await add("did:plc:old", is_verified=True)
+    conn = await store._db()
+    await conn.execute(
+        "UPDATE follower_state SET followed_at = date('now','-10 day') "
+        "WHERE did = 'did:plc:old'")
+    await conn.execute(
+        "UPDATE follower_state SET followed_at = date('now','-1 day') "
+        "WHERE did = 'did:plc:now'")
+    await store.commit()
+
+    weeks = await store.weekly_arrivals()
+
+    assert [w["n"] for w in weeks] == [0, 0, 1, 1]
+    assert weeks[-1]["label"] == "this week"
+
+
+async def test_a_quiet_week_is_still_a_bucket(db):
+    """A week with nobody is a fact about the week. Omitting it would make the
+    chart misreport the trend by silently closing the gap."""
+    weeks = await store.weekly_arrivals()
+
+    assert len(weeks) == 4
+    assert all(w["n"] == 0 for w in weeks)
+
+
+async def test_arrivals_run_oldest_to_newest(db):
+    weeks = await store.weekly_arrivals()
+    assert [w["weeks_ago"] for w in weeks] == [3, 2, 1, 0]
+
+
+async def test_hidden_followers_are_not_counted_as_arrivals(db):
+    from tests.test_groups import add
+
+    await add("did:plc:h", is_verified=True)
+    await store.set_ignored("did:plc:h", True)
+
+    assert sum(w["n"] for w in await store.weekly_arrivals()) == 0
+
+
+async def test_the_homepage_shows_arrivals_and_links_the_full_history(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+
+    page = client.get("/")
+
+    assert "Who found you lately" in page.text
+    assert "When your audience joined Bluesky" not in page.text
+    assert 'href="/followers"' in page.text
+
+
+async def test_the_followers_page_carries_the_creation_history(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    conn = await store._db()
+    for month in ("2023-01", "2023-02", "2023-03"):
+        await conn.execute(
+            "INSERT INTO actors (did, handle, account_created_at, first_indexed_at) "
+            "VALUES (?,?,?,?)",
+            (f"did:plc:{month}", f"{month}.test", f"{month}-15T00:00:00Z",
+             store.utcnow()))
+        await conn.execute(
+            "INSERT INTO follower_state (did, is_current, first_seen_at, last_seen_at) "
+            "VALUES (?,1,?,?)", (f"did:plc:{month}", store.utcnow(), store.utcnow()))
+    await store.commit()
+
+    page = client.get("/followers")
+
+    assert "When your audience joined Bluesky" in page.text
