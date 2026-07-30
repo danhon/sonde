@@ -50,7 +50,10 @@ ROUTES = ["/", "/followers", "/influential", "/verified", "/circles",
           "/circles?slug=game-industry",
           # Gained bios under each handle in the Circles rename;
           # the widest table in the app and not previously covered.
-          "/circles/discover/307"]
+          "/circles/discover/307",
+          # A profile: never covered before, and now carries the
+          # circle toggle grid — the most-tapped control in the app.
+          "/followers/did:plc:cfcnluzwlof3qkppfmlmuxhm"]
 
 # Apple and WCAG both land near this for a touch target.
 MIN_TAP_PX = 44
@@ -135,7 +138,8 @@ VISIBLE_NAV_JS = """() => {
 
 TAP_JS = f"""() => {{
     const out = [];
-    for (const el of document.querySelectorAll("nav a, nav summary")) {{
+    for (const el of document.querySelectorAll(
+            "nav a, nav summary, [data-circle-chip]")) {{
         if (el.checkVisibility && !el.checkVisibility({{checkVisibilityCSS: true}}))
             continue;
         const r = el.getBoundingClientRect();

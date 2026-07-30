@@ -219,6 +219,56 @@
   })();
 
   (function () {
+    // Toggling a circle in place. Without this every chip still works — it is a
+    // plain form, it posts, and the redirect lands back on the chips — so the
+    // only thing lost is the reload. Which is worth losing: the block sits well
+    // down a long profile, and tagging three people is six page loads.
+    const grid = document.querySelector("[data-circle-toggles]");
+    if (!grid) return;
+
+    const ON = ["border-red-800", "bg-red-50", "text-red-800"];
+    const OFF = ["border-slate-300", "bg-white", "text-slate-500",
+                 "hover:border-red-800", "hover:text-red-800"];
+
+    grid.addEventListener("submit", function (event) {
+      const form = event.target.closest("form");
+      const chip = form && form.querySelector("[data-circle-chip]");
+      if (!chip) return;
+      event.preventDefault();
+      if (chip.disabled) return;
+
+      const action = form.elements.action.value;
+      chip.disabled = true;
+      chip.style.opacity = "0.5";
+
+      fetch(form.action, {
+        method: "POST",
+        body: new FormData(form),
+        // The endpoint answers 303 to a page; we only care that it worked.
+        redirect: "follow",
+      }).then(function (response) {
+        if (!response.ok) throw new Error(response.status);
+        const on = action === "add";
+        chip.classList.remove.apply(chip.classList, on ? OFF : ON);
+        chip.classList.add.apply(chip.classList, on ? ON : OFF);
+        chip.setAttribute("aria-pressed", on ? "true" : "false");
+        form.elements.action.value = on ? "remove" : "add";
+        const mark = chip.querySelector("[data-chip-mark]");
+        mark.textContent = on ? "×" : "+";
+        mark.className = on ? "text-red-800" : "text-slate-300";
+      }).catch(function () {
+        // Say nothing false. The page is now out of step with the database, and
+        // a reload is the honest way to find out what it actually says.
+        chip.title = "That did not save — reload the page.";
+        chip.style.outline = "2px solid #991b1b";
+      }).finally(function () {
+        chip.disabled = false;
+        chip.style.opacity = "";
+      });
+    });
+  })();
+
+  (function () {
     // Fetched when the panel is first opened, not on page load. Nobody needs
     // this except in the moment they wonder, and polling it would spend GitHub
     // rate limit answering a question nobody asked.

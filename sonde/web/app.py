@@ -119,9 +119,18 @@ def _interaction_panels(series: dict) -> dict:
 
 
 def _composition_bars(data: dict) -> dict:
+    """Store keys to interface names, at the boundary between them.
+
+    The store says groups because its tables do; the interface says circles.
+    Mapping here is what keeps that rename from reaching three tables — and
+    forgetting to map is how the composition chart and the profile chips both
+    silently vanished when the rename landed.
+    """
     from sonde import charts
 
-    data["bars"] = charts.bars([(g["name"], g["n"]) for g in data["groups"]])
+    data["circles"] = data.pop("groups")
+    data["people_in_a_circle"] = data.pop("people_in_a_group")
+    data["bars"] = charts.bars([(g["name"], g["n"]) for g in data["circles"]])
     return data
 
 
@@ -223,7 +232,7 @@ def create_app() -> FastAPI:
         person["posts"] = await store.posts_for(did)
         person["moderation_lists"] = await store.lists_matching(did)
         person["affiliations"] = await store.affiliations_for(did)
-        person["groups"] = await store.groups_for(did)
+        person["circles"] = await store.groups_for(did)
         person["interactions"] = await store.interactions_for(did)
         person["breakdown"] = await store.interaction_breakdown(did)
         return TEMPLATES.TemplateResponse(
@@ -457,27 +466,34 @@ def create_app() -> FastAPI:
         return RedirectResponse(f"/circles?slug={slug}", status_code=303)
 
     async def _apply_tags(back: str, dids: list[str], tag: str,
-                          action: str) -> RedirectResponse:
-        """Shared by the batch bar and the single control on a detail page."""
+                          action: str, anchor: str = "tagged") -> RedirectResponse:
+        """Shared by the batch bar and the toggle chips on a detail page.
+
+        `anchor` is what the redirect lands on. It matters more than it looks:
+        the fragment used to be `#tagged-N`, which matches no element, so every
+        toggle bounced you to the top of a long profile and you scrolled back
+        down past the bio, the score breakdown and the events table to reach the
+        chips again. Pointing it at the block you clicked in is the whole
+        no-JavaScript half of making this not tedious.
+        """
         from sonde.db import store
 
         tag = (tag or "").strip()
         if not tag or not dids:
-            return RedirectResponse(f"{back}#nothing-selected", status_code=303)
+            return RedirectResponse(f"{back}#{anchor}", status_code=303)
 
         if action == "add":
             # Type-to-create: an unknown name in the box makes the tag. Only on
             # add — a typo while removing must not conjure an empty tag.
             result = await store.create_group(tag)
             if result["status"] in ("invalid", "archived"):
-                return RedirectResponse(f"{back}#tag-{result['status']}",
-                                        status_code=303)
+                return RedirectResponse(f"{back}#{anchor}", status_code=303)
             slug = result["slug"]
         else:
             slug = store.slugify(tag)
 
         changed = await store.tag_actors(slug, dids, add=(action == "add"))
-        return RedirectResponse(f"{back}#tagged-{changed}", status_code=303)
+        return RedirectResponse(f"{back}#{anchor}", status_code=303)
 
     @app.post("/circles/new")
     async def new_group(name: str = Form("")) -> RedirectResponse:
@@ -531,8 +547,10 @@ def create_app() -> FastAPI:
     @app.post("/followers/{did}/tags")
     async def tag_one(request: Request, did: str, tag: str = Form(""),
                       action: str = Form("add")) -> RedirectResponse:
+        # Back to the chips you clicked, not the top of the profile.
         return await _apply_tags(
-            _safe_back(request, f"/followers/{did}"), [did], tag, action)
+            _safe_back(request, f"/followers/{did}"), [did], tag, action,
+            anchor="circles")
 
     @app.get("/ignored", response_class=HTMLResponse)
     async def ignored(request: Request) -> HTMLResponse:

@@ -17,6 +17,47 @@
 </span>
 {%- endmacro -%}
 
+{#- Every circle as a toggle: on ones filled, off ones outlined, one gesture
+    either way and the whole chip is the target.
+
+    This replaced a row of current tags each carrying a 10px × plus a text box
+    you had to type a remembered name into. Three things were wrong with that.
+    The × was far under the 44px this app holds its own nav to. Adding required
+    knowing what existed, because nothing showed you. And showing only what
+    someone IS in cannot express what they are not in, which is most of the
+    question when you are deciding.
+
+    Viable because the numbers are small: 18 live circles, and nobody is in more
+    than five, so the off-set is never more than 17 chips. Past roughly 30 this
+    wants member-first ordering or a filter — not built, because it is not true
+    yet.
+
+    The chip is a button, not a link: navigating to a circle is what /circles is
+    for, and a second tiny target inside the chip is the thing being fixed. -#}
+{%- macro circle_toggles(all_tags, member, did) -%}
+<div id="circles" data-circle-toggles class="mt-4 flex flex-wrap gap-2">
+  {%- for t in all_tags %}
+  {%- set m = (member | selectattr('slug', 'equalto', t.slug) | list | first) %}
+  <form method="post" action="/followers/{{ did }}/tags" class="inline">
+    <input type="hidden" name="tag" value="{{ t.name }}">
+    <input type="hidden" name="action" value="{{ 'remove' if m else 'add' }}">
+    <button type="submit" aria-pressed="{{ 'true' if m else 'false' }}"
+            data-circle-chip
+            title="{% if m %}{{ m.evidence }} ({{ m.tier }}) — click to remove{% else %}add to {{ t.name }}{% endif %}"
+            class="inline-flex min-h-[44px] items-center gap-1.5 border px-3
+                   font-mono text-[10px] uppercase tracking-wider
+                   {% if m %}border-red-800 bg-red-50 text-red-800
+                   {% else %}border-slate-300 bg-white text-slate-500
+                             hover:border-red-800 hover:text-red-800{% endif %}">
+      <span data-chip-name>{{ t.name }}</span>
+      <span aria-hidden="true" data-chip-mark
+            class="{{ 'text-red-800' if m else 'text-slate-300' }}">{{ '×' if m else '+' }}</span>
+    </button>
+  </form>
+  {%- endfor %}
+</div>
+{%- endmacro -%}
+
 {#- Add a tag. The datalist autocompletes existing tags; typing a name that is
     not in it creates that tag, which is why there is no separate "new tag"
     step anywhere except the admin row on /circles. -#}

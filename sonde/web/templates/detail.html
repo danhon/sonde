@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_sort.html" import since with context %}
-{% from "_tags.html" import tag_chip, tag_input, tag_options with context %}
+{% from "_tags.html" import circle_toggles, tag_input, tag_options with context %}
 {% block title %}{{ p.handle }} — sonde{% endblock %}
 {% block content %}
 
@@ -175,10 +175,17 @@
   {% endif %}
 </section>
 
-<div class="mt-4 flex flex-wrap items-center gap-2">
-  {% for g in p.circles %}{{ tag_chip(g, p.did) }}{% endfor %}
-  {{ tag_input(all_tags, "/followers/" ~ p.did ~ "/tags") }}
-</div>
+<section class="mt-8">
+  <h2 class="border-b border-slate-300 pb-2 font-mono text-xs font-semibold uppercase tracking-widest text-red-800">
+    Circles
+  </h2>
+  {{ circle_toggles(all_tags, p.circles, p.did) }}
+  <div class="mt-3 flex flex-wrap items-center gap-2">
+    {#- The box now does the one thing chips cannot: make a circle that does not
+        exist yet. Looking at the person who prompted it is when you want it. -#}
+    {{ tag_input(all_tags, "/followers/" ~ p.did ~ "/tags", label='New circle') }}
+  </div>
+</section>
 {{ tag_options(all_tags) }}
 
 {% if p.affiliations %}
@@ -455,7 +462,11 @@
 {% endif %}
 
 
-<div class="mt-8 flex items-center gap-4">
+{#- flex-wrap, not a rigid row. Four controls plus a sentence of explanation do
+    not fit in 320px, and `ml-auto` on the last one pushed it 25px off the right
+    edge. Found the moment this page entered the mobile eval, having been the
+    one page it never covered. -#}
+<div class="mt-8 flex flex-wrap items-center gap-4 gap-y-3">
   <a href="/followers" class="font-mono text-xs text-red-800 hover:underline">← all followers</a>
   {#- Follow-back, full size. The same action as the +follow in the tables, and
       the same control undoes it: reversibility is the safety, since a

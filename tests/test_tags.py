@@ -1357,3 +1357,134 @@ async def test_the_nav_says_circles(db, client):
     page = client.get("/circles")
     assert ">Circles<" in page.text
     assert ">Groups<" not in page.text
+
+
+# ============================================ toggle chips on a profile
+
+async def test_every_circle_is_offered_not_just_the_ones_they_are_in(db, client):
+    """The old control showed only current tags, so adding meant remembering
+    what existed and typing it. You cannot see what someone is NOT in, which is
+    most of the question when deciding."""
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+    await store.create_group("Neighbours")
+
+    chips = [c for c in client.get("/followers/did:plc:j").text.split("<form")
+             if "data-circle-chip" in c]
+
+    # Assert the CHIPS, not the names. The old test looked for the name anywhere
+    # on the page and so kept passing after the rename broke the chips entirely
+    # — the name was still in the datalist.
+    offered = {n for n in ("Journalists", "Neighbours")
+               if any(f'value="{n}"' in c for c in chips)}
+    assert offered == {"Journalists", "Neighbours"}
+
+
+async def test_a_chip_posts_remove_when_they_are_in_it_and_add_when_not(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+    await store.create_group("Neighbours")
+
+    body = client.get("/followers/did:plc:j").text
+    chips = body.split("<form")
+
+    inside = next(c for c in chips if 'value="Journalists"' in c)
+    outside = next(c for c in chips if 'value="Neighbours"' in c)
+    assert 'name="action" value="remove"' in inside
+    assert 'name="action" value="add"' in outside
+    assert 'aria-pressed="true"' in inside
+    assert 'aria-pressed="false"' in outside
+
+
+async def test_archived_circles_are_not_offered(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    await store.create_group("Gone")
+    await store.archive_group("gone")
+
+    assert 'value="Gone"' not in client.get("/followers/did:plc:a").text
+
+
+async def test_removing_returns_you_to_the_chips_not_the_top(db, client):
+    """The fragment used to be #tagged-N, which matches no element, so every
+    toggle bounced you to the top of a long profile."""
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+
+    response = client.post("/followers/did:plc:j/tags",
+                           data={"tag": "Journalists", "action": "remove"},
+                           headers={"referer": "http://testserver/followers/did:plc:j"},
+                           follow_redirects=False)
+
+    assert response.headers["location"] == "/followers/did:plc:j#circles"
+
+
+async def test_the_anchor_exists_on_the_page_it_points_at(db, client):
+    """A fragment nothing matches is exactly the bug being fixed, so assert the
+    target is really there rather than trusting the string."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+
+    assert 'id="circles"' in client.get("/followers/did:plc:a").text
+
+
+async def test_toggling_through_a_chip_works_in_both_directions(db, client):
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    await store.create_group("Neighbours")
+
+    client.post("/followers/did:plc:a/tags",
+                data={"tag": "Neighbours", "action": "add"}, follow_redirects=False)
+    assert [c["slug"] for c in await store.groups_for("did:plc:a")] == ["neighbours"]
+
+    client.post("/followers/did:plc:a/tags",
+                data={"tag": "Neighbours", "action": "remove"}, follow_redirects=False)
+    assert await store.groups_for("did:plc:a") == []
+
+
+async def test_the_chips_meet_the_tap_target_floor(db, client):
+    """44px is what this app holds its own nav to, and these are about to become
+    the most-tapped control in it. The thing replaced was a 10px glyph."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+    await store.create_group("Neighbours")
+
+    body = client.get("/followers/did:plc:a").text
+    chip = next(c for c in body.split("<form") if "data-circle-chip" in c)
+
+    assert "min-h-[44px]" in chip
+
+
+async def test_the_create_box_is_still_there_for_new_circles(db, client):
+    """Chips cannot make a circle that does not exist yet; that is the one job
+    left to the text box."""
+    from tests.test_groups import add
+
+    await add("did:plc:a", is_verified=True)
+
+    assert 'placeholder="New circle"' in client.get("/followers/did:plc:a").text
+
+
+async def test_the_composition_chart_renders_on_the_circles_page(db, client):
+    """It vanished silently in the Circles rename: the template asked for
+    composition.circles while the store returned "groups", so the whole frame
+    was skipped. Nothing failed, the chart was just gone."""
+    from tests.test_groups import add
+
+    await add("did:plc:j", is_verified=True, wikidata_occupations='["journalist"]')
+    await store.classify_groups()
+
+    page = client.get("/circles")
+
+    assert "What your audience is made of" in page.text
+    assert "in scope" in page.text
