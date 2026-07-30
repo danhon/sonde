@@ -55,6 +55,8 @@ ROUTES = ["/", "/followers", "/influential", "/verified", "/circles",
           # circle toggle grid — the most-tapped control in the app.
           "/followers/did:plc:cfcnluzwlof3qkppfmlmuxhm"]
 
+PROFILE_ROUTE = "/followers/did:plc:cfcnluzwlof3qkppfmlmuxhm"
+
 # Apple and WCAG both land near this for a touch target.
 MIN_TAP_PX = 44
 
@@ -258,6 +260,55 @@ async def main() -> int:
                                 f"{where}: nav targets under {MIN_TAP_PX}px — "
                                 f"{', '.join(small)}")
                 await context.close()
+
+            # One interaction check per engine, at a desktop width. Everything
+            # above measures a rendered page; this drives the one control that
+            # only works if its JavaScript is right.
+            #
+            # It earns its place: the chip handler read `form.action` to find
+            # where to post, and because the form contains a control NAMED
+            # "action", that property resolved to the <input> instead of the
+            # URL. Every request went to /followers/[object HTMLInputElement]
+            # and 405'd. Server-side tests all passed — the markup was correct
+            # and the endpoint was correct; only the browser joined them up.
+            #
+            # The POST is intercepted and answered here rather than allowed
+            # through, so this writes nothing: an eval must stay safe to point
+            # at a populated database.
+            context = await browser.new_context(viewport={"width": 1280, "height": 900})
+            page = await context.new_page()
+            posted: list[str] = []
+
+            async def capture(route):
+                posted.append(route.request.url)
+                await route.fulfil(status=204) if hasattr(route, "fulfil") \
+                    else await route.fulfill(status=204)
+
+            await page.route("**/tags", capture)
+            try:
+                await page.goto(f"{BASE_URL}{PROFILE_ROUTE}",
+                                wait_until="domcontentloaded", timeout=20000)
+                chip = page.locator('[data-circle-chip]').first
+                if await chip.count():
+                    before = await chip.get_attribute("aria-pressed")
+                    await chip.click()
+                    await page.wait_for_timeout(400)
+                    after = await chip.get_attribute("aria-pressed")
+                    if not posted:
+                        failures.append(
+                            f"{engine} chip click posted nothing — the handler "
+                            f"did not run")
+                    elif "[object" in posted[0] or "/tags" not in posted[0]:
+                        failures.append(
+                            f"{engine} chip posted to a malformed URL: {posted[0]}")
+                    elif before == after:
+                        failures.append(
+                            f"{engine} chip did not change state on click "
+                            f"(stayed aria-pressed={before})")
+                    checked += 1
+            except Exception as exc:  # noqa: BLE001
+                failures.append(f"{engine} chip check errored: {exc!r}")
+            await context.close()
             await browser.close()
 
     print(f"\n  checked {checked} page renders "

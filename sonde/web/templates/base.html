@@ -241,7 +241,13 @@
       chip.disabled = true;
       chip.style.opacity = "0.5";
 
-      fetch(form.action, {
+      // getAttribute, NOT form.action. This form has a control named "action",
+      // and a named control shadows the form's own property — so `form.action`
+      // returns that <input> rather than the URL, and every toggle posted to
+      // /followers/[object HTMLInputElement] and 405'd. Server-side tests all
+      // passed: the markup was right and the endpoint was right, and only a
+      // browser joins the two up.
+      fetch(form.getAttribute("action"), {
         method: "POST",
         body: new FormData(form),
         // The endpoint answers 303 to a page; we only care that it worked.
