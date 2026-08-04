@@ -14,6 +14,7 @@ Docs in this repo, split by what they answer:
 | [README.md](README.md) | Running, configuring and deploying it |
 | [PLAN.md](PLAN.md) | The design — what was measured, what follows from it, and the rules the code must obey |
 | [HISTORY.md](HISTORY.md) | What was built, in order, and why. Where a threshold's justification lives |
+| [ACCESS.md](ACCESS.md) | Who can see what — the public read-only view and the rules that keep it redacted |
 | [BUGS.md](BUGS.md) | Reproduced defects, ranked. Delete an entry when it is fixed |
 | [SCORING.md](SCORING.md) | The influence score in full |
 
