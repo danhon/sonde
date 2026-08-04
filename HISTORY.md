@@ -1230,3 +1230,33 @@ someone sonde already followed and would have written a second record.
 the live row, taking the later of `followed_back` / `unfollowed_back` by id so an
 undone follow is not resurrected. That repairs a database this bug has already
 damaged, on the next sweep, with no migration.
+
+## 2026-08-04 — two failure domains in the follow button, and a logger that never existed
+
+`follow_back` ran the Bluesky write and the bookkeeping inside one `try`, so a
+store error *after* a successful `createRecord` was handled as though the write
+had failed: `follow_events` recorded `follow_failed` for a follow that exists
+publicly on the operator's account, and the returned URI — the only handle on
+undoing it — was discarded. The two stages are now separate, because they are
+separate failure domains: before the write, a failure means nothing happened and
+saying so is correct; after it, the record is real and cannot be taken back.
+
+When the second stage fails there is nothing left to write to, so the URI goes to
+the log at ERROR, deliberately shouting, because at that point the log is the
+only surviving copy.
+
+**The test written for that found a worse bug underneath it.** `log` was
+referenced in the follow-back handler and never defined anywhere in `app.py` —
+no `import logging`, no module-level logger. So the first line of the except
+block raised `NameError` *inside the except block*: the operator got a 500, and
+`record_follow_failure` never ran. Every failed follow-back since M23 was
+silently unrecorded, which is the exact opposite of the guarantee in
+`record_follow_failure`'s own docstring ("A failed write is logged, not
+swallowed") and in `follows.py`'s module docstring ("**Logged.** Every follow and
+unfollow is written to `follow_events`").
+
+It survived because every test of that path called `store.record_follow_failure`
+directly. The store function was always correct; nothing ever reached it. The new
+tests drive the HTTP route instead, which is the only way this was ever going to
+show up — and the reason the three of them were checked against the old code
+before being kept.

@@ -22,24 +22,6 @@ the output.
 
 ### P0 — permanent data loss, and a redirect that leaves the site
 
-**BUG-13 · A successful follow whose bookkeeping fails is recorded as a
-failure, and its URI is discarded.** In `follow_back` (`app.py:618`) the
-Bluesky write and the store write share one `try`:
-
-```python
-uri = await create_follow(client, did)   # public record now exists
-await store.record_my_follow(did, uri)   # if this throws…
-except (FollowError, Exception) as exc:  # …it lands here
-    await store.record_follow_failure(did, str(exc), undo=undo)
-```
-
-Any store error after a successful network write leaves a real, public follow on
-the operator's account whose URI is gone, logged in `follow_events` as something
-that did not happen. Same permanent-loss class as BUG-12, reached by a different
-door, and `except (FollowError, Exception)` guarantees nothing escapes to say so.
-*Fix:* the created URI must be durable before anything can throw, and a failure
-to record it must be reported as what it is — a follow that happened.
-
 **BUG-14 · Open redirect on notice dismissal.** `dismiss_notice`
 (`app.py:913`) validates its `back` parameter with `back.startswith("/")`,
 which passes scheme-relative URLs. Reproduced:

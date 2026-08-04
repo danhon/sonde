@@ -232,3 +232,102 @@ def test_macros_are_imported_with_context():
         text = page.read_text()
         if '_sort.html" import' in text:
             assert "with context" in text, f"{page.name} imports without context"
+
+
+# ------------------------------------------------- the two failure domains
+
+def _endpoint():
+    """The route, over ASGI, on the caller's event loop."""
+    from httpx import ASGITransport, AsyncClient
+
+    from sonde.web.app import create_app
+
+    return AsyncClient(transport=ASGITransport(app=create_app()),
+                       base_url="http://sonde.test")
+
+
+async def _events(did: str = "did:plc:a") -> list[str]:
+    db_ = await store._db()
+    async with db_.execute(
+        "SELECT event FROM follow_events WHERE did = ?", (did,)
+    ) as cur:
+        return [row["event"] for row in await cur.fetchall()]
+
+
+async def test_a_follow_bluesky_accepted_is_never_logged_as_a_failure(
+        db, signed_in, monkeypatch):
+    """The bug: a store error after createRecord discarded a real follow.
+
+    `record_my_follow` throwing used to land in the same handler as a network
+    failure, so `follow_events` recorded `follow_failed` for a follow that
+    exists publicly on the operator's account — and the URI, the only handle on
+    undoing it, went on the floor. The write and the bookkeeping are now
+    separate stages because they are separate failure domains.
+    """
+    from sonde.api import follows as follows_module
+
+    await follower("did:plc:a")
+
+    async def accepted(client, did):
+        return "at://did:plc:me/app.bsky.graph.follow/kept"
+
+    async def boom(did, uri):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(follows_module, "create_follow", accepted)
+    monkeypatch.setattr(store, "record_my_follow", boom)
+
+    async with _endpoint() as c:
+        r = await c.post("/followers/did:plc:a/follow", follow_redirects=False)
+
+    assert r.status_code == 303
+    assert r.headers["location"].endswith("#not-recorded"), r.headers["location"]
+    assert "follow_failed" not in await _events(), (
+        "a follow Bluesky accepted was written down as a failure"
+    )
+
+
+async def test_the_uri_of_an_unrecorded_follow_reaches_the_log(
+        db, signed_in, monkeypatch, caplog):
+    """When the database cannot hold it, the log is the only surviving copy."""
+    import logging
+
+    from sonde.api import follows as follows_module
+
+    await follower("did:plc:a")
+
+    async def accepted(client, did):
+        return "at://did:plc:me/app.bsky.graph.follow/kept"
+
+    async def boom(did, uri):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(follows_module, "create_follow", accepted)
+    monkeypatch.setattr(store, "record_my_follow", boom)
+
+    with caplog.at_level(logging.ERROR):
+        async with _endpoint() as c:
+            await c.post("/followers/did:plc:a/follow", follow_redirects=False)
+
+    assert any("kept" in rec.getMessage() for rec in caplog.records), (
+        "the follow URI was not logged anywhere"
+    )
+
+
+async def test_a_network_failure_is_still_recorded_as_a_failure(
+        db, signed_in, monkeypatch):
+    """The other domain is unchanged: nothing was written, so say so."""
+    from sonde.api import follows as follows_module
+
+    await follower("did:plc:a")
+
+    async def refused(client, did):
+        raise RuntimeError("upstream exploded")
+
+    monkeypatch.setattr(follows_module, "create_follow", refused)
+
+    async with _endpoint() as c:
+        r = await c.post("/followers/did:plc:a/follow", follow_redirects=False)
+
+    assert r.headers["location"].endswith("#follow-failed")
+    assert "follow_failed" in await _events()

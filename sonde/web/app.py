@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,13 @@ from sonde.config import settings
 from sonde.jobs import registry
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+# Referenced by the follow-back handler since M23 and never defined, so every
+# failed write raised NameError *inside its own except block*: the operator got
+# a 500 and `record_follow_failure` never ran, which made "a failed write is
+# logged, not swallowed" untrue for the whole of that time. Invisible to the
+# tests because they exercised the store function directly and never the route.
+log = logging.getLogger("sonde.web")
 
 
 def _step_label(key: str) -> str:
@@ -624,7 +632,7 @@ def create_app() -> FastAPI:
         meant to be used while working down a list.
         """
         from sonde.api.client import BlueskyClient
-        from sonde.api.follows import FollowError, create_follow, delete_follow
+        from sonde.api.follows import create_follow, delete_follow
         from sonde.db import store
 
         back = _safe_back(request, f"/followers/{did}")
@@ -636,27 +644,53 @@ def create_app() -> FastAPI:
         if target is None:
             return RedirectResponse(f"{back}#unknown", status_code=303)
 
+        if not undo:
+            if target["already"]:
+                return RedirectResponse(back, status_code=303)
+            if not target["is_current"] or target["ignored_at"]:
+                # Follow-back only: sonde never follows a stranger, so a stray
+                # DID fails here rather than writing.
+                return RedirectResponse(f"{back}#not-a-follower",
+                                        status_code=303)
+
+        # Stage one: the write to Bluesky, and nothing else.
+        #
+        # Bookkeeping used to sit inside this try, which meant a store error
+        # AFTER a successful createRecord was reported as a follow that never
+        # happened — while a real, public follow existed on the operator's
+        # account and its URI, the only handle on undoing it, was discarded.
+        # The two are different failure domains and are no longer merged.
         client = BlueskyClient()
+        uri: str | None = None
         try:
             if undo:
                 await delete_follow(client, target.get("follow_uri") or "")
-                await store.forget_my_follow(did)
             else:
-                if target["already"]:
-                    return RedirectResponse(back, status_code=303)
-                if not target["is_current"] or target["ignored_at"]:
-                    # Follow-back only: sonde never follows a stranger, so a
-                    # stray DID fails here rather than writing.
-                    return RedirectResponse(f"{back}#not-a-follower",
-                                            status_code=303)
                 uri = await create_follow(client, did)
-                await store.record_my_follow(did, uri)
-        except (FollowError, Exception) as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — nothing was written
             log.warning("follow-back failed for %s: %s", did, exc)
             await store.record_follow_failure(did, str(exc), undo=undo)
             return RedirectResponse(f"{back}#follow-failed", status_code=303)
         finally:
             await client.aclose()
+
+        # Stage two: the record now exists, or is gone, and that cannot be
+        # taken back. Anything failing from here is a bookkeeping problem and
+        # must be reported as one.
+        try:
+            if undo:
+                await store.forget_my_follow(did)
+            else:
+                await store.record_my_follow(did, uri)
+        except Exception as exc:  # noqa: BLE001
+            # Last resort, and deliberately ERROR with the URI in it: the
+            # follow is real and sonde has just failed to write down how to
+            # undo it, so the log is the only surviving copy.
+            log.error(
+                "WROTE TO BLUESKY BUT COULD NOT RECORD IT — "
+                "did=%s undo=%s uri=%s: %s", did, undo, uri, exc)
+            return RedirectResponse(f"{back}#not-recorded", status_code=303)
+
         return RedirectResponse(back, status_code=303)
 
     @app.post("/followers/{did}/ignore")
