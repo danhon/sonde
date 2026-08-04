@@ -1260,3 +1260,51 @@ directly. The store function was always correct; nothing ever reached it. The ne
 tests drive the HTTP route instead, which is the only way this was ever going to
 show up — and the reason the three of them were checked against the old code
 before being kept.
+
+## 2026-08-04 — writes must come from sonde
+
+The third finding of the security review, and the one with the largest blast
+radius. sonde has no CSRF tokens and nothing checked that a write came from
+sonde at all. The Authelia cookie looked like it was covering that and was not:
+it is scoped to `domain: sgc.rayandhon.com` with Authelia's default
+`same_site: lax`, and Lax stops cross-**site** requests. Subdomains of one
+registrable domain are same-site.
+
+So every other service on ubuntuplex — calibre-web, which serves user-supplied
+ebook content, plus homepage, docs, scrypted, birdnet-go and the watchdog —
+could POST here and the browser would attach the operator's session. An XSS in
+any of them was write access to sonde: follow, unfollow, archive a circle, merge
+two, start a batch job. Nothing in this repository could tell, because the
+weakness is in the shape of the fleet's single sign-on rather than in sonde.
+
+The guard is a middleware over every unsafe method, and the load-bearing line is
+the one that refuses `Sec-Fetch-Site: same-site`. Most CSRF guidance treats
+same-site as friendly; here it is precisely the attack, because the cookie is
+shared across the whole domain. `Origin` is the fallback for browsers too old to
+send `Sec-Fetch-Site`, compared including port so local dev works.
+
+**A middleware rather than a per-route dependency**, because the failure mode of
+a per-route check is forgetting it on the route added next month — and the
+routes that most need it are the ones that write to Bluesky. The test suite
+enumerates every state-changing route from `app.routes` and asserts each refuses
+a sibling subdomain, then asserts the same set is *not* refused from sonde: a
+middleware that returned 403 unconditionally would satisfy the first test alone
+and take the application down.
+
+**Requests carrying neither header are allowed, on purpose.** Every current
+browser sends at least one on a form POST and a hostile page cannot strip them,
+so the only clients this admits are curl, the test suite and scripts on the box
+— none of which a cross-origin attacker can become. Refusing them would have
+meant rewriting every existing POST test to prove nothing.
+
+Verified in a real browser rather than only in-process, because this sits in
+front of every form in the application and a wrong guess about what browsers
+send would have 403'd all of them. Chromium, against a local server: a
+same-origin `fetch()` POST as `base.html` makes them reached its 303, a
+same-origin `<form>` POST landed on its redirect, and a genuine cross-origin
+`<form>` POST — not subject to CORS, which is what makes CSRF work — came back
+403 with `Sec-Fetch-Site: cross-site` in the log.
+
+What this does not fix: the cookie is still shared fleet-wide, so any other
+service can still *read* sonde's pages with the operator's session. Narrowing
+that is an Authelia change in `reverse-proxy`, not one here.

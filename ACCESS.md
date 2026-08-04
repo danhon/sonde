@@ -155,6 +155,11 @@ privacy one. The safety lives in the middleware setting it unconditionally.
 Any one of these alone would work most of the time. The point is that a mistake
 in one is caught by another.
 
+**L0 — already in place.** A same-origin middleware refuses every unsafe method
+that does not come from sonde's own pages (`sonde/web/origin.py`). It was added
+for the sibling-subdomain CSRF path, not for this plan, but it composes: a
+public page cannot be induced to write, whatever else goes wrong below.
+
 **L1 — Traefik.** The public router matches `Host(public) && Method(GET|HEAD)`.
 No Authelia middleware. A `POST` to the public host never reaches the app.
 

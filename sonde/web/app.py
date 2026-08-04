@@ -11,6 +11,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
+    PlainTextResponse,
     RedirectResponse,
     StreamingResponse,
 )
@@ -159,6 +160,27 @@ def _composition_bars(data: dict) -> dict:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="sonde", docs_url=None, redoc_url=None)
+
+    @app.middleware("http")
+    async def writes_must_come_from_sonde(request: Request, call_next):
+        """The one gate in front of every state-changing request.
+
+        A middleware rather than a dependency on each write, because the
+        failure mode of a per-route check is forgetting it on the route added
+        next month — and the routes that most need it are the ones that write
+        to Bluesky. See `sonde/web/origin.py` for why `same-site` is refused.
+        """
+        from sonde.web import origin
+
+        reason = origin.refusal(request.method, request.headers)
+        if reason is not None:
+            log.warning("refused a write to %s from elsewhere (%s)",
+                        request.url.path, reason)
+            return PlainTextResponse(
+                "This write did not come from sonde, so it was refused.",
+                status_code=403,
+            )
+        return await call_next(request)
 
     @app.get("/healthz")
     async def healthz() -> JSONResponse:

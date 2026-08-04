@@ -65,6 +65,23 @@ sonde.
 
 Turn it all off with `ENABLE_FOLLOW_WRITE=false`.
 
+## Every write must come from sonde's own pages
+
+A middleware refuses any non-GET request whose `Sec-Fetch-Site` is not
+`same-origin`/`none`, falling back to an `Origin`-against-`Host` comparison. The
+line that matters refuses **`same-site`**: the Authelia cookie is scoped to
+`domain: sgc.rayandhon.com` with the default `same_site: lax`, so every sibling
+service on ubuntuplex is same-site and could otherwise POST here with the
+operator's session attached.
+
+Consequences for anything added later: a new POST route is covered automatically
+and needs no decorator, but **an endpoint meant to be called from another origin
+will 403** and no amount of route-level code will change that — the middleware
+runs in front of the router. Requests with neither header (curl, the test suite)
+are allowed by design, which is why existing POST tests did not have to change.
+`sonde/web/origin.py` has the reasoning; `tests/test_origin.py` enumerates every
+write route and checks both directions.
+
 ## Jinja macros must be imported `with context`
 
 `{% from "_sort.html" import who %}` does **not** give the macro access to
