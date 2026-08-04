@@ -59,12 +59,12 @@ def _as_int(value: str | int | None) -> int | None:
         return None
 
 
-def _safe_back(request: Request, fallback: str) -> str:
-    """Where to send the operator after a write.
+def _safe_path(candidate: str | None, fallback: str) -> str:
+    """The one gate every caller-supplied redirect target passes through.
 
-    Only ever a path inside sonde. `referer` is attacker-controllable and goes
-    straight into a Location header, so this is a trust boundary rather than a
-    convenience.
+    Only ever a path inside sonde. Both sources — the `referer` header and a
+    `back` query parameter — are attacker-controllable and go straight into a
+    Location header, so this is a trust boundary rather than a convenience.
 
     Stripping the scheme and host is not sufficient on its own, which is how
     this was wrong from M23 until M25. A scheme-relative "//evil.example/phish"
@@ -74,14 +74,29 @@ def _safe_back(request: Request, fallback: str) -> str:
     discarded in favour of the caller's own fallback: backslashes because
     browsers normalise them to slashes, and "javascript:" and friends because
     they are not paths at all.
+
+    It is one function because it was two rules. `dismiss_notice` had its own
+    `back.startswith("/")` check and fell to exactly the scheme-relative bypass
+    the paragraph above was written to describe. A second validator is a second
+    place to get it wrong, so there is now one.
     """
-    back = request.headers.get("referer") or fallback
+    back = candidate or fallback
     if "://" in back:
         rest = back.split("://", 1)[1]
-        back = "/" + rest.split("/", 1)[1] if "/" in rest else "/"
+        if "/" not in rest:
+            # A bare host carries no path, so there is nowhere in sonde it
+            # names. Returning "/" would be safe but wrong: the caller's
+            # fallback is the page it actually wanted you back on.
+            return fallback
+        back = "/" + rest.split("/", 1)[1]
     if not back.startswith("/") or back[:2] in ("//", "/\\"):
         return fallback
     return back
+
+
+def _safe_back(request: Request, fallback: str) -> str:
+    """Where to send the operator after a write, from the referer."""
+    return _safe_path(request.headers.get("referer"), fallback)
 
 STARTED_AT = time.time()
 
@@ -945,12 +960,19 @@ def create_app() -> FastAPI:
         )
 
     @app.post("/notices/{kind}/{signature}/dismiss")
-    async def dismiss_notice(kind: str, signature: str, back: str = "/verified"):
+    async def dismiss_notice(kind: str, signature: str,
+                             back: str = "/verified"):
+        """`back` is caller-supplied, so it goes through the same gate as every
+        other redirect target.
+
+        It used to be checked with `back.startswith("/")` alone, which passes a
+        scheme-relative `//evil.example/phish` — the precise bypass `_safe_back`
+        was written to close, in a route that never called it.
+        """
         from sonde.db import store
 
         await store.dismiss_notice(kind, signature)
-        return RedirectResponse(back if back.startswith("/") else "/verified",
-                                status_code=303)
+        return RedirectResponse(_safe_path(back, "/verified"), status_code=303)
 
     @app.post("/notices/{dismissal_id}/restore")
     async def restore_notice(dismissal_id: int) -> RedirectResponse:

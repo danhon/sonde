@@ -15,29 +15,6 @@ measured against the 2026-07-29 snapshot.
 
 Ranked by what it costs to leave alone.
 
-BUG-12 to BUG-14 were found in a security review on 2026-08-04 and reproduced
-with throwaway tests before being written down. The reproductions are quoted
-below rather than described, because two of them look survivable until you see
-the output.
-
-### P0 — permanent data loss, and a redirect that leaves the site
-
-**BUG-14 · Open redirect on notice dismissal.** `dismiss_notice`
-(`app.py:913`) validates its `back` parameter with `back.startswith("/")`,
-which passes scheme-relative URLs. Reproduced:
-
-```
-POST /notices/backup_failing/abc/dismiss?back=//evil.example/phish
-→ 303  Location: //evil.example/phish
-```
-
-Starlette's quoting leaves `//` intact, and a browser resolves that off-site.
-This is the exact bypass `_safe_back`'s docstring documents at length — the
-route simply does not call it. Behind Authelia today, so the reachable harm is
-small; it is P0 because the fix is one line and the same mistake is already
-written down as fixed.
-*Fix:* call `_safe_back`.
-
 ### P1 — wrong behaviour, silently
 
 **BUG-01 · Typing an archived circle's name on a profile does nothing, and says

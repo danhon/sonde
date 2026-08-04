@@ -773,6 +773,32 @@ async def test_a_scheme_relative_referer_cannot_redirect_off_site(db, client):
         assert "evil.example" not in location, f"{evil!r} -> {location!r}"
 
 
+async def test_a_back_parameter_cannot_redirect_off_site(db, client):
+    """The same gate, reached by the other door.
+
+    `dismiss_notice` validated its own `back` with `back.startswith("/")`, which
+    passes every scheme-relative URL the test above exists to reject — the
+    docstring describing that bypass was three lines from a route reintroducing
+    it. Both callers now share `_safe_path`, and this is the test that says so.
+    """
+    for evil in ("//evil.example/phish", "/\\evil.example/phish",
+                 "https://evil.example//phish", "javascript:alert(1)"):
+        response = client.post(
+            f"/notices/backup_failing/abc/dismiss?back={evil}",
+            follow_redirects=False)
+        location = response.headers["location"]
+        assert location.startswith("/"), f"{evil!r} -> {location!r}"
+        assert not location.startswith("//"), f"{evil!r} -> {location!r}"
+        assert "evil.example" not in location, f"{evil!r} -> {location!r}"
+
+
+async def test_an_ordinary_back_parameter_still_comes_back(db, client):
+    response = client.post(
+        "/notices/backup_failing/abc/dismiss?back=/settings",
+        follow_redirects=False)
+    assert response.headers["location"] == "/settings"
+
+
 async def test_an_ordinary_referer_still_comes_back(db, client):
     """The guard must not throw away legitimate in-app returns — the whole
     point of the helper is landing you back where you were working."""
