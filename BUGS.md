@@ -15,6 +15,72 @@ measured against the 2026-07-29 snapshot.
 
 Ranked by what it costs to leave alone.
 
+BUG-12 to BUG-14 were found in a security review on 2026-08-04 and reproduced
+with throwaway tests before being written down. The reproductions are quoted
+below rather than described, because two of them look survivable until you see
+the output.
+
+### P0 — permanent data loss, and a redirect that leaves the site
+
+**BUG-12 · An empty `getFollows` response destroys every follow URI, forever.**
+`replace_my_follows` (`store.py:1178`) does `DELETE FROM my_follows` and then
+reinserts, carrying `follow_uri` across only for DIDs present in the new list.
+`sync_follows` passes whatever the sweep collected, with no check that it
+collected anything. A `200` carrying `{"follows": []}` and no cursor — an API
+blip, the actor deactivated or renamed, a mistyped `BLUESKY_ACTOR` — therefore
+empties the table. Reproduced:
+
+```
+BEFORE: [{'did': 'did:plc:alice', 'follow_uri': 'at://…/follow/abc123'}]
+AFTER : []
+TARGET: {'already': 0, 'follow_uri': None, …}
+```
+
+`getFollows` returns subjects, not record keys, so the URI cannot be re-fetched
+from anywhere — this is the loss `CLAUDE.md` says must never happen. It is also
+worse than losing the undo: `already` flips to 0, so the follow-back button
+offers to follow someone sonde already follows, and writes a *second* follow
+record.
+
+Departures have `MASS_DEPARTURE_PCT` and `DEPARTURE_CONFIRM_SWEEPS` guarding
+exactly this shape of accident. Follows have nothing.
+*Fix:* refuse a replace that drops more than a set fraction of known follows,
+and never hard-delete a row carrying `follow_uri` — mark it absent instead.
+
+**BUG-13 · A successful follow whose bookkeeping fails is recorded as a
+failure, and its URI is discarded.** In `follow_back` (`app.py:618`) the
+Bluesky write and the store write share one `try`:
+
+```python
+uri = await create_follow(client, did)   # public record now exists
+await store.record_my_follow(did, uri)   # if this throws…
+except (FollowError, Exception) as exc:  # …it lands here
+    await store.record_follow_failure(did, str(exc), undo=undo)
+```
+
+Any store error after a successful network write leaves a real, public follow on
+the operator's account whose URI is gone, logged in `follow_events` as something
+that did not happen. Same permanent-loss class as BUG-12, reached by a different
+door, and `except (FollowError, Exception)` guarantees nothing escapes to say so.
+*Fix:* the created URI must be durable before anything can throw, and a failure
+to record it must be reported as what it is — a follow that happened.
+
+**BUG-14 · Open redirect on notice dismissal.** `dismiss_notice`
+(`app.py:913`) validates its `back` parameter with `back.startswith("/")`,
+which passes scheme-relative URLs. Reproduced:
+
+```
+POST /notices/backup_failing/abc/dismiss?back=//evil.example/phish
+→ 303  Location: //evil.example/phish
+```
+
+Starlette's quoting leaves `//` intact, and a browser resolves that off-site.
+This is the exact bypass `_safe_back`'s docstring documents at length — the
+route simply does not call it. Behind Authelia today, so the reachable harm is
+small; it is P0 because the fix is one line and the same mistake is already
+written down as fixed.
+*Fix:* call `_safe_back`.
+
 ### P1 — wrong behaviour, silently
 
 **BUG-01 · Typing an archived circle's name on a profile does nothing, and says
