@@ -1175,7 +1175,45 @@ async def verified_summary() -> dict:
     }
 
 
-async def replace_my_follows(dids: Sequence[str]) -> None:
+# Below this many known follows, the percentage rail is not applied — see
+# replace_my_follows. Not configurable: it is a statement about when a ratio
+# starts to carry information, not a policy knob.
+MASS_UNFOLLOW_FLOOR = 20
+
+
+class ImplausibleFollowSweep(RuntimeError):
+    """A follows sweep that would drop most of the list, refused.
+
+    Raised rather than logged: `sync_follows` marks the run failed and re-raises,
+    so this surfaces in the run history instead of quietly doing nothing.
+    """
+
+
+async def recoverable_follow_uris() -> dict[str, str]:
+    """The follow URIs sonde created, read back out of the event log.
+
+    `record_my_follow` writes the URI into `follow_events.detail` at the moment
+    of the write, and `follow_events` is the one table that cannot be rebuilt
+    from Bluesky — which is exactly why the nightly snapshot exists for it. So a
+    URI missing from `my_follows` is not gone, it just needs reading back.
+
+    Only the later of `followed_back` / `unfollowed_back` counts, by id: a follow
+    the operator has since undone must not be resurrected and offered as
+    undoable a second time.
+    """
+    db = await _db()
+    async with db.execute(
+        """SELECT did, detail FROM follow_events
+            WHERE id IN (SELECT MAX(id) FROM follow_events
+                          WHERE event IN ('followed_back', 'unfollowed_back')
+                          GROUP BY did)
+              AND event = 'followed_back'
+              AND COALESCE(detail, '') <> ''"""
+    ) as cur:
+        return {r["did"]: r["detail"] for r in await cur.fetchall()}
+
+
+async def replace_my_follows(dids: Sequence[str], *, force: bool = False) -> None:
     """Rewrite the follow list. Rows that vanish mean I unfollowed someone.
 
     Replaced wholesale rather than diffed by timestamp. Two earlier versions
@@ -1184,22 +1222,59 @@ async def replace_my_follows(dids: Sequence[str]) -> None:
     in the same millisecond, because the stale row then carries `now` as well.
     An unfollow would simply go undetected.
 
-    `my_follows` holds nothing worth preserving beyond the DID and a timestamp
-    we overwrite anyway, so delete-then-insert inside one transaction is both
-    simpler and exactly correct.
+    Wholesale replacement is right, and it is also why this needs a rail. The
+    caller passes whatever the sweep collected; a `200` carrying an empty
+    `follows` array and no cursor — an API blip, a deactivated or renamed actor,
+    a mistyped BLUESKY_ACTOR — used to empty the table outright. Departures have
+    guarded against exactly this shape of accident since M12
+    (`MASS_DEPARTURE_PCT`); follows had nothing, and lost every follow URI the
+    first time it happened.
+
+    `force=True` is the operator override, for the case where the drop is real.
     """
     db = await _db()
     now = utcnow()
-    # The follow URIs sonde created are the only thing here that cannot be
-    # re-fetched — `getFollows` returns subjects, not record keys — and without
-    # one a follow cannot be undone. Delete-then-insert would drop them on the
-    # next sweep, so they are carried across.
+
+    async with db.execute("SELECT did FROM my_follows") as cur:
+        existing = {r["did"] for r in await cur.fetchall()}
+    incoming = {did for did in dids if did}
+
+    # A first sweep has nothing to lose, so it is never refused.
+    if existing and not force:
+        dropped = existing - incoming
+        share = len(dropped) / len(existing) * 100
+        if not incoming:
+            raise ImplausibleFollowSweep(
+                f"the follows sweep returned nothing while {len(existing)} "
+                f"follow{'' if len(existing) == 1 else 's'} "
+                "are on record — refusing to wipe them"
+            )
+        # The percentage only means something once there is a list to take a
+        # percentage of. Under the floor, a quarter is one or two people, which
+        # is an ordinary afternoon and is genuinely indistinguishable from a
+        # faulty sweep — so nothing is claimed. The empty-sweep guard above
+        # still applies at every size, and that is the failure that happened.
+        if len(existing) >= MASS_UNFOLLOW_FLOOR and share > settings.mass_unfollow_pct:
+            raise ImplausibleFollowSweep(
+                f"the follows sweep would drop {len(dropped)} of "
+                f"{len(existing)} follows ({share:.1f}%, over the "
+                f"{settings.mass_unfollow_pct}% rail) — refusing"
+            )
+
+    # `getFollows` returns subjects, not record keys, so the URI of a follow
+    # sonde created cannot be re-fetched from the API and delete-then-insert
+    # would drop it. Carry it across from the live row where there is one, and
+    # fall back to the event log where there is not — which also repairs a
+    # database that lost URIs to this function before the rail existed.
     async with db.execute(
         "SELECT did, follow_uri, followed_by_sonde_at FROM my_follows "
         "WHERE follow_uri IS NOT NULL"
     ) as cur:
         created = {r["did"]: (r["follow_uri"], r["followed_by_sonde_at"])
                    for r in await cur.fetchall()}
+    for did, uri in (await recoverable_follow_uris()).items():
+        created.setdefault(did, (uri, None))
+
     await db.execute("DELETE FROM my_follows")
     await db.executemany(
         "INSERT INTO my_follows (did, last_seen_at, follow_uri, "

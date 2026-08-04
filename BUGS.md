@@ -22,31 +22,6 @@ the output.
 
 ### P0 — permanent data loss, and a redirect that leaves the site
 
-**BUG-12 · An empty `getFollows` response destroys every follow URI, forever.**
-`replace_my_follows` (`store.py:1178`) does `DELETE FROM my_follows` and then
-reinserts, carrying `follow_uri` across only for DIDs present in the new list.
-`sync_follows` passes whatever the sweep collected, with no check that it
-collected anything. A `200` carrying `{"follows": []}` and no cursor — an API
-blip, the actor deactivated or renamed, a mistyped `BLUESKY_ACTOR` — therefore
-empties the table. Reproduced:
-
-```
-BEFORE: [{'did': 'did:plc:alice', 'follow_uri': 'at://…/follow/abc123'}]
-AFTER : []
-TARGET: {'already': 0, 'follow_uri': None, …}
-```
-
-`getFollows` returns subjects, not record keys, so the URI cannot be re-fetched
-from anywhere — this is the loss `CLAUDE.md` says must never happen. It is also
-worse than losing the undo: `already` flips to 0, so the follow-back button
-offers to follow someone sonde already follows, and writes a *second* follow
-record.
-
-Departures have `MASS_DEPARTURE_PCT` and `DEPARTURE_CONFIRM_SWEEPS` guarding
-exactly this shape of accident. Follows have nothing.
-*Fix:* refuse a replace that drops more than a set fraction of known follows,
-and never hard-delete a row carrying `follow_uri` — mark it absent instead.
-
 **BUG-13 · A successful follow whose bookkeeping fails is recorded as a
 failure, and its URI is discarded.** In `follow_back` (`app.py:618`) the
 Bluesky write and the store write share one `try`:

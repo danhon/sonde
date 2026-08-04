@@ -1182,3 +1182,51 @@ apply it to.
 The residual gap is real but small and unserved: 41 people are in the
 journalists circle on bio text alone, with no employer known. No open directory
 covers them, because the ones that would are commercial.
+
+## 2026-08-04 — a rail on the follow list
+
+A security review found that `replace_my_follows` would empty the table given a
+`getFollows` response of `{"follows": []}` with no cursor — an API blip, a
+deactivated or renamed actor, a mistyped `BLUESKY_ACTOR`. Reproduced before
+being believed:
+
+```
+BEFORE: [{'did': 'did:plc:alice', 'follow_uri': 'at://…/follow/abc123'}]
+AFTER : []
+```
+
+Wholesale replacement is correct and stays — its docstring records the two
+timestamp-diffing versions that were not. What was missing was any check that
+the list handed to it is plausible. Departures have had that check since M12;
+the follow list had none, which is the whole finding: the safety rail existed,
+and had simply never been applied to the other list.
+
+**Why 25%, against 2% for departures.** They are guarding different populations.
+`MASS_DEPARTURE_PCT` watches ~10,000 followers, where 2% is 200 people leaving
+at once and never innocent. The follow list is two orders of magnitude smaller
+and the operator unfollows people by hand, so a few in an afternoon is normal
+and a 2% rail would fire constantly. 25% is sized to catch a sweep that returned
+nothing or nearly nothing — the failure that actually happened — rather than to
+police ordinary unfollowing.
+
+**Why a floor of 20, and why it is not configurable.** The first version of the
+rail was a bare percentage, and it broke two existing tests in `test_depth.py`
+that replace a one- or two-name list wholesale to check unfollow detection.
+Those tests are right and the rail was wrong: a quarter of two people is one
+person, and no threshold can tell a faulty sweep from a real unfollow at that
+size. Below 20 known follows only the empty-sweep guard applies. That is a claim
+about when a ratio starts carrying information, not a policy choice, so it is a
+module constant rather than another environment variable.
+
+**The URI turned out to be recoverable, which changed the fix.**
+`record_my_follow` has always written the created URI into
+`follow_events.detail`, and `follow_events` is the one table that cannot be
+rebuilt from Bluesky — the reason the nightly snapshot exists. So the loss was
+never permanent in the database, only on the path that reads it: the undo button
+died and `already` flipped to 0, so the follow-back button offered to follow
+someone sonde already followed and would have written a second record.
+
+`replace_my_follows` now falls back to the event log for any URI missing from
+the live row, taking the later of `followed_back` / `unfollowed_back` by id so an
+undone follow is not resurrected. That repairs a database this bug has already
+damaged, on the next sweep, with no migration.

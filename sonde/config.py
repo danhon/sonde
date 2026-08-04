@@ -102,6 +102,13 @@ class Settings:
     )
     mass_departure_pct: float = field(default_factory=lambda: _float("MASS_DEPARTURE_PCT", 2.0))
 
+    # The same rail on the other list. Looser than departures on purpose: the
+    # follow list is small enough that unfollowing a handful of people is a
+    # normal afternoon, where losing 2% of ~10k followers never is. This is
+    # sized to catch a sweep that returns nothing or nearly nothing, which is
+    # the failure that actually happened, not to police ordinary unfollowing.
+    mass_unfollow_pct: float = field(default_factory=lambda: _float("MASS_UNFOLLOW_PCT", 25.0))
+
     # Display policy for followers who turned off logged-out visibility
     # Following is the one thing sonde writes to Bluesky. On by default because
     # it was asked for and is useless off, but it is a single switch: set
