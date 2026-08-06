@@ -16,6 +16,15 @@
 > Two questions in §6 and §1 are still unanswered by the operator and block
 > phase 2. See §7 for per-phase status.
 
+> **Since 2026-08-06 there is a second unguarded router**, for the machine API
+> at `/api/v1` (see [API.md](API.md)). It is not this plan and does not
+> implement any of it: it is token-authenticated rather than anonymous, and it
+> withholds more than a public reader would need to be denied. Two things here
+> do apply to it, and it follows both — responses are built by their own
+> serialisers rather than filtered from the full ones (§1.1), and hidden people
+> are absent from lists *and* 404 on their own record (§2). The `/openapi.json`
+> gap noted in §1 was closed when that router was added.
+
 sonde is currently one thing: a private site behind Authelia where every page
 reads and a handful of buttons write. This document specifies the split into
 **two audiences on one container**: an anonymous reader who gets an

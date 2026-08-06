@@ -797,6 +797,12 @@ SORTABLE = {
     # fallback — but it is a fallback, and the UI says so rather than passing
     # off "when this tool started watching" as "when they followed".
     "since": "COALESCE(fs.followed_at, fs.first_seen_at)",
+    # The only total order in here, and the only one safe to page through while
+    # the sweeps are writing. Every other column can change under a paginating
+    # client — a rescore moves someone between page 3 and page 1 and they are
+    # either fetched twice or missed entirely. DIDs never change, so a full sync
+    # keys off this one. See `after_did`.
+    "did": "a.did",
 }
 
 
@@ -812,6 +818,7 @@ async def ranked_followers(
     direction: str = "desc", verified_only: bool = False,
     min_followers: int | None = None, query: str | None = None,
     mutual_only: bool = False, tag: str | None = None,
+    after_did: str | None = None,
 ) -> list[dict]:
     column = SORTABLE.get(order, SORTABLE["influence"])
     # list_rank ascending IS most-recent-first, so "recent desc" has to invert.
@@ -823,6 +830,12 @@ async def ranked_followers(
 
     where = ["fs.is_current = 1", "fs.ignored_at IS NULL", "a.handle IS NOT ?"]
     params: list = [settings.actor]
+    if after_did is not None:
+        # Keyset paging, and only meaningful beside `order="did"` — the caller
+        # enforces that pairing. OFFSET over a live table silently skips a row
+        # whenever an earlier one is deleted mid-sweep; this cannot.
+        where.append("a.did > ?" if direction != "desc" else "a.did < ?")
+        params.append(after_did)
     if verified_only:
         where.append("a.verified_status = 'valid'")
     if mutual_only:
@@ -1328,6 +1341,53 @@ async def follower_detail(did: str) -> dict | None:
     except (ValueError, TypeError):
         out["relationship"] = {}
     return out
+
+
+async def resolve_identities(dids: Sequence[str] = (),
+                             handles: Sequence[str] = ()) -> list[dict]:
+    """Match a batch of DIDs and handles against what sonde knows.
+
+    Exists for clients that hold their own contact list and need to line it up
+    with sonde's. `follower_detail` per identifier is an N+1 against a table of
+    ten thousand rows, and it cannot answer the question a CRM is actually
+    asking — *do you know this person at all* — because it returns None for
+    "no such row" and for "row exists, not a follower" alike.
+
+    Handles are matched case-insensitively because a CRM stores what a human
+    typed. DIDs are not: they are lowercase by construction, and folding case on
+    an identifier that is compared byte-for-byte everywhere else would be a
+    difference between how sonde matches people and how atproto does.
+
+    Hidden followers are reported as unknown rather than as hidden. The reason
+    is the one ACCESS.md gives for keeping /ignored private: most hides come
+    from a moderation list, and "sonde hid this person" republishes an
+    accusation about someone named. A caller cannot tell them apart from an
+    account sonde has never seen, and that is the intended answer.
+    """
+    if not dids and not handles:
+        return []
+    db = await _db()
+    clauses, params = [], []
+    if dids:
+        clauses.append(f"a.did IN ({','.join('?' for _ in dids)})")
+        params.extend(dids)
+    if handles:
+        lowered = [h.lower() for h in handles]
+        clauses.append(f"LOWER(a.handle) IN ({','.join('?' for _ in lowered)})")
+        params.extend(lowered)
+    async with db.execute(
+        f"""SELECT a.did, a.handle, a.display_name, a.avatar_url,
+                   fs.is_current, fs.ignored_at,
+                   COALESCE(fs.followed_at, fs.first_seen_at) AS following_since,
+                   (mf.did IS NOT NULL) AS i_follow
+              FROM actors a
+              LEFT JOIN follower_state fs USING (did)
+              LEFT JOIN my_follows mf USING (did)
+             WHERE {' OR '.join(clauses)}""",
+        params,
+    ) as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+    return [r for r in rows if not r["ignored_at"]]
 
 
 async def export_rows() -> list[dict]:
@@ -2109,6 +2169,30 @@ async def interaction_breakdown(did: str) -> dict:
     return out
 
 
+async def last_interactions_for(dids: Sequence[str]) -> dict[str, dict]:
+    """When each of these people was last in touch, in one query.
+
+    The batch twin of `interaction_breakdown`, and it exists for the same reason
+    `tags_for_many` does: a hundred-row page calling the per-person version is a
+    hundred round trips. "When did I last hear from them" is the question a
+    contact list is sorted by, so it belongs on every row rather than only on
+    the page you have already opened.
+    """
+    if not dids:
+        return {}
+    db = await _db()
+    placeholders = ",".join("?" for _ in dids)
+    async with db.execute(
+        f"""SELECT did, MAX(occurred_at) AS last_at,
+                   SUM(direction = 'inbound') AS inbound,
+                   SUM(direction = 'outbound') AS outbound
+              FROM interactions WHERE did IN ({placeholders})
+             GROUP BY did""",
+        tuple(dids),
+    ) as cur:
+        return {r["did"]: dict(r) for r in await cur.fetchall()}
+
+
 async def follow_back_target(did: str) -> dict | None:
     """Check a follow-back is legitimate before anything is written.
 
@@ -2810,6 +2894,60 @@ async def create_group(name: str) -> dict:
     return {"status": "created", "slug": slug, "name": name}
 
 
+async def circle_member_counts() -> dict[str, int]:
+    """Per circle, how many people a roster query would actually return.
+
+    `group_summary` counts memberships, which is the right number for the
+    circles page — it is the size of the classification, and a member who has
+    since unfollowed or been hidden is still classified. It is the wrong number
+    to publish beside a list that omits those people: a count that disagrees
+    with the list under it reads as a sync fault, and the client cannot tell
+    which of the two to believe.
+
+    The three predicates here are `ranked_followers`' three, and keeping them in
+    step is enforced by a test that walks every circle and compares this count
+    against the length of the list.
+    """
+    db = await _db()
+    async with db.execute(
+        """SELECT g.slug, COUNT(*) AS n
+             FROM group_members m
+             JOIN groups g ON g.id = m.group_id
+             JOIN actors a ON a.did = m.did
+             JOIN follower_state fs ON fs.did = m.did
+            WHERE g.archived_at IS NULL
+              AND COALESCE(m.confirmed, 1) = 1
+              AND fs.is_current = 1
+              AND fs.ignored_at IS NULL
+              AND a.handle IS NOT ?
+            GROUP BY g.slug""",
+        (settings.actor,),
+    ) as cur:
+        return {r["slug"]: r["n"] for r in await cur.fetchall()}
+
+
+async def group_state(slug: str) -> dict | None:
+    """A circle's name and whether it is archived, or None if there is no such
+    circle.
+
+    `tag_actor` returns False for "no such circle" and "archived circle"
+    alike, which is exactly the conflation behind BUG-01: typing an archived
+    circle's name on a profile writes nothing and says nothing. A caller that
+    has to explain the refusal needs the two apart, so it asks first.
+    """
+    db = await _db()
+    async with db.execute(
+        "SELECT slug, name, archived_at, merged_into FROM groups WHERE slug = ?",
+        (slug,),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        return None
+    return {"slug": row["slug"], "name": row["name"],
+            "archived": bool(row["archived_at"]),
+            "merged_into": row["merged_into"]}
+
+
 async def rename_group(slug: str, name: str) -> bool:
     """Display name only — never the slug. See the module note on create_group."""
     name = (name or "").strip()
@@ -3049,7 +3187,13 @@ async def group_summary() -> list[dict]:
     async with db.execute(
         """SELECT g.slug, g.name, g.id,
                   COUNT(m.did) AS members,
-                  SUM(CASE WHEN m.confirmed IS NULL THEN 1 ELSE 0 END) AS unreviewed
+                  -- `m.did IS NOT NULL` is load-bearing. The LEFT JOIN emits one
+                  -- all-NULL row for a circle with no members, and NULL is
+                  -- indistinguishable from an unreviewed membership by the
+                  -- confirmed test alone — so every empty circle reported one
+                  -- person awaiting review, and no such person existed.
+                  SUM(CASE WHEN m.did IS NOT NULL AND m.confirmed IS NULL
+                           THEN 1 ELSE 0 END) AS unreviewed
              FROM groups g
              LEFT JOIN group_members m ON m.group_id = g.id
                    AND COALESCE(m.confirmed, 1) = 1
@@ -3805,6 +3949,43 @@ async def events_since(since_iso: str) -> list[dict]:
             WHERE e.detected_at >= ?
             ORDER BY e.detected_at DESC""",
         (since_iso,),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def change_feed(*, since: str | None = None, after_id: int | None = None,
+                      limit: int = 100,
+                      events: Sequence[str] | None = None) -> list[dict]:
+    """The follow-event log oldest-first, resumable by row id.
+
+    `recent_changes` is the newest-first view a person reads; this is the
+    oldest-first stream a program consumes, and the difference is not
+    presentation. A client that has seen everything up to id N asks for what
+    came after N and is guaranteed each row exactly once, because ids are
+    assigned in insert order and nothing here is ever updated or deleted.
+
+    Resuming on `detected_at` instead would be wrong in a way that is hard to
+    see: a full sweep writes hundreds of departures inside a single second, and
+    a second-granularity timestamp cannot order or resume within it.
+    """
+    db = await _db()
+    where, params = ["1=1"], []
+    if since:
+        where.append("e.detected_at >= ?")
+        params.append(since)
+    if after_id is not None:
+        where.append("e.id > ?")
+        params.append(after_id)
+    if events:
+        where.append(f"e.event IN ({','.join('?' for _ in events)})")
+        params.extend(events)
+    async with db.execute(
+        f"""SELECT e.id, e.did, e.event, e.reason, e.detail, e.detected_at,
+                   a.handle, a.display_name
+              FROM follow_events e LEFT JOIN actors a USING (did)
+             WHERE {' AND '.join(where)}
+             ORDER BY e.id ASC LIMIT ?""",
+        (*params, limit),
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]
 

@@ -1365,3 +1365,103 @@ following someone through Traefik and TLS confirmed it.
 **Not deployed, and not built:** everything in ACCESS.md. There is no public
 URL. That document now says so at the top, because it reads like a description
 of a running system and is a design for one that does not exist.
+
+## 2026-08-06 — a machine surface, for a CRM that is not this program
+
+sonde gained an HTTP/JSON API at `/api/v1`, so a personal CRM running elsewhere
+on ubuntuplex can read who these people are. Nine endpoints, documented for
+their audience in [API.md](API.md); this is the record of the decisions behind
+them.
+
+**Why it needed a third Traefik router.** Authelia attaches to the router, not
+the path, and a program cannot complete an interactive 2FA login. `/healthz`
+already had its own router for exactly this reason. The API's is the same shape
+with one difference that matters: `/healthz` exposes liveness and nothing else,
+so an unguarded router is enough, while the API serves the follower data. What
+stands in for Authelia there is a bearer token checked in the app.
+
+That makes the router's `PathPrefix(/api/v1)` the containment, and the most
+dangerous label in `compose.yml`. Widened to `/api` it takes `/api/status` —
+scheduler internals, job names, sync ages — out from behind Authelia. Dropped
+entirely it takes the whole admin surface. So the version segment is part of the
+prefix rather than only part of the URL, `make verify` asserts the rule and the
+absence of `authelia@file` on it, and a test reads `compose.yml` and asserts the
+same two things. The verify target also curls `/api/status` expecting a 302: if
+that ever answers 401, the prefix was widened.
+
+**The token is a credential, and is kept out of `Settings`.** Every other
+setting is a field on the frozen `Settings` dataclass — which is passed into
+every template render, one `{{ settings }}` away from being displayed.
+`Authenticator.status()` already goes to trouble to keep the app password off
+`/settings`. So `apikey.py` reads the environment directly, and the `Client`
+object it hands to the request and to the log carries a name and scopes and no
+secret. A token under 24 characters is dropped with an error rather than
+honoured: a guessable token advertises a door and then leaves a key in it.
+
+**Read is default, write is granted.** A token is read-only unless its entry
+says `write`, so the credential the CRM reads with cannot tag anyone if it
+leaks. The check is a middleware over the whole prefix rather than a dependency
+on each route, for the reason the same-origin guard is a middleware: a check
+each route performs is a check the route added next month forgets. It also runs
+in front of the router, so an unauthenticated caller cannot map the API by
+watching which paths 404 and which 401 — every path under the prefix answers
+identically.
+
+Both guards run. A write to the API from a sibling subdomain with a valid token
+is still refused by the same-origin middleware, and there is a test asserting it
+— defence in depth, and the thing that notices if the two are ever collapsed.
+
+**What the API withholds, and why it is not a template flag.** Every response is
+built from explicit dict literals. `ranked_followers` selects `a.*`, so a
+serialiser that copied the row and deleted the bad keys would publish every
+column added to `actors` from here on, on the day it landed. ACCESS.md states
+the same rule for the public web view; here it is enforced by a test that walks
+each response and asserts its keys against a declared allowlist, so a field
+cannot appear without a test being edited.
+
+Hidden followers are absent from every list, 404 on their detail route, cannot
+be tagged, and resolve as `unknown` — indistinguishable from someone sonde has
+never seen. That ambiguity is deliberate and is the ACCESS.md §2 argument
+reused: omitting someone from a list while leaving their record fetchable is not
+a redaction, it is an unindexed leak, and reporting them as *hidden* republishes
+an accusation about a named person. `followed_back` events are withheld for a
+smaller reason of the same kind: their `detail` is the follow record's URI.
+
+**Two orderings, because a ranking is not a sync.** The default order is `did`,
+the only column here that cannot change, paged by keyset — a sweep writing while
+a client walks can neither duplicate a row nor skip one. Ranked orders page by
+offset and are for display; API.md says which to use for what. Cursors carry a
+fingerprint of the query that produced them, so pairing page 2's cursor with a
+different filter is a 400 rather than rows from one query numbered by another —
+the `getProfiles` index-zipping hazard, one layer up.
+
+**Three things were found while building it and fixed here.**
+
+* `/openapi.json` was live. ACCESS.md had already noted it as a directory of
+  the write surface and recommended `openapi_url=None`; it stopped being
+  theoretical the moment a router existed with no Authelia on it.
+* `group_summary` reported one person awaiting review for every *empty* circle.
+  The LEFT JOIN emits an all-NULL row when a circle has no members, and NULL is
+  indistinguishable from an unreviewed membership by the `confirmed` test alone.
+  The circles page has been showing this.
+* The origin guard's route sweep — `tests/test_origin.py` — walked `app.routes`
+  and read `.methods`, which FastAPI does not expose for an included router. It
+  would have skipped every API write silently, because an absent `methods`
+  attribute defaults to an empty set and an empty set has nothing unsafe in it.
+  The sweep now descends, and names two API routes so that regressing it fails
+  rather than passing vacuously.
+
+**Not built, deliberately:** no follow/unfollow (a public write in someone's
+name stays a click on a page that has checked the subject), no batch tagging
+(`replace_my_follows` carries a refuse-an-implausible-sweep rail because a bug
+once wiped the follow list, and a bulk tag would need the same rail first), no
+bulk export, no moderation data, and no type-to-create on tagging — a typo from
+a program becomes a near-duplicate category nobody notices until a report is
+wrong.
+
+59 new tests — 58 across `tests/test_api.py` and `tests/test_api_auth.py`, plus
+one in `tests/test_origin.py` that names two API write routes so the sweep
+cannot go back to covering nothing. The suite is at 900.
+
+`SONDE_API_TOKENS` is empty by default, which switches the API off; until it is
+set and the container redeployed, none of this is reachable.

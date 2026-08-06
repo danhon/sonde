@@ -29,6 +29,24 @@ services:
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-health.priority=100"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-health.service=${COMPOSE_PROJECT_NAME}"
 
+      # API router — no Authelia, because a program cannot do an interactive
+      # 2FA login. `PathPrefix(/api/v1)` is the containment, and it is the most
+      # dangerous label in this file: widen it to `/api` and `/api/status`
+      # loses Authelia; drop the PathPrefix and the whole admin surface does.
+      # `make verify` asserts the rule for that reason. What stands in for
+      # Authelia here is the bearer token checked in sonde/web/apikey.py.
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.rule=Host(`${SERVICE_HOST}`) && PathPrefix(`/api/v1`)"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.entrypoints=websecure"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.tls.certresolver=le"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.priority=90"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.service=${COMPOSE_PROJECT_NAME}"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.middlewares=${COMPOSE_PROJECT_NAME}-api-rate@docker"
+      # Not a defence against token guessing — a 43-character secret does not
+      # fall to a rate limit — but it keeps one runaway client from putting a
+      # sustained read load on a SQLite file that the sweeps are writing to.
+      - "traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-api-rate.ratelimit.average=30"
+      - "traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-api-rate.ratelimit.burst=60"
+
       - "homepage.group=Applications"
       - "homepage.name=sonde"
       - "homepage.icon=mdi-radar"

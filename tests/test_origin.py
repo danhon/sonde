@@ -90,15 +90,41 @@ def test_a_client_sending_neither_header_is_allowed():
 
 # ------------------------------------------------- wired to every write
 
+def _flatten(routes):
+    """Every route, including the ones inside an included router.
+
+    FastAPI represents `include_router` as a single `_IncludedRouter` object in
+    `app.routes` rather than splicing its routes in. A sweep that walks
+    `app.routes` and reads `.methods` therefore skips straight past the API's
+    writes — silently, because `getattr(route, "methods", set())` returns an
+    empty set and an empty set has nothing unsafe in it. The tests below would
+    have gone on passing while covering nothing under `/api/v1`.
+    """
+    for route in routes:
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            yield from _flatten(inner.routes)
+        else:
+            yield route
+
+
 def _writes(app):
     """Every state-changing route the app actually exposes."""
     out = []
-    for route in app.routes:
+    for route in _flatten(app.routes):
         methods = getattr(route, "methods", set()) or set()
         unsafe = methods - origin.SAFE_METHODS
         if unsafe:
             out.append((sorted(unsafe)[0], route.path))
     return out
+
+
+def test_the_sweep_reaches_inside_included_routers():
+    """Guards the guard, again. `_flatten` returning only top-level routes is a
+    silent failure, so the API's writes are named rather than counted."""
+    paths = {path for _, path in _writes(create_app())}
+    assert "/api/v1/circles" in paths
+    assert "/api/v1/people/{identifier}/circles/{slug}" in paths
 
 
 def test_the_app_has_writes_to_guard():

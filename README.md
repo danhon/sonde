@@ -7,8 +7,9 @@ ones are **influential** — with a score it can explain.
 
 > **Status: in production**, deployed on ubuntuplex behind Authelia. All three
 > goals are answered, plus mutuals, circles, institutions, interaction
-> leaderboards, follow-back, five visualisations and a nightly snapshot.
-> 794 tests pass; the browser eval checks 226 page renders across two engines
+> leaderboards, follow-back, five visualisations, a nightly snapshot and a
+> read-mostly JSON API for other programs.
+> 900 tests pass; the browser eval checks 226 page renders across two engines
 > and seven viewports.
 
 This README is for running and deploying sonde. The reasoning behind it lives
@@ -20,6 +21,7 @@ elsewhere:
 | [HISTORY.md](HISTORY.md) | What was built, in order, and why |
 | [BUGS.md](BUGS.md) | What is currently wrong |
 | [SCORING.md](SCORING.md) | How the influence score is calculated |
+| [API.md](API.md) | The HTTP/JSON API other programs read sonde through |
 
 ---
 ## What it does
@@ -49,6 +51,7 @@ Authelia 2FA at `sonde.sgc.rayandhon.com`.
 | `/verified` | The 147, grouped by issuing verifier |
 | `/changes` | Arrival/departure timeline |
 | `/api/status` | Live job progress, next scheduled runs, last-sync age (polled by the nav strip) |
+| `/api/v1/*` | Machine-readable JSON for other programs — token, not Authelia. See [API.md](API.md) |
 | `/healthz` | Unauthenticated liveness probe — also reports running jobs and scheduler state |
 
 Every page carries a live activity strip showing what is running, how far
@@ -113,6 +116,12 @@ BLUESKY_APP_PASSWORD=
 ENABLE_TIER3=false
 TIER3_TOP_N=500
 
+# API access for other programs. Comma-separated name:secret[:write] entries;
+# empty (the default) switches the API off entirely. A token is read-only
+# unless its entry says `write`. See API.md.
+#   python -c "import secrets; print(secrets.token_urlsafe(32))"
+SONDE_API_TOKENS=
+
 # Database — set by Dockerfile default; only override if needed
 # DB_PATH=/data/sonde.db
 TZ=America/Los_Angeles
@@ -136,13 +145,25 @@ substitutes an empty string, the Traefik rule becomes ``Host(``)``, and the site
 Other targets: `make preview` (runs `sonde-preview.sgc.rayandhon.com` alongside
 prod), `make logs`, `make stop`.
 
-### Two Traefik routers, not one
+### Three Traefik routers, not one
 
-`compose.yml` declares a second router for `/healthz` with no Authelia
-middleware and a higher priority. Authelia attaches to the *router*, not the
-path — on a single router the health endpoint 302s to the login page and the
-watchdog reads the app as down. `/healthz` exposes only liveness and last-sync
-age, never follower data.
+Authelia attaches to the *router*, not the path, so anything that must be
+reachable without a browser login needs its own.
+
+| Router | Rule | Guard |
+|---|---|---|
+| main | `Host(sonde…)` | `authelia@file` |
+| `-health` | `… && Path(/healthz)`, priority 100 | none — liveness and sync age only |
+| `-api` | `… && PathPrefix(/api/v1)`, priority 90 | none from Traefik; a bearer token in the app |
+
+On a single router `/healthz` 302s to the login page and the watchdog reads the
+app as down, and the API is unusable by any program.
+
+**The API router's `PathPrefix` is its containment and is the most dangerous
+label in `compose.yml`.** Widen it to `/api` and `/api/status` loses Authelia;
+drop it and the entire admin surface does. `make verify` asserts the rule, that
+the router carries no Authelia, that `/api/v1/meta` answers 401 without a token
+(302 there means the router is missing) and that `/api/status` still answers 302.
 
 ### First-time server setup
 
@@ -167,6 +188,8 @@ curl -sk -o /dev/null -w '%{http_code}\n' https://sonde.sgc.rayandhon.com/
 # 302 to auth.sgc.rayandhon.com is correct (Authelia); 404 means SERVICE_HOST broke
 curl -sk -o /dev/null -w '%{http_code}\n' https://sonde.sgc.rayandhon.com/healthz
 # 200 — a 302 here means the health router lost its priority
+curl -sk -o /dev/null -w '%{http_code}\n' https://sonde.sgc.rayandhon.com/api/v1/meta
+# 401 — 302 means the API router is missing, 200 means the token check is not running
 ```
 ## Evals
 

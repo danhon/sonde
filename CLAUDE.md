@@ -82,6 +82,25 @@ are allowed by design, which is why existing POST tests did not have to change.
 `sonde/web/origin.py` has the reasoning; `tests/test_origin.py` enumerates every
 write route and checks both directions.
 
+## The API router is the one thing here Authelia does not guard
+
+`/api/v1` is served by its own Traefik router with no `authelia@file`, because a
+program cannot do an interactive 2FA login. A bearer token checked in
+`sonde/web/apikey.py` stands in for it, as a middleware over the whole prefix.
+
+**`PathPrefix(`/api/v1`)` in `compose.yml` is the containment.** Widen it to
+`/api` and `/api/status` — scheduler internals — loses Authelia. Drop it and the
+whole admin surface does. `make verify` and `tests/test_api_auth.py` both assert
+the rule; keep it that way.
+
+Consequences for anything added later: a route added under `/api/v1` is
+token-guarded before it is written, and a route added anywhere else is not
+reachable with a token at all. Responses are assembled from explicit dict
+literals, never by copying a row — `SELECT a.*` means a blocklist publishes the
+next column added to `actors`. `tests/test_api.py` asserts every response
+against a declared key allowlist, so adding a field means editing a test on
+purpose. API.md is the contract other projects read; `/openapi.json` is off.
+
 ## Jinja macros must be imported `with context`
 
 `{% from "_sort.html" import who %}` does **not** give the macro access to

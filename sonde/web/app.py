@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
@@ -16,6 +17,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.templating import Jinja2Templates
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from sonde.api.auth import authenticator
 from sonde.config import settings
@@ -159,7 +161,89 @@ def _composition_bars(data: dict) -> dict:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="sonde", docs_url=None, redoc_url=None)
+    # `openapi_url=None` as well as the two doc UIs. Without it, /openapi.json
+    # serves a complete machine-readable map of every write route — harmless
+    # behind Authelia, a directory of the write surface on any router that is
+    # not. The API router is exactly such a router, so this stopped being
+    # theoretical the moment it was added. API.md is the hand-written contract
+    # and is the thing kept correct.
+    app = FastAPI(title="sonde", docs_url=None, redoc_url=None, openapi_url=None)
+
+    from sonde.web import api, apikey
+
+    app.include_router(api.router)
+
+    @app.exception_handler(api.ApiError)
+    async def _api_error(request: Request, exc: api.ApiError):
+        """One error shape for the whole API.
+
+        FastAPI's own `{"detail": ...}` would be a second shape, appearing
+        exactly when a client is least equipped to parse it, so nothing under
+        the prefix raises HTTPException.
+        """
+        return api.error_response(exc.status, exc.code, exc.message)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_error(request: Request, exc: StarletteHTTPException):
+        """Keep the API to one error shape, including the ones it never raises.
+
+        A mistyped path under the prefix is answered by the router, not by a
+        route, so it never reaches `ApiError` and used to come back as
+        FastAPI's `{"detail": "Not Found"}`. Two error shapes on one API means
+        every client needs two parsers, and discovers the second one in
+        production.
+        """
+        if api.apikey.guards(request.url.path):
+            code = "not_found" if exc.status_code == 404 else "error"
+            return api.error_response(exc.status_code, code,
+                                      str(exc.detail))
+        return await http_exception_handler(request, exc)
+
+    @app.middleware("http")
+    async def api_calls_must_carry_a_token(request: Request, call_next):
+        """The only thing standing in front of `/api/v1`.
+
+        The API's Traefik router carries no Authelia — a machine client cannot
+        do an interactive 2FA login — so unlike every other route here, this
+        one is reachable from the internet by anybody. The check is on the path
+        prefix rather than on a list of routes so that a route added under it
+        later is guarded before it is written, and it runs in front of the
+        router so an unauthenticated caller cannot map the API by watching
+        which paths 404.
+        """
+        if not apikey.guards(request.url.path):
+            return await call_next(request)
+
+        if not apikey.configured():
+            # No tokens issued means the operator never asked for a machine
+            # surface. Saying so beats 401ing a correct token forever.
+            return api.error_response(
+                503, "api_disabled",
+                "The sonde API is not configured. Set SONDE_API_TOKENS.")
+
+        client = apikey.identify(request.headers)
+        if client is None:
+            log.warning("refused an unauthenticated API call to %s",
+                        request.url.path)
+            return api.error_response(
+                401, "unauthenticated",
+                "Send Authorization: Bearer <token>.")
+
+        scope = apikey.needed_scope(request.method)
+        if not client.may(scope):
+            log.warning("API client %r lacks the %s scope for %s %s",
+                        client.name, scope, request.method, request.url.path)
+            return api.error_response(
+                403, "forbidden",
+                f"This token does not have the {scope!r} scope.")
+
+        request.state.api_client = client
+        response = await call_next(request)
+        # Personal data crossing a proxy. Nothing here is worth a shared cache
+        # holding on to, and an intermediary that did would be serving one
+        # client's answers to another.
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
 
     @app.middleware("http")
     async def writes_must_come_from_sonde(request: Request, call_next):
@@ -176,6 +260,14 @@ def create_app() -> FastAPI:
         if reason is not None:
             log.warning("refused a write to %s from elsewhere (%s)",
                         request.url.path, reason)
+            if apikey.guards(request.url.path):
+                # Same refusal, in the shape the API promises for every error.
+                # This one is only reachable from a browser page, which is not
+                # the API's client — but "errors are always this object" has to
+                # be true without exceptions or it is not worth documenting.
+                return api.error_response(
+                    403, "forbidden",
+                    "This write did not come from sonde, so it was refused.")
             return PlainTextResponse(
                 "This write did not come from sonde, so it was refused.",
                 status_code=403,
