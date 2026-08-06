@@ -1,5 +1,21 @@
 # ACCESS — who can see what
 
+> **Status as of 2026-08-06: NOT IMPLEMENTED. There is no public URL.**
+>
+> This is a design, not a description. Nothing in it has been built: no second
+> hostname, no read-only mode, no allowlist middleware, no redaction, no
+> `robots.txt`. The deployed container has two Traefik routers, both on
+> `sonde.sgc.rayandhon.com`, and the main one carries `authelia@file`.
+> `sonde-public.sgc.rayandhon.com` is a name in this document that resolves to
+> nothing.
+>
+> The one piece that *does* exist is L0 in §3, the same-origin write guard —
+> and it was built for the CSRF finding in the 2026-08-04 security review, not
+> for this plan. It happens to compose with it.
+>
+> Two questions in §6 and §1 are still unanswered by the operator and block
+> phase 2. See §7 for per-phase status.
+
 sonde is currently one thing: a private site behind Authelia where every page
 reads and a handful of buttons write. This document specifies the split into
 **two audiences on one container**: an anonymous reader who gets an
@@ -321,15 +337,27 @@ was asked for. Easy to reverse; hard to un-index.
 
 Each phase is independently shippable and the site is correct after each.
 
-| Phase | Work | Ships |
-|---|---|---|
-| 0 | Mode plumbing, ContextVar, default-deny middleware, full test suite. No public router deployed. | Nothing visible; the mechanism is provably correct first |
-| 1 | Public context builders, private exclusion in the store, `base.html` gating, `public_settings`. | Still nothing visible |
-| 2 | `compose.yml` + `Makefile` + `make verify` + DNS/TLS. | The public site |
-| 3 | Cache headers, rate limit, `robots.txt`. | Hardening |
+| Phase | Work | Ships | Status |
+|---|---|---|---|
+| 0 | Mode plumbing, ContextVar, default-deny middleware, full test suite. No public router deployed. | Nothing visible; the mechanism is provably correct first | **not started** |
+| 1 | Public context builders, private exclusion in the store, `base.html` gating, `public_settings`. | Still nothing visible | **not started** |
+| 2 | `compose.yml` + `Makefile` + `make verify` + DNS/TLS. | The public site | **not started**, and blocked below |
+| 3 | Cache headers, rate limit, `robots.txt`. | Hardening | **not started** |
 
 Phase 0 before Phase 2 is the whole discipline: the enforcement is testable
 without ever exposing anything, so it gets tested before anything is exposed.
+
+**Phase 2 is blocked on two decisions**, both of which change what gets built
+rather than merely how, and neither of which is the author's to make:
+
+1. **Should the public site be indexable?** §6 takes a default of `robots.txt`
+   disallowing everything. "Anyone who has the link" and "the first Google
+   result for a follower's handle" are materially different exposures for the
+   people listed, and only one of them was asked for.
+2. **Should departures appear on public `/changes`?** They are in scope as
+   chosen, and §1.1 already strips the reason and detail. Even so, "these 12
+   people unfollowed you last week" is a pointed thing to publish about named
+   individuals, and counts-only is a defensible alternative.
 
 ---
 

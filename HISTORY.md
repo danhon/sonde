@@ -1308,3 +1308,60 @@ same-origin `<form>` POST landed on its redirect, and a genuine cross-origin
 What this does not fix: the cookie is still shared fleet-wide, so any other
 service can still *read* sonde's pages with the operator's session. Narrowing
 that is an Authelia change in `reverse-proxy`, not one here.
+
+## 2026-08-06 — what the security review covered, and what it left
+
+The three preceding entries each record one fix. This is the record of the pass
+that produced them, written because the most perishable output of a review is
+not the bugs — those become commits — but the list of things that were examined
+and found sound. Without it the next reader re-audits them, or worse, assumes
+they were never looked at.
+
+**Fixed, in their own commits:** the follows-sweep wipe, the follow/bookkeeping
+split and the undefined logger under it, the scheme-relative open redirect, and
+the fleet-wide CSRF path. Four commits, 29 new tests, every one of them checked
+against the old code before being kept.
+
+**Checked and found clean.** Not "looked at" — traced:
+
+* **SQL injection.** Every dynamic `ORDER BY` in the store resolves through an
+  allowlist dict with a safe default (`SORTABLE`, `REL_SORTABLE`, `IX_SORTABLE`,
+  `CANDIDATE_SORTABLE`, `ORG_SORTABLE`, `MEMBER_SORTABLE`). The remaining
+  f-string SQL is placeholder counts (`IN ({placeholders})`) or internal column
+  names from `_migrate`. No user-controlled string reaches a query body.
+* **XSS.** No `|safe`, no `Markup`, no `autoescape` override anywhere in the
+  templates; `charts.py` emits numeric coordinates, not markup.
+* **`_safe_back`.** Correct, including the scheme-relative case its docstring
+  describes. It was the *other* validator that was wrong (BUG-14), which is why
+  there is now only one.
+* **Credential handling.** `Authenticator.status()` excludes both token and
+  password; nothing logs either; `GITHUB_TOKEN` and the SMTP password are read
+  from the environment and never rendered.
+* **Both documented API hazards are honoured in code.** `get_profiles` maps by
+  DID rather than position, and `iter_followers`/`iter_follows` terminate only
+  on a missing cursor.
+
+**One finding was wrong and is withdrawn.** The review reported the institution
+weight as unvalidated, taking `inf` and negatives into the score. It does not:
+`set_organisation_weight` clamps with `max(0.0, min(1.0, weight))`, and `inf`,
+`-5` and `1e308` were all checked and store 0.0 or 1.0. The real defect is
+narrower and is BUG-18 — `nan` compares false against everything, so the clamp
+passes it through as 1.0 and garbage becomes the maximum weight. Written down
+because a review that only ever adds to the pile is not being read carefully.
+
+**Left, deliberately:** BUG-15 to BUG-18, all P2/P3, all in BUGS.md with
+reproductions. And one thing that cannot be fixed here at all — the Authelia
+cookie is scoped to the whole of `sgc.rayandhon.com`, so while writes are now
+refused unless they come from sonde's own pages, **reads are not**. An XSS in
+any sibling service can still read sonde as the operator. That is a
+`reverse-proxy` change, and it is recorded in BUGS.md so it is not mistaken for
+something the middleware closed.
+
+**Deployed** the same day: `origin/main` at `28a3af1`. The one check that needed
+a human was a real write through the browser, since the same-origin guard sits
+in front of every form and had only been verified locally over plain HTTP —
+following someone through Traefik and TLS confirmed it.
+
+**Not deployed, and not built:** everything in ACCESS.md. There is no public
+URL. That document now says so at the top, because it reads like a description
+of a running system and is a design for one that does not exist.

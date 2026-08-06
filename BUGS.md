@@ -10,8 +10,14 @@ every route hit against a production snapshot including hostile parameters (no
 500s), job wiring and store references checked, and the chip interaction driven
 in a real browser.
 
-Everything below is **reproduced, not suspected**. Where a number appears it was
-measured against the 2026-07-29 snapshot.
+Re-triaged 2026-08-04 by a security review of the web, API and store layers.
+Three defects from it (BUG-12 to BUG-14) were fixed the same day and are gone
+from this list; what that review found and deliberately left is in HISTORY.md,
+including the things checked and found clean, so they are not re-audited.
+
+Everything below is **reproduced, not suspected**, except where an entry says
+it is preventive. Where a number appears it was measured against the 2026-07-29
+snapshot.
 
 Ranked by what it costs to leave alone.
 
@@ -62,7 +68,52 @@ hand.
 *Fix:* a job that rejects undecided candidates matching nobody under current
 rules. Bounded and auditable, and it must leave decided ones alone.
 
+**BUG-16 · `/export.csv` writes formulas straight through.** `handle` and
+`display_name` are chosen by the follower, and a leading `=`, `+`, `-` or `@`
+makes a formula when the file is opened in Excel or Sheets. Reproduced — a
+follower handle of `=cmd|'/C calc'!A1` lands in the CSV verbatim:
+
+```
+handle,display_name
+=cmd|'/C calc'!A1,@SUM(1+1)
+```
+
+The export is operator-only, so this is someone else choosing what runs on your
+machine, not a remote attack. It is the only route where a follower controls a
+byte sequence that another program executes.
+*Fix:* prefix a cell beginning `= + - @` or a control character with `'`. Do it
+in the writer, not the query, or the same text leaks through the next exporter.
+
 ### P3 — cosmetic, dead, or preventive
+
+**BUG-15 · `iter_follows` has no page cap** where `iter_followers` has one.
+Both terminate only on a missing cursor, which is right (see the module
+docstring). But `head_sweep_max_pages` exists because a cursor that never
+advances would otherwise walk forever, and `iter_follows` has no equivalent —
+so the same fault on `getFollows` spins indefinitely against an IP budget shared
+house-wide with BlueBirdNET and atproto-labeler. Preventive: not observed, and
+the reasoning for the cap on the other iterator is already written down in
+`config.py`.
+*Fix:* the same page cap, defaulted well above any real follow list.
+
+**BUG-17 · `name` is interpolated into a redirect unencoded.**
+`set_org_weight` returns `f"/institutions?name={name}"`, so an organisation
+whose name contains `&`, `=` or `#` breaks out of its own query parameter.
+Reproduced: `A&b=1#x` yields `Location: /institutions?name=A&b=1#x`, which the
+page then reads as `name=A` plus a stray `b=1`. Not an open redirect — the path
+is rooted, and `_safe_path` governs the routes that take a caller-supplied
+target. Organisation names come from seeding and verification issuers rather
+than free text, which is why nothing has hit it.
+*Fix:* `urlencode` the parameter.
+
+**BUG-18 · A weight of `nan` becomes the maximum weight.**
+`set_organisation_weight` clamps with `max(0.0, min(1.0, weight))`, which
+handles `inf`, `-5` and `1e308` correctly — all three were checked and stored
+0.0 or 1.0. `nan` compares false against everything, so `min(1.0, nan)` returns
+`1.0` and the clamp passes it through: garbage silently becomes the strongest
+possible institution weight rather than being rejected. Reproduced.
+*Fix:* reject a non-finite weight rather than clamping it.
+
 
 **BUG-06 · Stored `why` text still says "group".** Existing candidates keep the
 wording they were written with; only a fresh discovery run rewrites them. Self-
@@ -85,6 +136,20 @@ routes — which took until M32.
 **BUG-10 · Job keys still say `groups` in URLs.** `/settings/sync/groups` and
 the batch step keys are internal, and the labels shown to a person were fixed in
 M29, but the key leaks into a form action.
+
+### Open, but not fixable in this repository
+
+**The Authelia cookie is shared by every service on the fleet.** It is scoped to
+`domain: sgc.rayandhon.com` with the default `same_site: lax`, so every other
+service on ubuntuplex is *same-site* with sonde. Writes are now refused unless
+they come from sonde's own pages, but **reads are not** — an XSS in calibre-web,
+homepage, docs, scrypted, birdnet-go or the watchdog can still fetch sonde's
+pages with the operator's session and exfiltrate the follower data, the circles
+and the hidden list.
+
+Narrowing that means per-service cookie domains in Authelia, which lives in
+`~/dev/reverse-proxy`, not here. Recorded so it is not mistaken for something
+the same-origin middleware closed.
 
 ### Not a bug, but the biggest risk here
 
