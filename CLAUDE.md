@@ -7,6 +7,14 @@ for anything that isn't specific to this repo. In particular
 [python-apps.md](../reverse-proxy/docs-site/docs/services/python-apps.md) is the
 canonical deploy pattern this app follows.
 
+**Before editing anything in that repo, read
+[DOCUMENTING.md](../reverse-proxy/DOCUMENTING.md).** It is the contract every
+session follows when updating fleet docs: what belongs centrally versus here,
+where each kind of fact goes, the checklist for adding or changing a service,
+the house style, and the deploy a `docs-site/` change needs. Recording the
+fleet-relevant part of work done here is part of that work, as its own commit
+in that repo.
+
 Docs in this repo, split by what they answer:
 
 | | |
