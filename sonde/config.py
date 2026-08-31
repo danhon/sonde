@@ -138,6 +138,27 @@ class Settings:
     smtp_password: str = field(default_factory=lambda: os.environ.get("SMTP_PASSWORD", ""))
     notify_to: str = field(default_factory=lambda: os.environ.get("NOTIFY_TO", ""))
 
+    # Verified arrivals, emailed as they happen rather than waiting for the
+    # daily digest. Detection is free — `verification` rides along in the same
+    # getFollowers payload the sweep already fetches — so the only cost is the
+    # email itself, and the only real risk is sending too many of them.
+    enable_verified_alerts: bool = field(
+        default_factory=lambda: _bool("ENABLE_VERIFIED_ALERTS", True)
+    )
+    # Bounds a backlog. If the app is down for a week, coming back up should
+    # report the last two days of verified arrivals, not all of them at once —
+    # the digest and /changes are where the full record lives.
+    verified_alert_lookback_hours: int = field(
+        default_factory=lambda: _int("VERIFIED_ALERT_LOOKBACK_HOURS", 48)
+    )
+    # How many are named in the email before it says "and N more".
+    verified_alert_max_listed: int = field(
+        default_factory=lambda: _int("VERIFIED_ALERT_MAX_LISTED", 10)
+    )
+    verified_alert_to: str = field(
+        default_factory=lambda: os.environ.get("VERIFIED_ALERT_TO", "")
+    )
+
     # Web
     web_host: str = field(default_factory=lambda: os.environ.get("WEB_HOST", "0.0.0.0"))
     web_port: int = field(default_factory=lambda: _int("WEB_PORT", 8090))
@@ -165,6 +186,19 @@ class Settings:
     @property
     def smtp_configured(self) -> bool:
         return bool(self.smtp_host and self.smtp_username and self.notify_to)
+
+    @property
+    def alert_to(self) -> str:
+        """Alerts can go somewhere else — a phone that pings, say — but default
+        to wherever the digest goes."""
+        return self.verified_alert_to or self.notify_to
+
+    @property
+    def verified_alerts_configured(self) -> bool:
+        return bool(
+            self.enable_verified_alerts
+            and self.smtp_host and self.smtp_username and self.alert_to
+        )
 
     @property
     def service_host(self) -> str:

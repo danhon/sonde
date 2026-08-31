@@ -53,6 +53,8 @@ JOBS: tuple[Job, ...] = (
     Job("rescore", "Rescore influence", "none", ""),
     Job("backup", "Backup now", "none", ""),
     Job("digest", "Send digest now", "none", "forces a send"),
+    Job("alerts", "Check verified arrivals", "none",
+        "emails any that have not been alerted; normally runs after each sweep"),
 )
 
 BY_KEY = {job.key: job for job in JOBS}

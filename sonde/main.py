@@ -106,6 +106,20 @@ async def _run_simple(kind: str, limit: int | None) -> int:
         await store.close()
 
 
+async def _run_alerts() -> int:
+    """Verified-arrival alerts. Normally the scheduler runs this after a sweep."""
+    from sonde.db import store
+    from sonde.notify import alerts
+
+    await store.connect()
+    try:
+        result = await alerts.run_alerts()
+        log.info("verified alerts finished: %s", result)
+        return 0 if result["status"] == "ok" else 1
+    finally:
+        await store.close()
+
+
 async def _run_backup() -> int:
     from sonde.db import store
     from sonde.sync import backup
@@ -133,6 +147,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rosters", action="store_true", help="fetch institution rosters")
     parser.add_argument("--affinity", action="store_true", help="build the affinity index")
     parser.add_argument("--backup", action="store_true", help="write a snapshot and exit")
+    parser.add_argument("--alerts", action="store_true",
+                        help="email any verified arrivals not yet alerted, and exit")
     parser.add_argument("--schedule", action="store_true", help="web UI plus scheduled sweeps")
     args = parser.parse_args(argv)
 
@@ -154,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_run_simple("affinity", args.limit))
     if args.backup:
         return asyncio.run(_run_backup())
+    if args.alerts:
+        return asyncio.run(_run_alerts())
 
     from sonde.web.app import app
 

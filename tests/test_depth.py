@@ -7,6 +7,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from sonde import joblist
 from sonde.api.client import BlueskyClient
 from sonde.db import store
 from sonde.sync import mutuals
@@ -400,6 +401,18 @@ async def test_a_batch_stops_at_the_first_failing_step(client, monkeypatch):
 
 async def test_an_unknown_batch_is_rejected(client):
     assert client.post("/settings/batch/nonsense").status_code == 404
+
+
+@pytest.mark.parametrize("key", [job.key for job in joblist.JOBS])
+async def test_every_listed_job_has_a_runner(client, key, monkeypatch):
+    """A button on /settings that 404s is a job nobody notices is missing."""
+    from sonde.jobs import registry
+
+    spawned = []
+    monkeypatch.setattr(registry, "spawn", lambda k, fn: spawned.append(k))
+    assert client.post(f"/settings/sync/{key}",
+                       follow_redirects=False).status_code == 303
+    assert spawned == [key]
 
 
 @pytest.mark.parametrize("key", ["refresh", "enrich", "regroup",

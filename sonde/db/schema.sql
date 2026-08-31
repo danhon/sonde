@@ -341,3 +341,26 @@ CREATE TABLE IF NOT EXISTS known_followers (
 );
 
 CREATE INDEX IF NOT EXISTS idx_kf_did ON known_followers (did);
+
+-- ---------------------------------------------------------------- M28
+
+-- One row per verified arrival an alert email was attempted for.
+--
+-- The row is written BEFORE the send, not after, and that ordering is the
+-- whole design: a crash between claiming and sending costs a missed alert
+-- rather than a duplicate one, and a missed alert is not lost — the daily
+-- digest lists the same arrival a few hours later. Recording afterwards would
+-- trade a bounded, backstopped failure for an unbounded resend loop.
+--
+-- Keyed on the follow_events row rather than the DID, because someone can
+-- unfollow and come back and that second arrival is a second piece of news.
+CREATE TABLE IF NOT EXISTS verified_alerts (
+    event_id   INTEGER PRIMARY KEY,   -- follow_events.id that triggered it
+    did        TEXT NOT NULL,
+    claimed_at TEXT NOT NULL,
+    sent_at    TEXT,                  -- NULL until the email actually left
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    error      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_valerts_unsent ON verified_alerts (sent_at);

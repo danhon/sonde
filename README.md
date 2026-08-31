@@ -7,9 +7,9 @@ ones are **influential** — with a score it can explain.
 
 > **Status: in production**, deployed on ubuntuplex behind Authelia. All three
 > goals are answered, plus mutuals, circles, institutions, interaction
-> leaderboards, follow-back, five visualisations, a nightly snapshot and a
-> read-mostly JSON API for other programs.
-> 900 tests pass; the browser eval checks 226 page renders across two engines
+> leaderboards, follow-back, five visualisations, a nightly snapshot, instant
+> verified-follower alerts and a read-mostly JSON API for other programs.
+> 942 tests pass; the browser eval checks 226 page renders across two engines
 > and seven viewports.
 
 This README is for running and deploying sonde. The reasoning behind it lives
@@ -30,6 +30,7 @@ elsewhere:
 - **Sweeps the whole list** every 6 hours — 115 requests, ~39 seconds — to catch departures, which can only be proven by absence
 - **Shows verified followers** — currently 147 — with who verified them and when. This data rides along with the follower list at no extra API cost
 - **Ranks influential followers** on an explainable 0–100 score built from reach, relevance, selectivity, output, and verification. Every row shows exactly what produced its number
+- **Emails you when a verified account follows** — within one head sweep, about 15 minutes, and for no extra API calls. A daily digest covers everything else
 - **Tracks change over time** — arrivals, departures, returns, handle changes, and a daily growth chart, with guards so a failed sync can never masquerade as a mass unfollow
 - **Flags mutuals** by cross-referencing your own follow list
 - **Needs no credentials.** Everything above runs unauthenticated. An app password is optional and only unlocks the extras (exact affinity, interactions, follow-back, follow dates)
@@ -66,6 +67,7 @@ uv run sonde --head           # one head sweep (1–2 calls) and exit
 uv run sonde --hydrate        # fill in follower counts; --limit N to cap
 uv run sonde --rescore        # recompute every influence score
 uv run sonde --backup         # daily rollup + snapshot
+uv run sonde --alerts         # email any verified arrivals not yet alerted
 uv run sonde --schedule       # web UI + scheduler (production mode)
 ```
 
@@ -121,6 +123,13 @@ TIER3_TOP_N=500
 # unless its entry says `write`. See API.md.
 #   python -c "import secrets; print(secrets.token_urlsafe(32))"
 SONDE_API_TOKENS=
+
+# Email. Blank SMTP_HOST means nothing is ever sent — see "Email" below.
+SMTP_HOST=
+SMTP_USERNAME=
+SMTP_PASSWORD=
+NOTIFY_TO=
+ENABLE_VERIFIED_ALERTS=true        # instant email when a verified account follows
 
 # Database — set by Dockerfile default; only override if needed
 # DB_PATH=/data/sonde.db
@@ -207,6 +216,37 @@ uv run python -m evals.affinity_check           # affinity + institution signal
 
 The baselines are the 2026-07-26 measurements. A failure means either the API
 changed or sonde did — both worth knowing.
+## Email
+
+Two kinds, both off unless `SMTP_HOST`, `SMTP_USERNAME` and `NOTIFY_TO` are set.
+
+**The daily digest** (14:00 local) reports the day: arrivals ranked by
+influence, departures, returns, renames, and anything unhealthy. A quiet day
+sends nothing; a broken day always sends.
+
+**Verified-arrival alerts** fire as they happen — one head sweep of latency,
+about 15 minutes — when a verified account or a trusted verifier follows you.
+Detection is free: `verification` is already in the follower list the sweep
+fetched.
+
+The awkward parts are all about not being annoying:
+
+- **It never reports the past.** The first run with alerting actually on stamps
+  a watermark at the end of the event log and alerts nothing before it, so
+  neither deploying it nor switching it on months later opens with a week of
+  backdated email. `VERIFIED_ALERT_LOOKBACK_HOURS` bounds the other side, so
+  coming back from downtime doesn't dump a backlog.
+- **It claims before it sends,** so a crash mid-send costs a missed alert rather
+  than a duplicate one. That is the cheaper failure because the digest lists the
+  same arrival anyway — and after three failed attempts it gives up and the
+  digest says so, rather than retrying forever in silence.
+- **A burst is one email.** Twelve verified arrivals in a sweep is one message
+  naming ten of them.
+- **Hidden followers stay hidden.** Anything the moderation lists removed from
+  the tables doesn't turn up in your inbox instead.
+
+Set `ENABLE_VERIFIED_ALERTS=false` to turn them off, or `VERIFIED_ALERT_TO` to
+send them somewhere other than the digest.
 ## Snapshots
 
 `follow_events` is the only data here that can't be re-fetched from Bluesky, so a

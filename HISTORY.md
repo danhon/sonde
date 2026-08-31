@@ -1465,3 +1465,59 @@ cannot go back to covering nothing. The suite is at 900.
 
 `SONDE_API_TOKENS` is empty by default, which switches the API off; until it is
 set and the container redeployed, none of this is reachable.
+
+## 2026-08-06 — the verified arrival that shouldn't wait until 14:00
+
+The digest answers "what happened yesterday". It cannot answer "someone worth
+knowing about just arrived", because by the time it goes out the moment to reply
+has passed. Verification is the one arrival signal that is already free —
+`verification` rides along in the `getFollowers` payload the head sweep fetched
+anyway — so the whole feature costs zero API calls and one email.
+
+The head sweep runs every 15 minutes, so that is the latency. Alerting hangs off
+`sonde/scheduler.py`'s sweep wrappers rather than living in `sync/runner.py`:
+SMTP latency must not extend a sweep and an SMTP failure must not fail one, and
+hanging off the sweeps means the 15-minute cadence also drives the retry path,
+so there is no second schedule to reason about.
+
+**Most of the design is about not being annoying.** An alerting feature that
+sends too much is worse than none, and there were four ways to send too much:
+
+* **Deploying it would have emailed about the past.** Turning it on would find
+  every verified arrival still inside the window and report them as news. The
+  first *enabled* run stamps a watermark at `max(follow_events.id)` and alerts
+  nothing before it. Deliberately not stamped on a disabled run — otherwise
+  switching alerts on months later is silent for the wrong reason.
+  `VERIFIED_ALERT_LOOKBACK_HOURS` (48) bounds the other side, so a week of
+  downtime comes back with today's news and leaves the rest to the digest.
+* **Recording after sending double-sends.** The `verified_alerts` row is
+  claimed, with its attempt counted, *before* the send. A crash in between costs
+  a missed alert rather than a duplicate one. That is the right side to fail on
+  only because it is backstopped: the digest lists the same arrival hours later,
+  and an alert that burns all three attempts is reported there as a problem, so
+  a dead mailer cannot look like a quiet week.
+* **A burst would have been one email each.** Twelve verified arrivals in one
+  sweep is one message naming ten and counting the other two.
+* **Hidden followers would have arrived in the inbox** despite being removed
+  from every table by the moderation lists.
+
+Two smaller calls. Trusted verifiers count as well as verified accounts — being
+followed by an outlet that verifies other people is exactly the news the email
+exists for. And the claim table keys on the *event*, not the DID: someone who
+unfollows and comes back is news a second time, and keying on the person would
+have silently swallowed that.
+
+Nothing needed to be added to keep a cold start quiet. Backfilled arrivals write
+no event at all — an integrity rule that has been in `runner.py` since the first
+sweep — so the existing 147 verified followers were never candidates.
+
+`--alerts` runs it from the CLI, "Check verified arrivals" from /settings; the
+manual trigger deliberately has no `force`, unlike the digest's, because forcing
+an alert means re-sending one already sent, which is the one thing the claim
+table exists to prevent. 22 new tests in `tests/test_alerts.py`, most of them
+about the four ways above, plus one parametrised test in `tests/test_depth.py`
+asserting every job listed on /settings actually resolves to a runner — a
+button that 404s is a job nobody notices is missing. The suite is at 942.
+
+`SMTP_HOST` is empty by default, so this — like the digest — sends nothing until
+it is configured and the container redeployed.

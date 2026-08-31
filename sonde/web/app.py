@@ -881,7 +881,7 @@ def create_app() -> FastAPI:
 
         from sonde.db import store
         from sonde.external import wikidata, wikipedia
-        from sonde.notify import digest
+        from sonde.notify import alerts, digest
         from sonde.sync import (
             affinity, backup, interactions, moderation, mutuals, posts,
             profiles, relevance, runner,
@@ -911,6 +911,9 @@ def create_app() -> FastAPI:
             "rescore": profiles.rescore,
             "backup": backup.snapshot,
             "digest": lambda: digest.run_digest(force=True),
+            # No force here: forcing an alert would mean re-sending one already
+            # sent, which is the one thing the claim table exists to prevent.
+            "alerts": alerts.run_alerts,
         }
 
     @app.post("/settings/sync/{kind}")

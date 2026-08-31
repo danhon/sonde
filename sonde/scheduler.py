@@ -18,12 +18,36 @@ from sonde.sync import runner
 log = logging.getLogger("sonde.scheduler")
 
 
+async def run_alerts() -> dict:
+    from sonde.notify import alerts
+
+    return await registry.run("alerts", alerts.run_alerts)
+
+
+async def _alert_after_sweep() -> None:
+    """Turn whatever the sweep just recorded into email, if it earned one.
+
+    Deliberately here and not in `sync/runner.py`: SMTP latency must not extend
+    a sweep and an SMTP failure must not fail one. Hanging off the sweeps rather
+    than a timer of its own also means the 15-minute head sweep is what drives
+    the retry path, so there is no second schedule to reason about.
+    """
+    try:
+        await run_alerts()
+    except Exception:  # noqa: BLE001 - a broken mailer must not break syncing
+        log.exception("verified-follower alerts failed")
+
+
 async def run_head() -> dict:
-    return await registry.run("head", runner.head_sweep)
+    result = await registry.run("head", runner.head_sweep)
+    await _alert_after_sweep()
+    return result
 
 
 async def run_full() -> dict:
-    return await registry.run("full", runner.full_sweep)
+    result = await registry.run("full", runner.full_sweep)
+    await _alert_after_sweep()
+    return result
 
 
 async def run_hydrate() -> dict:

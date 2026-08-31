@@ -106,6 +106,17 @@ async def gather(hours: int = 24) -> Digest:
             f"written. Accept or investigate on /settings."
         )
 
+    # The digest is the backstop for alerting, so it has to say when alerting
+    # gave up — otherwise a dead mailer looks exactly like a quiet week.
+    abandoned = await store.abandoned_alerts()
+    if abandoned:
+        handles = ", ".join(f"@{a['handle']}" for a in abandoned[:5] if a["handle"])
+        digest.problems.append(
+            f"{len(abandoned)} verified-arrival alert(s) were abandoned after "
+            f"repeated send failures{' — ' + handles if handles else ''}. They are "
+            f"listed below and on /changes; only the instant email was lost."
+        )
+
     for run in await store.recent_runs(12):
         if run["status"] == "failed":
             digest.problems.append(

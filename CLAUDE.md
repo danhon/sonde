@@ -144,6 +144,30 @@ Never add `overflow-x: hidden` to the body to silence a layout bug. It hides the
 symptom, keeps the broken layout, and blinds the eval by clipping the evidence
 it measures.
 
+## Alerting never reports the past, and claims before it sends
+
+`sonde/notify/alerts.py` emails when a verified account (or a trusted verifier)
+arrives. Two invariants, both load-bearing:
+
+**The watermark is only stamped when alerting is actually enabled.** It records
+where the event log stood the first time alerting ran, and nothing before it is
+ever alerted. If it were stamped on a disabled run, switching alerts on later
+would be silent for the wrong reason; if it weren't stamped at all, deploying
+the feature would email about every verified arrival of the past two days.
+
+**The `verified_alerts` row is written before the send, not after.** A crash
+mid-send therefore costs a missed alert, not a duplicate one — and a missed
+alert isn't lost, because the daily digest lists the same arrival and reports
+alerts that exhausted their three attempts. Reversing the order trades a
+bounded, backstopped failure for an unbounded resend loop.
+
+Consequences for anything added later: sending runs from `sonde/scheduler.py`
+after each sweep, never inside `sync/runner.py` — SMTP latency must not extend
+a sweep and an SMTP error must not fail one. The retry path is driven by the
+15-minute head sweep, so there is no separate timer. A new alertable event kind
+goes in `store.ALERT_EVENTS`; keying the claim table on the event id rather
+than the DID is what lets someone leave and come back and be news twice.
+
 ## Backups — deliberately incomplete
 
 `follow_events` is the only table that cannot be re-fetched from Bluesky. A

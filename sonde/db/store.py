@@ -4193,3 +4193,114 @@ async def dashboard_stats() -> dict:
         "recent_changes": await recent_changes(12, event=ARRIVALS),
         "top": await ranked_followers(limit=10),
     }
+
+
+# ------------------------------------------------- verified-follower alerts
+
+# After this many failed sends an alert is abandoned rather than retried
+# forever. Nothing is lost by giving up: the daily digest lists the same
+# arrival, and the abandonment itself is reported there as a problem.
+ALERT_MAX_ATTEMPTS = 3
+
+# Arrivals worth an email. Someone who left and came back is news again — the
+# alert table keys on the event, not the person, for exactly this reason.
+ALERT_EVENTS = ("followed", "returned")
+
+
+async def max_event_id() -> int:
+    """The high-water mark of the event log. 0 on an empty database."""
+    db = await _db()
+    async with db.execute("SELECT COALESCE(MAX(id), 0) FROM follow_events") as cur:
+        row = await cur.fetchone()
+    return int(row[0])
+
+
+async def alert_candidates(
+    *, since_iso: str, after_event_id: int,
+    max_attempts: int = ALERT_MAX_ATTEMPTS, limit: int = 200,
+) -> list[dict]:
+    """Verified arrivals that still owe an email — new ones and retries alike.
+
+    Hidden followers are excluded: something the moderation lists took out of
+    every table has no business arriving in your inbox instead.
+    """
+    db = await _db()
+    async with db.execute(
+        f"""SELECT e.id AS event_id, e.did, e.event, e.detected_at,
+                   a.handle, a.display_name, a.description, a.followers_count,
+                   a.influence_score, a.verified_status,
+                   a.trusted_verifier_status, a.verifications,
+                   COALESCE(va.attempts, 0) AS attempts
+              FROM follow_events e
+              JOIN actors a USING (did)
+         LEFT JOIN follower_state fs ON fs.did = e.did
+         LEFT JOIN verified_alerts va ON va.event_id = e.id
+             WHERE e.event IN ({','.join('?' for _ in ALERT_EVENTS)})
+               AND e.id > ?
+               AND e.detected_at >= ?
+               AND (a.verified_status = 'valid'
+                    OR a.trusted_verifier_status = 'valid')
+               AND fs.ignored_at IS NULL
+               AND (va.event_id IS NULL
+                    OR (va.sent_at IS NULL AND va.attempts < ?))
+             ORDER BY e.id ASC
+             LIMIT ?""",
+        (*ALERT_EVENTS, after_event_id, since_iso, max_attempts, limit),
+    ) as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+    for row in rows:
+        row["verification_records"] = json.loads(row.get("verifications") or "[]")
+    return rows
+
+
+async def claim_alerts(rows: Sequence[dict]) -> None:
+    """Record the attempt BEFORE the email is sent. See schema.sql."""
+    if not rows:
+        return
+    db = await _db()
+    now = utcnow()
+    await db.executemany(
+        """INSERT INTO verified_alerts (event_id, did, claimed_at, attempts)
+           VALUES (?,?,?,1)
+           ON CONFLICT (event_id) DO UPDATE SET
+               attempts   = verified_alerts.attempts + 1,
+               claimed_at = excluded.claimed_at""",
+        [(r["event_id"], r["did"], now) for r in rows],
+    )
+    await db.commit()
+
+
+async def mark_alerts_sent(event_ids: Sequence[int]) -> None:
+    if not event_ids:
+        return
+    db = await _db()
+    await db.executemany(
+        "UPDATE verified_alerts SET sent_at = ?, error = NULL WHERE event_id = ?",
+        [(utcnow(), eid) for eid in event_ids],
+    )
+    await db.commit()
+
+
+async def mark_alerts_failed(event_ids: Sequence[int], error: str) -> None:
+    if not event_ids:
+        return
+    db = await _db()
+    await db.executemany(
+        "UPDATE verified_alerts SET error = ? WHERE event_id = ?",
+        [(error[:300], eid) for eid in event_ids],
+    )
+    await db.commit()
+
+
+async def abandoned_alerts(max_attempts: int = ALERT_MAX_ATTEMPTS) -> list[dict]:
+    """Alerts that used up their attempts. The digest reports these."""
+    db = await _db()
+    async with db.execute(
+        """SELECT va.event_id, va.did, va.attempts, va.error, a.handle
+             FROM verified_alerts va
+        LEFT JOIN actors a USING (did)
+            WHERE va.sent_at IS NULL AND va.attempts >= ?
+            ORDER BY va.event_id DESC""",
+        (max_attempts,),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
