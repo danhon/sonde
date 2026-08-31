@@ -10,6 +10,17 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     mem_reservation: 128m
+    # The fleet's Python-app pattern (reverse-proxy docs-site,
+    # services/python-apps.md). Docker's json-file driver is uncapped by
+    # default, and one uncaught exception under `/api/v1` writes ~8 KB of
+    # traceback per request on a router that answers the internet without a
+    # session — so an unbounded log here is a disk-exhaustion path on ubuntuplex
+    # rather than untidiness. Bounds it whatever the app does next.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     labels:
       - "traefik.enable=true"
 

@@ -168,12 +168,23 @@ def identify(headers: Mapping[str, str]) -> Client | None:
     would make the response time a function of the token's position in the list,
     which is a small leak but a free one to close, and `compare_digest` is doing
     the same job one level down.
+
+    **Compared as bytes, not as `str`.** `hmac.compare_digest` refuses two
+    strings when either holds a character outside ASCII — it raises `TypeError`
+    rather than returning False — and the presented token is whatever arrived on
+    the wire. uvicorn decodes request headers as latin-1, so a single high byte
+    in the `Authorization` header used to raise inside this function, escape the
+    middleware, and answer `500` in plain text from the one router with no
+    Authelia in front of it. Encoding both sides first is the fix and costs
+    nothing: a token that is not a configured secret now fails to match, which
+    is what "not a configured secret" is supposed to mean.
     """
     presented = bearer(headers)
     if presented is None:
         return None
+    offered = presented.encode("utf-8", "surrogateescape")
     found: Client | None = None
     for secret, client in clients():
-        if hmac.compare_digest(secret, presented):
+        if hmac.compare_digest(secret.encode("utf-8", "surrogateescape"), offered):
             found = client
     return found

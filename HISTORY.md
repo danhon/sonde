@@ -1521,3 +1521,122 @@ button that 404s is a job nobody notices is missing. The suite is at 942.
 
 `SMTP_HOST` is empty by default, so this — like the digest — sends nothing until
 it is configured and the container redeployed.
+
+## 2026-08-31 — an OWASP pass over the surfaces the last review predates
+
+The 2026-08-06 review covered the web, API-client and store layers as they stood
+that morning. Two things landed after it: the machine API (`e010af2`), which
+introduced the only router on this box with no Authelia in front of it, and the
+alerting path. Neither had been read by a reviewer. This pass walked the OWASP
+Top 10 over the whole repository with those two in the middle of it, and
+everything it reports was reproduced against running code before it was written
+down.
+
+**Six findings.** Two of them are the pass's real output, and both were fixed
+the same day — they are the two described next, and they are commits rather
+than BUGS.md entries. The other four are still open and are in BUGS.md as
+BUG-20, BUG-21, BUG-23 and BUG-24.
+
+`hmac.compare_digest` raises `TypeError` when either side is a `str` containing
+a non-ASCII character, and `apikey.identify` hands it the token straight off the
+wire. So `Authorization: Bearer <any non-ASCII byte>` is a 500 from `/api/v1`,
+in plain text, breaking the "every refusal is the same object" guarantee API.md
+makes — on the router that answers the internet without a session. Reproduced
+over a raw socket against uvicorn; the API answered 401 correctly to a wrong
+ASCII token in the same run. **The interesting part is why no test caught it.**
+`tests/test_api_auth.py` is thorough and passes, and cannot fail: httpx refuses
+to *build* a request with a non-ASCII header value, so the test client cannot
+send the input. uvicorn, one layer down, decodes headers as latin-1 and passes
+it through happily. A test suite that reaches the app only through httpx can
+never see what a socket can send, and that gap is worth remembering beyond this
+one bug.
+
+Fixed by comparing bytes — `compare_digest(secret.encode(), presented.encode())`
+— which makes a non-ASCII token simply not match any configured secret, which is
+what "not a configured secret" was always supposed to mean. The regression test
+drives the ASGI app directly with the header as raw bytes, because a test that
+reaches the app through httpx cannot express the input; it fails against the old
+comparison and so do three unit tests beside it. Re-checked over a socket
+afterwards: 401 in the API's own error shape for a utf-8 sequence, a bare
+latin-1 byte and eight `\xff`s, and no traceback logged for any of them.
+
+`base.html` has loaded Tailwind from `cdn.tailwindcss.com` since the first page
+was written. ACCESS.md §8 already records it, as a privacy cost to hypothetical
+anonymous readers, and dismisses a build step as not worth it. That framing
+turned out to be the reason it survived: read as code execution rather than as
+telemetry, the same script tag is the largest single risk in the app. A third
+party's JavaScript runs *same-origin* with sonde, which means the same-origin
+write guard passes it rather than stopping it, and `/followers/{did}/follow`
+writes a real public record on the operator's Bluesky account. No SRI, and no
+CSP to fall back on — because the Play CDN compiles at runtime and needs
+`unsafe-eval`, so the CDN has to go before a CSP is worth writing. Two findings,
+one fix, in that order.
+
+The second fix is four lines of `compose.yml`. Docker's json-file driver is
+uncapped by default and sonde never set a limit, though the fleet's own
+Python-app pattern prescribes one — so at 8 KB of traceback per request, against
+the 30/s rate limit already on the API router, an anonymous caller could have
+written roughly 20 GB a day to a host whose volumes are not backed up. Worth
+doing on its own account and not only because of the bug above: it bounds
+whatever the app logs next, and a test now asserts the block is there, the same
+way one already asserts the API router's `PathPrefix`.
+
+The remaining three are smaller and are in BUGS.md: no security response headers
+from sonde or from Traefik (BUG-21), the SMTP password and GitHub token sitting
+on the object every template render receives, against the invariant `apikey.py`
+writes down (BUG-23), and a test with a hardcoded `NOW` that expired on its own
+(BUG-24).
+
+**Checked and found clean.** Traced, not glanced at:
+
+* **The API's authorisation model.** Default-deny on the path prefix rather than
+  a route list; write granted only by an explicit scope; `/api/v1/meta` reads
+  `request.state.api_client` defensively instead of trusting the middleware ran;
+  every list of people routed through `ranked_followers` so hidden and departed
+  followers cannot appear; hidden people 404 rather than being merely omitted.
+  Cursors carry a fingerprint of the filters, so page 2 of one query cannot be
+  replayed against another.
+* **SQL injection, re-verified after the API added new callers.** Every dynamic
+  `ORDER BY` still resolves through an allowlist dict with a safe default, and
+  the API's `ORDERS` tuple is a deliberate subset of `store.SORTABLE`. No user
+  string reaches a query body.
+* **XSS.** Still no `|safe`, no `Markup`, no `autoescape` override. The two
+  attacker-influenced `href`s on the profile page (`a.url`, `a.source_url`)
+  cannot carry `javascript:` — `links.py` only ever produces a URL its
+  `https?://` regex matched, and the Wikidata path builds its own
+  `wikidata.org/wiki/<qid>`.
+* **Dependencies.** Every pin in `uv.lock` is current as of this date and none
+  carries a known advisory: jinja2 3.1.6, h11 0.16.0, python-multipart 0.0.32,
+  starlette 1.3.1, fastapi 0.140.0, uvicorn 0.51.0.
+* **Secrets in the repository.** Nothing sensitive is tracked and nothing ever
+  was: `.gitignore` and `.dockerignore` both cover `.env` and `*.db`, and
+  `git log --diff-filter=A` across all branches confirms neither was ever added.
+* **Email header injection.** Follower-controlled text reaches
+  `message["Subject"]` in both the digest and the alerts. `EmailMessage` under
+  the default policy validates on store and refuses embedded newlines, so the
+  handle cannot forge a header.
+* **SSRF.** `plc.directory/{did}` and the Wikipedia pageviews path interpolate
+  strings sonde did not validate, but both stay on a fixed host, both come from
+  Bluesky or Wikidata rather than from a request, and neither carries a
+  credential. `follow_redirects=True` on the Bluesky client is safe because
+  httpx drops `Authorization` across origins.
+
+**One candidate finding was checked and withdrawn.** `_safe_path` accepts
+`/\t/evil.example` and `/\n/evil.example` — it only rejects `//` and `/\` after
+the leading slash — and browsers strip tab, CR and LF from a URL before parsing
+it, so on the face of it that resolves off-site. It does not, for reasons one
+layer down: Starlette's `RedirectResponse` percent-encodes the URL before it
+becomes a header, so the browser receives `/%09/evil.example`, which is a path
+on sonde; and h11 refuses outright to serialise a header value containing CRLF,
+so the response-splitting version cannot be emitted either. Both verified at
+starlette 1.3.1 and h11 0.16.0. Recorded rather than dropped, because it means
+`_safe_path` is correct *by borrowing* — its docstring claims the gate is
+complete, and the gate is complete only while the response layer keeps quoting.
+
+**What this pass did not do.** Nothing was tested against the deployed
+container — every reproduction is local, against the same code. Authelia's own
+configuration was not audited beyond answering one question (whether Traefik
+supplies security headers: it does not). And the read half of the shared-cookie
+problem is unchanged and still not fixable here — an XSS in any sibling service
+on `sgc.rayandhon.com` reads sonde as the operator, which BUGS.md has recorded
+since 2026-08-06.

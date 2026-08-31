@@ -15,6 +15,15 @@ Three defects from it (BUG-12 to BUG-14) were fixed the same day and are gone
 from this list; what that review found and deliberately left is in HISTORY.md,
 including the things checked and found clean, so they are not re-audited.
 
+Re-scanned 2026-08-31 against the OWASP Top 10, concentrating on the surfaces
+added since that review — the token-guarded API, which had never been reviewed,
+and the page the operator's browser actually runs. Six findings came from it;
+two — the API's 500 on a non-ASCII bearer token, and the uncapped container log
+that made it expensive — were fixed the same day and are gone from this list,
+leaving BUG-20, BUG-21, BUG-23 and BUG-24. Every finding was reproduced against
+running code before being written here, and one candidate was checked and
+withdrawn; HISTORY.md says which, and what the scan covered and found clean.
+
 Everything below is **reproduced, not suspected**, except where an entry says
 it is preventive. Where a number appears it was measured against the 2026-07-29
 snapshot.
@@ -84,6 +93,24 @@ byte sequence that another program executes.
 *Fix:* prefix a cell beginning `= + - @` or a control character with `'`. Do it
 in the writer, not the query, or the same text leaks through the next exporter.
 
+**BUG-20 · Every page runs third-party JavaScript inside the operator's
+session.** `base.html` loads Tailwind from `cdn.tailwindcss.com` with no
+`integrity` attribute and no CSP to constrain it (BUG-21). It is the Play CDN,
+which compiles at runtime and is documented as not for production. Whoever
+controls that origin runs arbitrary JavaScript *same-origin* with sonde — which
+means it satisfies the `Sec-Fetch-Site` write guard rather than being stopped by
+it, and can drive `/followers/{did}/follow`, a real and public write on the
+operator's Bluesky account, as well as read the whole follower set. Confirmed by
+rendering `/` on 2026-08-31: the script tag is there and no `integrity=`
+attribute appears anywhere in the page. ACCESS.md §8 already names this script,
+as a *privacy* problem for a hypothetical public view, and concludes it is "not
+worth a build step today". That judgement was about anonymous readers' IP
+addresses reaching a third party. This is code execution in an authenticated
+session, and it is the reason to build.
+*Fix:* compile Tailwind at image-build time and serve the CSS from sonde. It
+also unblocks BUG-21 — the Play CDN needs `unsafe-eval` and inline styles, so no
+CSP worth writing can be written while it is there.
+
 ### P3 — cosmetic, dead, or preventive
 
 **BUG-15 · `iter_follows` has no page cap** where `iter_followers` has one.
@@ -113,6 +140,46 @@ handles `inf`, `-5` and `1e308` correctly — all three were checked and stored
 `1.0` and the clamp passes it through: garbage silently becomes the strongest
 possible institution weight rather than being rejected. Reproduced.
 *Fix:* reject a non-finite weight rather than clamping it.
+
+**BUG-21 · sonde sends no security response headers, and none arrive from
+Traefik either.** Measured 2026-08-31: `/`, `/verified` and `/settings` come
+back carrying `content-type` and `content-length` and nothing else. No
+`Content-Security-Policy`, no `X-Content-Type-Options`, no `Referrer-Policy`, no
+frame-ancestors — and no `Cache-Control` on pages listing ten thousand people's
+names, bios and follow dates, while `/api/v1` correctly sets
+`private, no-store` on both its answers and its refusals. Traefik does not
+supply them: `~/dev/reverse-proxy/traefik/dynamic/` defines no headers
+middleware, so this is the fleet's default rather than sonde's omission alone.
+Preventive — nothing needs it today, and clickjacking is already covered, since
+a framed cross-site form POST is refused by the same-origin middleware.
+*Fix:* here, a small middleware setting the four headers on HTML responses;
+fleet-wide, a Traefik `headers` middleware. The CSP half is blocked on BUG-20.
+
+**BUG-23 · The SMTP password and the GitHub token are fields on the object
+passed into every template render.** `apikey.py` states the invariant in its own
+docstring — the API secret is deliberately kept off `Settings` because
+"`Settings` is passed into every template render, so a field on it is one
+`{{ settings }}` away from being displayed" — and `Authenticator.status()` goes
+to the same trouble for the app password. `settings.smtp_password` and
+`settings.github_token` are ordinary fields on that frozen dataclass anyway, and
+that dataclass is in the context of every page. Nothing renders them today:
+all eighteen `settings.` references in the templates name a specific attribute,
+twelve distinct ones, every one benign. So this is preventive — and it is one
+`{{ settings }}`, one debug dump or one `settings.__dict__` loop away from not
+being.
+*Fix:* read both from `os.environ` where they are used, the way `apikey.clients()`
+does. Or keep the fields and add the test that no template renders `settings`
+whole — but the first is the rule the codebase already wrote down.
+
+**BUG-24 · A test carries a hardcoded date and has now expired.**
+`tests/test_interaction_ranking.py` sets `NOW = datetime(2026, 7, 28)` and
+`test_the_window_filters_by_age` asserts that an event "5 days ago" falls inside
+a 30-day window. As of 2026-08-31 that event is 34 days old, the window returns
+nothing, and the test fails with `IndexError`. The suite is 941 passed, 1
+failed. Nothing is wrong with `interaction_leaderboard`; the filter is doing
+exactly what it says. Left in the list rather than fixed in passing because a
+red suite is the thing that stops the next real failure being noticed.
+*Fix:* build the fixture off `datetime.now(timezone.utc)` rather than a literal.
 
 
 **BUG-06 · Stored `why` text still says "group".** Existing candidates keep the

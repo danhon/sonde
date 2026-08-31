@@ -7,6 +7,8 @@ the open internet. Every test here is about a way in that must not work.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -115,6 +117,35 @@ def test_identify_matches_only_a_configured_secret(monkeypatch):
     # A prefix of a real token must not pass. compare_digest is doing the work;
     # this is here so that swapping it for `==` or `startswith` fails loudly.
     assert apikey.identify({"authorization": f"Bearer {READ_TOKEN[:20]}"}) is None
+
+
+def test_a_non_ascii_token_is_refused_rather_than_raising(monkeypatch):
+    """`compare_digest` raises TypeError on two `str`s when either holds a
+    character outside ASCII — it does not return False.
+
+    The presented token is whatever arrived on the wire, and uvicorn decodes
+    request headers as latin-1, so before this was compared as bytes a single
+    high byte in the `Authorization` header raised here, escaped the middleware
+    and answered 500 from the one router with no Authelia in front of it. Every
+    value below is a token that simply is not a configured secret, and the only
+    correct answer to all of them is None.
+    """
+    monkeypatch.setenv("SONDE_API_TOKENS", TOKENS)
+    for token in ("\u00e9" + READ_TOKEN[1:],       # latin-1: one high byte
+                  "\U0001f511" + READ_TOKEN[1:],   # outside the BMP
+                  READ_TOKEN + "\u00e9",           # a real secret, extended
+                  "\u00e9" * 40):
+        assert apikey.identify({"authorization": f"Bearer {token}"}) is None
+
+
+def test_a_secret_may_itself_be_non_ascii(monkeypatch):
+    """The other side of the comparison is operator-supplied too. Nothing
+    recommends a non-ASCII secret, but configuring one must authenticate or be
+    refused — never raise."""
+    secret = "p\u00e4ssphrase-" + "z" * 30
+    monkeypatch.setenv("SONDE_API_TOKENS", f"crm:{secret}:write")
+    assert apikey.identify({"authorization": f"Bearer {secret}"}).name == "crm"
+    assert apikey.identify({"authorization": f"Bearer {secret}x"}) is None
 
 
 # --------------------------------------------------------- wired to routes
@@ -242,3 +273,75 @@ def test_the_openapi_map_is_gone():
     the write surface on a router that has none."""
     with TestClient(create_app(), base_url="http://sonde.test") as c:
         assert c.get("/openapi.json").status_code == 404
+
+
+
+async def test_a_raw_non_ascii_header_gets_a_401_in_the_api_error_shape(
+        tmp_path, monkeypatch):
+    """Driven at the ASGI layer on purpose, because httpx cannot send this.
+
+    `TestClient` builds its request through httpx, and httpx refuses a header
+    value that is not ASCII — so every other test in this file is structurally
+    incapable of sending the input that used to 500 here, and passed throughout.
+    uvicorn has no such scruple: it hands the app latin-1-decoded header bytes,
+    which is exactly what a raw socket produces. So this test is the socket.
+    """
+    monkeypatch.setenv("SONDE_API_TOKENS", TOKENS)
+    store.set_db_path(str(tmp_path / "raw.db"))
+    await store.connect()
+    try:
+        app = create_app()
+        for raw in (b"Bearer \xc3\xa9" + b"r" * 39,   # utf-8 encoded e-acute
+                    b"Bearer \xe9" + b"r" * 39,       # a bare latin-1 byte
+                    b"Bearer \xff" * 8):
+            status, body = await _asgi_get(app, "/api/v1/meta", authorization=raw)
+            assert status == 401, (raw, status, body)
+            assert set(json.loads(body)) == {"error"}, body
+    finally:
+        await store.close()
+        store.set_db_path(None)
+
+
+async def _asgi_get(app, path: str, *, authorization: bytes) -> tuple[int, bytes]:
+    """One GET straight into the app, with the header as bytes."""
+    scope = {
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+        "method": "GET", "scheme": "http", "path": path, "raw_path": path.encode(),
+        "query_string": b"", "root_path": "",
+        "headers": [(b"host", b"sonde.test"), (b"authorization", authorization)],
+        "client": ("1.2.3.4", 1234), "server": ("sonde.test", 80),
+    }
+    received = False
+    out: dict = {"body": b""}
+
+    async def receive():
+        nonlocal received
+        if received:
+            return {"type": "http.disconnect"}
+        received = True
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            out["status"] = message["status"]
+        elif message["type"] == "http.response.body":
+            out["body"] += message.get("body", b"")
+
+    await app(scope, receive, send)
+    return out["status"], out["body"]
+
+
+def test_the_compose_log_is_bounded():
+    """An uncapped json-file log is a disk-exhaustion path, not untidiness.
+
+    `/api/v1` answers the internet with no session in front of it, so an
+    unhandled exception there is a traceback an anonymous caller can ask for as
+    fast as the Traefik rate limit allows. The cap is what makes that bounded
+    whether or not the exception is fixed, and it is the fleet's Python-app
+    pattern besides.
+    """
+    from pathlib import Path
+
+    compose = (Path(__file__).resolve().parents[1] / "compose.yml").read_text()
+    assert "logging:" in compose, "no logging block — the json-file log is uncapped"
+    assert "max-size:" in compose and "max-file:" in compose

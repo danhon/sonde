@@ -386,9 +386,16 @@ rather than merely how, and neither of which is the author's to make:
 - **It does not stop the page phoning home for the visitor.** `base.html` loads
   Tailwind from `cdn.tailwindcss.com` and every avatar comes from Bluesky's CDN.
   Behind Authelia that is one known browser. Publicly, every anonymous reader's
-  IP goes to two third parties on every page load. Not a blocker, and not worth
-  a build step today — but it is a claim not to make if the site is ever
-  described as private for its readers.
+  IP goes to two third parties on every page load. Not a blocker for public
+  mode — but it is a claim not to make if the site is ever described as private
+  for its readers.
+
+  Amended 2026-08-31: the second half of that paragraph used to say the Tailwind
+  script was "not worth a build step today". It is, and for a reason that has
+  nothing to do with public mode. Read as code execution rather than as
+  telemetry, that script runs same-origin with sonde in the operator's own
+  authenticated session, and can drive the follow write. It is BUG-20, and the
+  build step should happen whether or not this design is ever implemented.
 - **It does not protect `/healthz`,** which was already public and already
   audited (`tests/test_web.py::test_healthz_leaks_no_follower_data`). Public
   mode adds no new obligation there, but that test is now guarding a busier
