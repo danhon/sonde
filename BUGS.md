@@ -176,7 +176,8 @@ whole — but the first is the rule the codebase already wrote down.
 `test_the_window_filters_by_age` asserts that an event "5 days ago" falls inside
 a 30-day window. As of 2026-08-31 that event is 34 days old, the window returns
 nothing, and the test fails with `IndexError`. The suite is 941 passed, 1
-failed. Nothing is wrong with `interaction_leaderboard`; the filter is doing
+failed. Still the only failure on 2026-10-25, at 950 passed, after the
+alerting and digest commits landed. Nothing is wrong with `interaction_leaderboard`; the filter is doing
 exactly what it says. Left in the list rather than fixed in passing because a
 red suite is the thing that stops the next real failure being noticed.
 *Fix:* build the fixture off `datetime.now(timezone.utc)` rather than a literal.
