@@ -19,6 +19,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
+from html import escape
 
 from sonde.config import settings
 from sonde.db import store
@@ -42,7 +43,8 @@ class Digest:
 
     @property
     def has_news(self) -> bool:
-        return bool(self.arrivals or self.departures or self.returns or self.renames)
+        """Departures don't count: the digest only reports additions and the total."""
+        return bool(self.arrivals or self.returns or self.renames)
 
     @property
     def worth_sending(self) -> bool:
@@ -53,12 +55,7 @@ class Digest:
     def subject(self) -> str:
         if self.problems and not self.has_news:
             return f"sonde: {len(self.problems)} thing(s) need attention"
-        bits = []
-        if self.arrivals:
-            bits.append(f"+{len(self.arrivals)}")
-        if self.departures:
-            bits.append(f"-{len(self.departures)}")
-        summary = " ".join(bits) or "no change"
+        summary = f"+{len(self.arrivals)}" if self.arrivals else "no change"
         warn = f" · {len(self.problems)} warning(s)" if self.problems else ""
         return f"sonde: {summary} · {self.counts.get('tracked', 0):,} followers{warn}"
 
@@ -136,6 +133,11 @@ async def gather(hours: int = 24) -> Digest:
     return digest
 
 
+def _person_url(person: dict) -> str | None:
+    did = person.get("did")
+    return f"https://{settings.service_host}/followers/{did}" if did else None
+
+
 def _line(person: dict) -> str:
     handle = person.get("handle") or person.get("did", "?")
     name = person.get("display_name") or ""
@@ -144,6 +146,25 @@ def _line(person: dict) -> str:
     bits = [f"@{handle}"]
     if name:
         bits.append(name)
+    if followers is not None:
+        bits.append(f"{followers:,} followers")
+    if score is not None:
+        bits.append(f"score {score:.0f}")
+    if person.get("verified_status") == "valid":
+        bits.append("verified")
+    return " · ".join(bits)
+
+
+def _line_html(person: dict) -> str:
+    handle = person.get("handle") or person.get("did", "?")
+    name = person.get("display_name") or ""
+    followers = person.get("followers_count")
+    score = person.get("influence_score")
+    url = _person_url(person)
+    label = f"@{escape(handle)}"
+    bits = [f'<a href="{escape(url)}">{label}</a>' if url else label]
+    if name:
+        bits.append(escape(name))
     if followers is not None:
         bits.append(f"{followers:,} followers")
     if score is not None:
@@ -188,7 +209,6 @@ def render_text(digest: Digest, limit: int = 25) -> str:
         out.append("")
 
     section("NEW FOLLOWERS", digest.arrivals)
-    section("DEPARTED", digest.departures)
     section("RETURNED", digest.returns)
 
     if digest.renames:
@@ -201,13 +221,56 @@ def render_text(digest: Digest, limit: int = 25) -> str:
         out.append("No follower changes in the last 24 hours.")
         out.append("")
 
-    out.append(
-        "Departures are labelled 'gone' rather than 'unfollowed' when the cause "
-        "cannot be told apart — deactivation, deletion, suspension and blocks all "
-        "look identical from outside."
-    )
-    out.append("")
     out.append(f"https://{settings.service_host}/")
+    return "\n".join(out)
+
+
+def render_html(digest: Digest, limit: int = 25) -> str:
+    counts = digest.counts
+    out: list[str] = []
+
+    if digest.problems:
+        out.append("<p><strong>NEEDS ATTENTION</strong></p><ul>")
+        out += [f"<li>{escape(p)}</li>" for p in digest.problems]
+        out.append("</ul>")
+
+    reported = counts.get("reported")
+    tracked = counts.get("tracked", 0)
+    out.append(
+        f"<p>{tracked:,} followers tracked"
+        + (f" ({reported:,} reported by Bluesky — the gap is permanent)" if reported else "")
+        + "<br>"
+        f"{counts.get('verified', 0):,} verified · "
+        f"{counts.get('mutuals', 0):,} mutuals · "
+        f"{counts.get('ignored', 0):,} hidden"
+        + (f"<br>Last successful sweep {digest.last_sync_hours:.1f}h ago."
+           if digest.last_sync_hours is not None else "")
+        + "</p>"
+    )
+
+    def section(title: str, rows: list[dict]) -> None:
+        if not rows:
+            return
+        out.append(f"<p><strong>{escape(title)} ({len(rows)})</strong></p><ul>")
+        for person in rows[:limit]:
+            out.append(f"<li>{_line_html(person)}</li>")
+        if len(rows) > limit:
+            out.append(f"<li>… and {len(rows) - limit} more</li>")
+        out.append("</ul>")
+
+    section("NEW FOLLOWERS", digest.arrivals)
+    section("RETURNED", digest.returns)
+
+    if digest.renames:
+        out.append(f"<p><strong>CHANGED HANDLE ({len(digest.renames)})</strong></p><ul>")
+        for person in digest.renames[:limit]:
+            out.append(f"<li>{escape(person.get('detail') or '') or _line_html(person)}</li>")
+        out.append("</ul>")
+
+    if not digest.has_news:
+        out.append("<p>No follower changes in the last 24 hours.</p>")
+
+    out.append(f'<p><a href="https://{settings.service_host}/">https://{settings.service_host}/</a></p>')
     return "\n".join(out)
 
 
@@ -217,6 +280,7 @@ def build_message(digest: Digest) -> EmailMessage:
     message["From"] = settings.smtp_username
     message["To"] = settings.notify_to
     message.set_content(render_text(digest))
+    message.add_alternative(render_html(digest), subtype="html")
     return message
 
 

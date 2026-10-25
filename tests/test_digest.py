@@ -146,7 +146,31 @@ async def test_the_subject_summarises_the_day():
     await store.commit()
 
     subject = (await dg.gather()).subject
-    assert "+1" in subject and "-1" in subject
+    assert "+1" in subject and "-1" not in subject
+
+
+async def test_departures_do_not_count_as_news():
+    """The digest only reports additions and the total — departures stay silent."""
+    await healthy()
+    await follower("did:plc:gone", 0)
+    await store.add_event("did:plc:gone", "departed", reason="gone")
+    await store.commit()
+
+    d = await dg.gather()
+    assert d.departures  # still gathered, just not reported
+    assert d.has_news is False
+    assert d.worth_sending is False
+
+
+async def test_departures_are_absent_from_rendered_bodies():
+    await healthy()
+    await follower("did:plc:gone", 0)
+    await store.add_event("did:plc:gone", "departed", reason="gone")
+    await store.commit()
+
+    d = await dg.gather()
+    assert "DEPARTED" not in dg.render_text(d)
+    assert "DEPARTED" not in dg.render_html(d)
 
 
 async def test_problems_lead_the_body():
@@ -178,13 +202,27 @@ async def test_long_lists_are_truncated_rather_than_dumped():
     assert "and 35 more" in body
 
 
-async def test_the_message_is_addressed_and_plain_text(monkeypatch):
+async def test_the_message_is_addressed_and_has_plain_and_html_parts(monkeypatch):
     monkeypatch.setattr(settings.__class__, "smtp_username", "sonde@example.com",
                         raising=False)
     await healthy()
     message = dg.build_message(await dg.gather())
     assert message["Subject"].startswith("sonde:")
-    assert message.get_content_type() == "text/plain"
+    assert message.get_content_type() == "multipart/alternative"
+    assert message.get_body(("plain",)).get_content_type() == "text/plain"
+    assert message.get_body(("html",)).get_content_type() == "text/html"
+
+
+async def test_arrival_names_link_to_their_sonde_entry(monkeypatch):
+    monkeypatch.setattr(settings.__class__, "service_host", "sonde.example.com",
+                        raising=False)
+    await healthy()
+    await follower("did:plc:a", 0, score=50)
+    await store.add_event("did:plc:a", "followed")
+    await store.commit()
+
+    html = dg.render_html(await dg.gather())
+    assert '<a href="https://sonde.example.com/followers/did:plc:a">' in html
 
 
 # ---------------------------------------------------------- sending
