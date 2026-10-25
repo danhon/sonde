@@ -240,22 +240,28 @@ async def mark_seen(did: str, rank: int, *, backfilled: bool = False) -> bool:
 
     `missed_sweeps` resets to 0 on *any* sighting, including a head sweep — that
     reset is what stops a transient page skip from accumulating toward departure.
+
+    A head sweep and a full sweep can be mid-flight at the same time and land on
+    the same DID, so the INSERT must never fail on the `did` PRIMARY KEY just
+    because another coroutine's SELECT-then-INSERT interleaved with this one's —
+    `ON CONFLICT DO NOTHING` makes the insert idempotent instead of throwing.
     """
     db = await _db()
     now = utcnow()
     async with db.execute(
+        """INSERT INTO follower_state
+               (did, is_current, backfilled, first_seen_at, last_seen_at, missed_sweeps, list_rank)
+           VALUES (?, 1, ?, ?, ?, 0, ?)
+           ON CONFLICT (did) DO NOTHING""",
+        (did, 1 if backfilled else 0, now, now, rank),
+    ) as cur:
+        if cur.rowcount:
+            return True
+
+    async with db.execute(
         "SELECT is_current, lost_at FROM follower_state WHERE did = ?", (did,)
     ) as cur:
         row = await cur.fetchone()
-
-    if row is None:
-        await db.execute(
-            """INSERT INTO follower_state
-               (did, is_current, backfilled, first_seen_at, last_seen_at, missed_sweeps, list_rank)
-               VALUES (?, 1, ?, ?, ?, 0, ?)""",
-            (did, 1 if backfilled else 0, now, now, rank),
-        )
-        return True
 
     returning = not row["is_current"]
     await db.execute(
