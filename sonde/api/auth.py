@@ -16,6 +16,7 @@ Sessions live in memory. A restart just re-authenticates.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -61,6 +62,7 @@ class Authenticator:
         self.session: Session | None = None
         self.last_error: str | None = None
         self._transport = transport
+        self._lock = asyncio.Lock()
 
     @property
     def configured(self) -> bool:
@@ -71,13 +73,24 @@ class Authenticator:
 
         Returns None when auth is unconfigured or failing — callers treat that
         as "use the public path".
+
+        Refresh tokens are single-use and rotate on every call, so two
+        coroutines racing to refresh the same stale session isn't just
+        wasted work: the loser gets a 400 and falls back to a full
+        password login. Under load (a head sweep's authed reads overlapping
+        relevance/interactions/web requests) that meant hammering
+        `createSession` with the real app password far more than needed —
+        the kind of pattern that gets an account rate-limited. The lock
+        serializes refresh/login so only one coroutine ever does it; the
+        rest wait and then reuse the session it produced.
         """
         if not self.configured:
             return None
-        if self.session is None:
-            await self._login()
-        elif self.session.stale:
-            await self._refresh()
+        async with self._lock:
+            if self.session is None:
+                await self._login()
+            elif self.session.stale:
+                await self._refresh()
         return self.session.access_jwt if self.session else None
 
     async def _post(self, method: str, *, json: dict | None = None,
