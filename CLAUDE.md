@@ -168,6 +168,31 @@ a sweep and an SMTP error must not fail one. The retry path is driven by the
 goes in `store.ALERT_EVENTS`; keying the claim table on the event id rather
 than the DID is what lets someone leave and come back and be news twice.
 
+## A full `pytest` run can hang — it's the `client` fixture, not your change
+
+`attach_scheduler`'s startup hook schedules a real `run_full` bootstrap job
+whenever `store.known_dids()` is empty at `TestClient` startup — no mock, a
+genuine request to `settings.actor` (`danhon.com`) against the real
+`public.api.bsky.app`. Any test file whose `client` fixture builds the
+`TestClient` before the test body seeds a follower (which is most of them,
+since fixtures resolve before the test function runs) can trigger it. The job
+usually loses the race and gets torn down with the test's portal before it
+fires, which is why most runs are clean — but eventually one fires mid-test on
+the shared event loop and the run stalls with no error, no timeout, just dots
+that stop advancing partway through `tests/test_depth.py` (or nearby files).
+
+Reproduced 2026-08-11: `uv run pytest tests/test_depth.py -v` hangs after
+`test_known_job_redirects_to_settings` every time, always mid-suite, never on
+its own (`pytest tests/test_depth.py::test_a_blank_min_followers_does_not_break_the_page`
+passes instantly). Confirmed pre-existing via `git stash` against a clean
+`main` — not caused by any specific change. Not yet fixed; there's no mock
+`BlueskyClient` wired into `create_app()`/the scheduler for tests, so the real
+fix is giving the bootstrap job a way to be disabled or faked in the test
+app, not chasing the individual hang.
+
+If a `pytest` run stalls with no progress for more than ~30s, this is almost
+certainly why — don't spend time bisecting your own change first.
+
 ## Backups — deliberately incomplete
 
 `follow_events` is the only table that cannot be re-fetched from Bluesky. A

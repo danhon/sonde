@@ -21,6 +21,42 @@ async def db(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_email(monkeypatch):
+    """Fail loudly if a test ever sends a real email.
+
+    `sonde/config.py` loads the real `.env` at import time, so a dev machine
+    with SMTP configured for production makes `settings.smtp_configured` true
+    inside pytest too — a test that exercises `digest.run_digest()` without
+    mocking `digest.send()` then hits real SMTP with real credentials, and an
+    actual email goes out to `NOTIFY_TO` built from whatever throwaway data
+    that test's fixture left lying around. Reproduced 2026-08-18:
+    `pytest tests/test_digest.py` sent a live "not authenticating" alarm
+    built from a one-row test database. Forcing the fields `smtp_configured`
+    reads to empty restores the behavior the tests already assume (SMTP not
+    configured) regardless of the local `.env`; blocking `aiosmtplib.send`
+    outright is the backstop in case something still calls it.
+    """
+    import aiosmtplib
+
+    from sonde.config import settings
+
+    # Settings is a frozen dataclass: smtp_host/smtp_username/notify_to are
+    # per-instance fields already set from the real .env, so patching them
+    # (even on the class) can't shadow the instance's own values. The
+    # `smtp_configured` property has no such instance entry, so overriding it
+    # directly is what actually takes effect.
+    monkeypatch.setattr(settings.__class__, "smtp_configured", False, raising=False)
+
+    async def _forbidden(*args, **kwargs):
+        raise AssertionError(
+            "a test tried to send real email via aiosmtplib.send() — "
+            "mock sonde.notify.digest.send instead"
+        )
+
+    monkeypatch.setattr(aiosmtplib, "send", _forbidden)
+
+
+@pytest.fixture(autouse=True)
 def _no_writes_to_the_real_database(tmp_path_factory):
     """Fail loudly if a test ever opens the configured production database.
 
