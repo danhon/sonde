@@ -58,7 +58,7 @@ services:
       - "traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-api-rate.ratelimit.average=30"
       - "traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-api-rate.ratelimit.burst=60"
 
-      - "homepage.group=Applications"
+      - "homepage.group=Projects"
       - "homepage.name=sonde"
       - "homepage.icon=mdi-radar"
       - "homepage.href=https://${SERVICE_HOST}"
