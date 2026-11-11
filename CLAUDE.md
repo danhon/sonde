@@ -1,19 +1,10 @@
 # sonde — operational notes for Claude
 
-Fleet-wide ubuntuplex documentation (architecture, all services, Traefik/Authelia
-patterns, troubleshooting) lives centrally in `~/dev/reverse-proxy/` — its
-`README.md`, `TODO.md`, `HISTORY.md`, and `docs-site/docs/`. Check there first
-for anything that isn't specific to this repo. In particular
-[python-apps.md](../reverse-proxy/docs-site/docs/services/python-apps.md) is the
-canonical deploy pattern this app follows.
-
-**Before editing anything in that repo, read
-[DOCUMENTING.md](../reverse-proxy/DOCUMENTING.md).** It is the contract every
-session follows when updating fleet docs: what belongs centrally versus here,
-where each kind of fact goes, the checklist for adding or changing a service,
-the house style, and the deploy a `docs-site/` change needs. Recording the
-fleet-relevant part of work done here is part of that work, as its own commit
-in that repo.
+Fleet docs for ubuntuplex live in `~/dev/reverse-proxy/`; read its
+[DOCUMENTING.md](../reverse-proxy/DOCUMENTING.md) before editing them, and record
+the fleet-relevant part of work here as its own commit there. On the box,
+`~/.claude/CLAUDE.md` carries the fleet-wide rules. This app follows
+[python-apps.md](../reverse-proxy/docs-site/docs/services/python-apps.md).
 
 Docs in this repo, split by what they answer:
 
@@ -136,7 +127,7 @@ grids with a mobile base — and runs in the normal suite. It cannot detect actu
 overflow. Only the browser can:
 
 ```
-uv run --with playwright playwright install chromium   # first run only
+PLAYWRIGHT_SKIP_BROWSER_GC=1 uv run --with playwright playwright install chromium   # first run only; the env var keeps other projects' browsers
 uv run --with playwright python -m evals.mobile_check  # needs a server running
 ```
 
