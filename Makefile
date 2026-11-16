@@ -1,3 +1,8 @@
+# The deploy guard (reverse-proxy make/checkout-guard.mk): `make deploy` refuses
+# off ubuntuplex or with a tracked file uncommitted, then pulls --ff-only.
+# Replaced by make/fleet.mk, which includes it, when this app takes fleet.yml.
+include $(HOME)/dev/reverse-proxy/make/checkout-guard.mk
+
 APP    ?= sonde
 DOMAIN ?= sgc.rayandhon.com
 HOST   ?= $(APP).$(DOMAIN)
