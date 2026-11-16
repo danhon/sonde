@@ -16,7 +16,10 @@ from sonde.db import store
 from sonde.relationships import summarise
 from tests.fakes import actor
 
-NOW = datetime(2026, 7, 28, tzinfo=timezone.utc)
+# The real clock, not a fixed date: interaction_leaderboard(days=N) measures
+# its window from datetime.now(), so a fixed NOW let the "5 days ago" event
+# drift out of the 30-day window, and the test failed from about 2026-08-22.
+NOW = datetime.now(timezone.utc).replace(microsecond=0)
 
 
 def event(did: str, kind: str, direction: str, days_ago: int, n: int = 0) -> dict:
