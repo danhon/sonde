@@ -48,10 +48,14 @@ asyncio_mode = "auto"
 # A test still running after 60 s prints every thread's stack, so a hang
 # (the first CI run, 2026-11-15, stalled for 10 minutes) says where it is.
 faulthandler_timeout = 60
+# And one still running after 120 s fails (pytest-timeout), so a hang can't hold
+# box-gate's lock for every session on the box (it held it 44 min, 2026-11-15).
+timeout = 120
 testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
+    "pytest-timeout>=2.4.0",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
 ]
