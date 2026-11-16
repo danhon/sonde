@@ -1,0 +1,34 @@
+# The unit suite on every push and pull request, off ubuntuplex (the box has
+# frozen under heavy jobs). Before this, nothing ran it: a test broken by its
+# own fixed date went unnoticed from 2026-08-22 until `ship` ran the suite on
+# 2026-11-15. No secrets. Docs-only commits skip it.
+#
+# timeout-minutes is short on purpose: the suite takes ~30 s, and a run can
+# hang on the client fixture's real bootstrap job (CLAUDE.md, "A full pytest
+# run can hang"); a hang should fail fast, not hold a runner for six hours.
+name: tests
+
+on:
+  push:
+    paths-ignore: ["**.md"]
+  pull_request:
+    paths-ignore: ["**.md"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"     # the image's Python
+      - run: uv sync --frozen
+      - run: make test               # uv run pytest -q
