@@ -159,30 +159,21 @@ a sweep and an SMTP error must not fail one. The retry path is driven by the
 goes in `store.ALERT_EVENTS`; keying the claim table on the event id rather
 than the DID is what lets someone leave and come back and be news twice.
 
-## A full `pytest` run can hang — it's the `client` fixture, not your change
+## A route test must stub `registry.spawn`
 
-`attach_scheduler`'s startup hook schedules a real `run_full` bootstrap job
-whenever `store.known_dids()` is empty at `TestClient` startup — no mock, a
-genuine request to `settings.actor` (`danhon.com`) against the real
-`public.api.bsky.app`. Any test file whose `client` fixture builds the
-`TestClient` before the test body seeds a follower (which is most of them,
-since fixtures resolve before the test function runs) can trigger it. The job
-usually loses the race and gets torn down with the test's portal before it
-fires, which is why most runs are clean — but eventually one fires mid-test on
-the shared event loop and the run stalls with no error, no timeout, just dots
-that stop advancing partway through `tests/test_depth.py` (or nearby files).
+A POST to `/settings/sync/{kind}` or `/settings/batch/{key}` starts a real
+job (`registry.spawn`) on the TestClient's event loop, against the shared
+database connection and sometimes the live API. One test that let a rescore
+run for real hung CI about half the time (2026-11-15): the run stalled in an
+async fixture's teardown in `tests/test_depth.py` until the 10-minute cap.
+Stubbing spawn there (548387a) gave five passing runs out of five. It never
+reproduced on the Mac, so the exact mechanism is unproven. Stub spawn the way
+`test_every_manual_trigger_resolves` does.
 
-Reproduced 2026-08-11: `uv run pytest tests/test_depth.py -v` hangs after
-`test_known_job_redirects_to_settings` every time, always mid-suite, never on
-its own (`pytest tests/test_depth.py::test_a_blank_min_followers_does_not_break_the_page`
-passes instantly). Confirmed pre-existing via `git stash` against a clean
-`main` — not caused by any specific change. Not yet fixed; there's no mock
-`BlueskyClient` wired into `create_app()`/the scheduler for tests, so the real
-fix is giving the bootstrap job a way to be disabled or faked in the test
-app, not chasing the individual hang.
-
-If a `pytest` run stalls with no progress for more than ~30s, this is almost
-certainly why — don't spend time bisecting your own change first.
+A test still running after 60 s prints every thread's stack
+(`faulthandler_timeout` in pyproject.toml), so a new hang says where it is.
+The scheduler isn't the cause: `create_app()` never attaches it, only
+`sonde.main --schedule` does.
 
 ## Backups — deliberately incomplete
 
