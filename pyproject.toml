@@ -45,6 +45,9 @@ dev-dependencies = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# A test still running after 60 s prints every thread's stack, so a hang
+# (the first CI run, 2026-11-15, stalled for 10 minutes) says where it is.
+faulthandler_timeout = 60
 testpaths = ["tests"]
 
 [dependency-groups]
