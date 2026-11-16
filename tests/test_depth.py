@@ -200,7 +200,14 @@ async def test_unknown_job_is_rejected(client):
     assert client.post("/settings/sync/nonsense").status_code == 404
 
 
-async def test_known_job_redirects_to_settings(client):
+async def test_known_job_redirects_to_settings(client, monkeypatch):
+    # spawn stubbed, as in test_every_manual_trigger_resolves: unstubbed, a real
+    # rescore ran on the TestClient's loop against the shared database
+    # connection, and is the suspect for CI runs hanging in a fixture teardown
+    # in this file (2026-11-15; a guess, not yet a proven cause).
+    from sonde.jobs import registry
+
+    monkeypatch.setattr(registry, "spawn", lambda k, fn: None)
     r = client.post("/settings/sync/rescore", follow_redirects=False)
     assert r.status_code == 303
     assert r.headers["location"] == "/settings"
