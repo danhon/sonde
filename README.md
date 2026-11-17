@@ -174,6 +174,14 @@ drop it and the entire admin surface does. `make verify` asserts the rule, that
 the router carries no Authelia, that `/api/v1/meta` answers 401 without a token
 (302 there means the router is missing) and that `/api/status` still answers 302.
 
+**A router without Authelia makes the app's own error handling
+internet-facing.** sonde once shipped an unhandled `TypeError` in its token
+check (`hmac.compare_digest` on a non-ASCII `str`), which any anonymous caller
+could turn into a 500 and 8 KB of traceback per request. It was fixed on
+2026-08-31 (see [HISTORY.md](HISTORY.md)). So a router like `-api` needs a
+bounded container log (`logging: max-size` in `compose.yml`) as well as the
+token check.
+
 ### First-time server setup
 
 ```bash
@@ -253,6 +261,10 @@ send them somewhere other than the digest.
 nightly `VACUUM INTO` writes a timestamped copy to `/backup`, keeping 14. It's a
 consistent snapshot of the live database taken without stopping the app.
 
-**It is on-box only, by choice.** It guards against DB corruption or a bad
-migration, not against losing the host — off-box backup isn't a priority for this
-app. Don't read the snapshots as disaster recovery.
+On the host the copies are in `/home/danhon/sonde-backups` (`BACKUP_HOST_DIR`).
+
+**It is on-box only.** It guards against DB corruption or a bad migration, not
+against losing the host. Don't read the snapshots as disaster recovery. Dan
+asked on 2026-10-27 for it to go off-box; that is
+[reverse-proxy#82](https://github.com/danhon/reverse-proxy/issues/82), still
+open.
