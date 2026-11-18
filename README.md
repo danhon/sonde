@@ -263,8 +263,7 @@ consistent snapshot of the live database taken without stopping the app.
 
 On the host the copies are in `/home/danhon/sonde-backups` (`BACKUP_HOST_DIR`).
 
-**It is on-box only.** It guards against DB corruption or a bad migration, not
-against losing the host. Don't read the snapshots as disaster recovery. Dan
-asked on 2026-10-27 for it to go off-box; that is
-[reverse-proxy#82](https://github.com/danhon/reverse-proxy/issues/82), still
-open.
+**Off-box since 2026-11-18.** The fleet's nightly restic job copies
+`~/sonde-backups` to Dropbox at 04:30
+([reverse-proxy#82](https://github.com/danhon/reverse-proxy/issues/82); Dan
+asked on 2026-10-27, reversing the on-box-only choice in PLAN.md §9).

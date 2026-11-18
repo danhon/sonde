@@ -68,8 +68,8 @@ services:
       # Live DB in a named volume.
       - sonde-data:/data
       # Snapshots go to a host bind mount rather than a named volume, so they
-      # are reachable from the host without docker cp. On-box only by choice —
-      # see PLAN.md §9; this is not disaster recovery.
+      # are reachable from the host without docker cp, and by the fleet's nightly
+      # restic job, which copies them off-box since 2026-11-18 (reverse-proxy#82).
       - ${BACKUP_HOST_DIR:-/home/danhon/sonde-backups}:/backup
 
 networks:

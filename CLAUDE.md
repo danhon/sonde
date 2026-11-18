@@ -180,9 +180,8 @@ The scheduler isn't the cause: `create_app()` never attaches it, only
 `follow_events` is the only table that cannot be re-fetched from Bluesky. A
 nightly `VACUUM INTO` writes a snapshot to `/backup` (a host bind mount, 14 kept).
 
-**That is on-box only, and knowingly so.** It protects against DB corruption or a
-bad migration, not against losing the host. Docker volumes on ubuntuplex are not
-backed up, and the operator has said off-box backup is not a priority and does
-not use Syncthing for it — so don't wire one up, and don't describe the snapshots
-as off-box. If this ever becomes a priority, ask which mechanism to target rather
-than assuming.
+**Off-box since 2026-11-18**: the fleet's nightly restic job copies
+`~/sonde-backups` to Dropbox (reverse-proxy#82; Dan asked on 2026-10-27,
+reversing PLAN.md §9). Nothing in this repo takes part: the app only writes
+the snapshots. The live volume itself is not backed up, so a failed snapshot
+means no copy that night.

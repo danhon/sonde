@@ -6,12 +6,10 @@ gets a nightly copy.
 `VACUUM INTO` rather than a file copy: it takes a consistent snapshot of a live
 WAL database without stopping the app.
 
-SCOPE, stated so nobody mistakes it later: this is ON-BOX ONLY. It protects
-against DB corruption, a bad migration or an accidental delete — not against
-losing the host. Off-box backup was considered and deliberately dropped
-(PLAN.md §9); it is not a priority for this app. The bind-mount target just
-leaves the files somewhere an external tool could collect them without changes
-here.
+SCOPE: this writes on-box snapshots only. Off-box is the fleet's job: its
+nightly restic run copies the host bind mount to Dropbox since 2026-11-18
+(reverse-proxy#82), which reversed the on-box-only choice in PLAN.md §9.
+Nothing here needs to change for that.
 """
 
 from __future__ import annotations
