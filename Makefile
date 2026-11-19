@@ -19,10 +19,16 @@ APP    ?= sonde
 DOMAIN ?= sgc.rayandhon.com
 HOST   ?= $(APP).$(DOMAIN)
 
-.PHONY: deploy preview logs stop test verify
+.PHONY: deploy deploy-pulled preview logs stop test verify
 
 deploy:
 	git pull
+	@# A fresh make, so the rest runs the recipe just pulled, not this one
+	@# (reverse-proxy#78): make reads the Makefile before the pull.
+	@$(MAKE) --no-print-directory deploy-pulled
+
+# The part of deploy after the pull. Run `make deploy`, not this.
+deploy-pulled:
 	COMPOSE_PROJECT_NAME=$(APP) \
 	SERVICE_HOST=$(HOST) \
 	GIT_SHA=$$(git rev-parse --short HEAD) \
