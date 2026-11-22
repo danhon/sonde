@@ -4,7 +4,7 @@
 # Astral stopped updating uv:python3.12-bookworm-slim on 2026-02-04, so a
 # rebuild never got Debian's fixes (reverse-proxy python-apps.md). uv pinned
 # by version, a release at least 3 days old (IMG-2).
-FROM python:3.12-slim-bookworm AS builder
+FROM python:3.12-slim AS builder
 COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /uvx /bin/
 ENV UV_PYTHON_DOWNLOADS=never
 
@@ -30,7 +30,7 @@ RUN uv sync --frozen --no-dev
 
 
 # Runtime stage: the builder's base, so the .venv's python is the same one.
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim
 
 RUN useradd -m -u 10001 appuser
 
