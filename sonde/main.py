@@ -15,12 +15,15 @@ log = logging.getLogger("sonde")
 
 
 def _configure_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-7s %(name)s  %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    # The fleet's format (LOG-1): text on stdout, JSON in /logs/app.log when
+    # ~/sonde-logs is mounted there (compose.yml); nowhere else, so a run on
+    # the Mac or a one-off sweep outside the container writes no file.
+    from pathlib import Path
+
+    from sonde import logs
+
+    logs.setup((settings.build_sha or "dev")[:7],
+               "/logs/app.log" if Path("/logs").is_dir() else None)
 
 
 async def _run_once(kind: str) -> int:
@@ -184,7 +187,11 @@ def main(argv: list[str] | None = None) -> int:
         "starting web on %s:%s (actor=%s, schedule=%s)",
         settings.web_host, settings.web_port, settings.actor, args.schedule,
     )
-    uvicorn.run(app, host=settings.web_host, port=settings.web_port, log_level="info")
+    # Through the root logger and its format (logs.setup), and no access log
+    # of uvicorn's own: it carries query strings. web/app.py's access_line
+    # middleware logs the path only (LOG-2).
+    uvicorn.run(app, host=settings.web_host, port=settings.web_port, log_level="info",
+                log_config=None, access_log=False)
     return 0
 
 

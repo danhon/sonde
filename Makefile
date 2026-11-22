@@ -18,6 +18,7 @@ endif
 APP    ?= sonde
 DOMAIN ?= sgc.rayandhon.com
 HOST   ?= $(APP).$(DOMAIN)
+LOG_DIR ?= $(HOME)/$(APP)-logs
 
 .PHONY: deploy deploy-pulled preview logs stop test verify
 
@@ -27,17 +28,29 @@ deploy:
 	@# (reverse-proxy#78): make reads the Makefile before the pull.
 	@$(MAKE) --no-print-directory deploy-pulled
 
+# The logs directory (LOG-1), created here rather than by Docker, which would
+# make it root's. An ACL instead of a chown, which would need root: uid 10001
+# may write, the directory stays the host user's.
+.PHONY: log-dir
+log-dir:
+	mkdir -p $(LOG_DIR)
+	setfacl -m u:10001:rwx $(LOG_DIR)
+
 # The part of deploy after the pull. Run `make deploy`, not this.
-deploy-pulled:
+deploy-pulled: log-dir
 	COMPOSE_PROJECT_NAME=$(APP) \
 	SERVICE_HOST=$(HOST) \
+	SONDE_LOG_DIR=$(LOG_DIR) \
 	GIT_SHA=$$(git rev-parse --short HEAD) \
 	BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-	docker compose up -d --build
+	docker compose up -d --build --wait
+	@$(FLEET_PROBE)
 
 preview:
+	$(MAKE) --no-print-directory log-dir LOG_DIR=$(LOG_DIR)-preview
 	COMPOSE_PROJECT_NAME=$(APP)-preview \
 	SERVICE_HOST=$(APP)-preview.$(DOMAIN) \
+	SONDE_LOG_DIR=$(LOG_DIR)-preview \
 	GIT_SHA=$$(git rev-parse --short HEAD) \
 	BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
 	docker compose up -d --build

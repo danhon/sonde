@@ -1,13 +1,21 @@
 # syntax=docker/dockerfile:1.7
 
-# Build/venv stage
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
+# Build/venv stage, on the runtime's own base with a pinned uv copied in:
+# Astral stopped updating uv:python3.12-bookworm-slim on 2026-02-04, so a
+# rebuild never got Debian's fixes (reverse-proxy python-apps.md). uv pinned
+# by version, a release at least 3 days old (IMG-2).
+FROM python:3.12-slim-bookworm AS builder
+COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /uvx /bin/
+ENV UV_PYTHON_DOWNLOADS=never
 
 WORKDIR /app
 
 # Dependency metadata first so the dep layer caches independently of source.
-# README.md is required by hatchling because pyproject declares a readme field.
-COPY pyproject.toml uv.lock README.md ./
+# An empty README.md: hatchling needs the file, because pyproject declares a
+# readme field, and the real one would re-run this layer on every README edit
+# (PY-1).
+COPY pyproject.toml uv.lock ./
+RUN touch README.md
 
 # Two-step sync, both --frozen, so uv.lock is authoritative for the dependency
 # tree AND for the project install. `uv pip install .` would work here but goes
@@ -21,8 +29,8 @@ COPY sonde/ ./sonde/
 RUN uv sync --frozen --no-dev
 
 
-# Runtime stage
-FROM python:3.12-slim
+# Runtime stage: the builder's base, so the .venv's python is the same one.
+FROM python:3.12-slim-bookworm
 
 RUN useradd -m -u 10001 appuser
 

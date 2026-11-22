@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
@@ -31,6 +32,9 @@ TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 # logged, not swallowed" untrue for the whole of that time. Invisible to the
 # tests because they exercised the store function directly and never the route.
 log = logging.getLogger("sonde.web")
+access_log = logging.getLogger("sonde.access")
+# Polled by Docker's probe and the nav strip: logged only when they fail.
+QUIET_PATHS = ("/healthz", "/api/status")
 
 
 def _step_label(key: str) -> str:
@@ -273,6 +277,31 @@ def create_app() -> FastAPI:
                 status_code=403,
             )
         return await call_next(request)
+
+    # Added after the two guards, so it runs outside them and logs their
+    # 401s and 403s too. Replaces uvicorn's access log, which carried the
+    # query string: LOG-2 keeps query strings out of every log, so the path
+    # only, and never the API client's token (it is in a header).
+    @app.middleware("http")
+    async def access_line(request: Request, call_next):
+        start = time.monotonic()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        except asyncio.CancelledError:
+            status = 499   # the client went away: nginx's code, not a 500
+            raise
+        finally:
+            path = request.url.path
+            if status >= 400 or not (path in QUIET_PATHS or path.startswith("/static/")):
+                ms = round((time.monotonic() - start) * 1000)
+                access_log.log(
+                    logging.ERROR if status >= 500 else logging.INFO,
+                    "%s %s %d %dms", request.method, path, status, ms,
+                    extra={"method": request.method, "path": path, "status": status, "ms": ms},
+                )
 
     @app.get("/healthz")
     async def healthz() -> JSONResponse:

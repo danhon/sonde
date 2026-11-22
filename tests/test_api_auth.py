@@ -339,9 +339,13 @@ def test_the_compose_log_is_bounded():
     fast as the Traefik rate limit allows. The cap is what makes that bounded
     whether or not the exception is fixed, and it is the fleet's Python-app
     pattern besides.
+
+    Since LOG-3 (reverse-proxy#126) the container logs to the journal, which
+    journald caps (SystemMaxUse), so the json-file max-size/max-file options
+    no longer apply. Either is bounded; no logging block is not.
     """
     from pathlib import Path
 
     compose = (Path(__file__).resolve().parents[1] / "compose.yml").read_text()
     assert "logging:" in compose, "no logging block — the json-file log is uncapped"
-    assert "max-size:" in compose and "max-file:" in compose
+    assert "driver: journald" in compose or ("max-size:" in compose and "max-file:" in compose)

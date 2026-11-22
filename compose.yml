@@ -16,12 +16,15 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     mem_reservation: 128m
-    # The fleet's Python-app pattern (reverse-proxy docs-site,
-    # services/python-apps.md). Docker's json-file driver is uncapped by
-    # default, and one uncaught exception under `/api/v1` writes ~8 KB of
-    # traceback per request on a router that answers the internet without a
-    # session — so an unbounded log here is a disk-exhaustion path on ubuntuplex
-    # rather than untidiness. Bounds it whatever the app does next.
+    # HEALTH-3: the fleet's probe of /healthz (sonde/healthcheck.py). Traefik
+    # routes only to a healthy container.
+    healthcheck:
+      test: ["CMD", "python3", "-I", "-S", "/app/sonde/healthcheck.py"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+      start_interval: 1s
     labels:
       - "traefik.enable=true"
 
@@ -72,6 +75,10 @@ services:
       # are reachable from the host without docker cp, and by the fleet's nightly
       # restic job, which copies them off-box since 2026-11-18 (reverse-proxy#82).
       - ${BACKUP_HOST_DIR:-/home/danhon/sonde-backups}:/backup
+      # LOG-1: JSON lines in app.log, read by VictoriaLogs (reverse-proxy
+      # victorialogs/, FILE_APPS). `make deploy` creates it and lets uid 10001
+      # write to it (an ACL: the directory stays the host user's).
+      - ${SONDE_LOG_DIR:-/home/danhon/sonde-logs}:/logs
 
 networks:
   traefik_default:

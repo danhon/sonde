@@ -74,6 +74,14 @@ uv run sonde --schedule       # web UI + scheduler (production mode)
 A cold start needs `--once` before anything else: the head sweep deliberately
 no-ops without a baseline, since with nothing known every page looks new and it
 would walk all 115 pages every 15 minutes.
+
+Logs go to stdout as text (`make logs`), to `~/sonde-logs/app.log` as JSON
+lines, and to VictoriaLogs as `source:sonde`. A request's line carries its
+path only, never the query string or a token (LOG-2); `/healthz` and
+`/api/status` only when they fail. `make deploy` creates `~/sonde-logs` with an
+ACL that lets the container's uid 10001 write to it, and waits for Docker's
+healthcheck (`sonde/healthcheck.py`, on `/healthz`) before the fleet's probe.
+
 ## Local development
 
 ```bash
