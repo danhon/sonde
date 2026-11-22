@@ -1,8 +1,8 @@
 """Writes must come from sonde's own pages.
 
-The Authelia cookie is scoped to `domain: sgc.rayandhon.com` with the default
+The Authelia cookie is scoped to the shared parent domain with the default
 `same_site: lax`, and Lax stops cross-*site* requests only. Subdomains of one
-registrable domain are same-site, so every other service on the fleet could
+registrable domain are same-site, so every other service under that domain could
 POST here with the operator's session attached. These tests are mostly about
 one value: `Sec-Fetch-Site: same-site` must be refused, which is the opposite
 of what most CSRF advice says to do with it.
@@ -50,12 +50,12 @@ def test_sondes_own_pages_are_allowed():
 
 def test_the_origin_header_is_the_fallback():
     """For browsers too old to send Sec-Fetch-Site."""
-    ours = {"origin": "https://sonde.sgc.rayandhon.com",
-            "host": "sonde.sgc.rayandhon.com"}
+    ours = {"origin": "https://sonde.home.example",
+            "host": "sonde.home.example"}
     assert origin.refusal("POST", ours) is None
 
-    sibling = {"origin": "https://calibre.sgc.rayandhon.com",
-               "host": "sonde.sgc.rayandhon.com"}
+    sibling = {"origin": "https://books.home.example",
+               "host": "sonde.home.example"}
     assert origin.refusal("POST", sibling) is not None
 
 

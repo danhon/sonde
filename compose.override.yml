@@ -1,0 +1,8 @@
+# For running sonde yourself: `docker compose up --build`, then
+# http://127.0.0.1:8090. docker compose reads this file only when COMPOSE_FILE
+# isn't set; a deployment that sets it (with its own proxy and network) never
+# loads it.
+services:
+  app:
+    ports:
+      - "127.0.0.1:8090:8090"

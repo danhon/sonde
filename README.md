@@ -5,14 +5,14 @@ A follower tracker for [Bluesky](https://bsky.app). Sweeps who follows
 departures over time, shows which followers are **verified**, and ranks which
 ones are **influential** — with a score it can explain.
 
-> **Status: in production**, deployed on ubuntuplex behind Authelia. All three
+> **Status: in production** for its author, behind a sign-in. All three
 > goals are answered, plus mutuals, circles, institutions, interaction
 > leaderboards, follow-back, five visualisations, a nightly snapshot, instant
 > verified-follower alerts and a read-mostly JSON API for other programs.
 > 942 tests pass; the browser eval checks 226 page renders across two engines
 > and seven viewports.
 
-This README is for running and deploying sonde. The reasoning behind it lives
+This README is for running sonde. The reasoning behind it lives
 elsewhere:
 
 | | |
@@ -75,12 +75,12 @@ A cold start needs `--once` before anything else: the head sweep deliberately
 no-ops without a baseline, since with nothing known every page looks new and it
 would walk all 115 pages every 15 minutes.
 
-Logs go to stdout as text (`make logs`), to `~/sonde-logs/app.log` as JSON
-lines, and to VictoriaLogs as `source:sonde`. A request's line carries its
+Logs go to stdout as text, and to `app.log` in the log folder as JSON
+lines. A request's line carries its
 path only, never the query string or a token (LOG-2); `/healthz` and
-`/api/status` only when they fail. `make deploy` creates `~/sonde-logs` with an
-ACL that lets the container's uid 10001 write to it, and waits for Docker's
-healthcheck (`sonde/healthcheck.py`, on `/healthz`) before the fleet's probe.
+`/api/status` only when they fail. The container runs as uid 10001, which
+must be able to write to the log and snapshot folders. Docker's healthcheck is
+`sonde/healthcheck.py`, on `/healthz`.
 
 ## Local development
 
@@ -99,8 +99,8 @@ uv run pytest
 Copy `.env.example` to `.env` and fill it in. **Never commit `.env`.**
 
 ```env
-# Traefik routing (set by Makefile; override here only if needed)
-SERVICE_HOST=sonde.sgc.rayandhon.com
+# The hostname sonde's emails link to
+SERVICE_HOST=sonde.example.com
 
 # Whose followers to track — handle or DID
 BLUESKY_ACTOR=danhon.com
@@ -143,79 +143,35 @@ ENABLE_VERIFIED_ALERTS=true        # instant email when a verified account follo
 # DB_PATH=/data/sonde.db
 TZ=America/Los_Angeles
 ```
-## Deploying (Docker — this is the live production deployment)
+## Running it yourself
 
-Production runs as a Docker container behind Traefik + Authelia, following the
-standard [python-apps pattern](../reverse-proxy/docs-site/docs/services/python-apps.md).
-
-```bash
-make deploy
-```
-
-**Never run `docker compose build` / `docker compose up` directly on the server.**
-`SERVICE_HOST` is only ever set by the Makefile. Bypass it and Compose
-substitutes an empty string, the Traefik rule becomes ``Host(``)``, and the site
-404s while `docker ps` shows the container perfectly healthy — see
-[troubleshooting](../reverse-proxy/docs-site/docs/troubleshooting.md#site-404s-after-a-manual-deploy-container-looks-perfectly-healthy)
-(hit for real on buywanderbot, 2026-07-17).
-
-Other targets: `make preview` (runs `sonde-preview.sgc.rayandhon.com` alongside
-prod), `make logs`, `make stop`.
-
-### Three Traefik routers, not one
-
-Authelia attaches to the *router*, not the path, so anything that must be
-reachable without a browser login needs its own.
-
-| Router | Rule | Guard |
-|---|---|---|
-| main | `Host(sonde…)` | `authelia@file` |
-| `-health` | `… && Path(/healthz)`, priority 100 | none — liveness and sync age only |
-| `-api` | `… && PathPrefix(/api/v1)`, priority 90 | `internal-only@file` (LAN, Tailscale, the box; never the internet: Dan, 2026-11-22, #4) and a bearer token in the app |
-
-On a single router `/healthz` 302s to the login page and the watchdog reads the
-app as down, and the API is unusable by any program.
-
-**The API router's `PathPrefix` is its containment and is the most dangerous
-label in `compose.yml`.** Widen it to `/api` and `/api/status` loses Authelia;
-drop it and the entire admin surface does. `make verify` asserts the rule, that
-the router carries no Authelia, that `/api/v1/meta` answers 401 without a token
-(302 there means the router is missing) and that `/api/status` still answers 302.
-
-**A router without Authelia exposes the app's own error handling** (to
-the internet until 2026-11-22, to the LAN and Tailscale since). sonde once shipped an unhandled `TypeError` in its token
-check (`hmac.compare_digest` on a non-ASCII `str`), which any anonymous caller
-could turn into a 500 and 8 KB of traceback per request. It was fixed on
-2026-08-31 (see [HISTORY.md](HISTORY.md)). So a router like `-api` needs a
-bounded container log (`logging: max-size` in `compose.yml`) as well as the
-token check.
-
-### First-time server setup
+sonde is MIT-licensed ([LICENSE](LICENSE)). It needs Docker, and nothing else
+of the setup it was built on:
 
 ```bash
-git clone git@github.com:danhon/sonde.git ~/dev/sonde
-cp ~/dev/sonde/.env.example ~/dev/sonde/.env
-$EDITOR ~/dev/sonde/.env   # the SERVICE_HOST line here is documentation only;
-                           # `make deploy` always overrides it
-cd ~/dev/sonde && make deploy
+git clone https://github.com/danhon/sonde.git && cd sonde
+cp .env.example .env
+$EDITOR .env          # BLUESKY_ACTOR at least: whose followers to track
+make run              # docker compose up --build, on http://127.0.0.1:8090
+docker compose exec app sonde --once   # the first full sweep, then it runs itself
 ```
 
-Requires the `traefik_default` external network to exist and Authelia to be
-running for the `authelia@file` middleware to resolve.
+`compose.yml` is the service: the image, `.env`, its data volume, and the
+snapshot and log folders (`./backups`, `./logs` by default;
+`BACKUP_HOST_DIR` and `SONDE_LOG_DIR` move them). `compose.override.yml`
+publishes the port on 127.0.0.1 only, and docker compose reads it only when
+`COMPOSE_FILE` isn't set.
 
-### Verifying a deploy
+**It has no login of its own.** Anyone who can reach the port can use it,
+follow and unfollow included, so put it behind something that signs people in
+before you expose it beyond your machine. The `/api/v1` paths are the
+exception: they want a bearer token (`SONDE_API_TOKENS`, [API.md](API.md)),
+and a proxy in front should let them through without the sign-in, but only
+from where you trust.
 
-```bash
-docker ps --filter name=sonde-app-1
-docker inspect sonde-app-1 --format '{{json .Config.Labels}}' | grep rule
-# must show Host(`sonde.sgc.rayandhon.com`) — NOT Host(``)
-curl -sk -o /dev/null -w '%{http_code}\n' https://sonde.sgc.rayandhon.com/
-# 302 to auth.sgc.rayandhon.com is correct (Authelia); 404 means SERVICE_HOST broke
-curl -sk -o /dev/null -w '%{http_code}\n' https://sonde.sgc.rayandhon.com/healthz
-# 200 — a 302 here means the health router lost its priority
-curl -sk -o /dev/null -w '%{http_code}\n' https://sonde.sgc.rayandhon.com/api/v1/meta
-# 401 — 302 means the API router is missing, 200 means the token check is not running
-```
+The author's own deployment (its proxy routes, sign-in, limits and backups)
+lives outside this repo.
+
 ## Evals
 
 Unit tests prove the logic is self-consistent; the evals prove it agrees with
@@ -269,9 +225,7 @@ send them somewhere other than the digest.
 nightly `VACUUM INTO` writes a timestamped copy to `/backup`, keeping 14. It's a
 consistent snapshot of the live database taken without stopping the app.
 
-On the host the copies are in `/home/danhon/sonde-backups` (`BACKUP_HOST_DIR`).
-
-**Off-box since 2026-11-18.** The fleet's nightly restic job copies
-`~/sonde-backups` to Dropbox at 04:30
-([reverse-proxy#82](https://github.com/danhon/reverse-proxy/issues/82); Dan
-asked on 2026-10-27, reversing the on-box-only choice in PLAN.md §9).
+On the host the copies are in `BACKUP_HOST_DIR` (`./backups` by default). They
+protect against a corrupt database, not a lost host: copy that folder off the
+host to cover that. (The author's deployment does, nightly, since 2026-11-18,
+reversing the on-box-only choice in PLAN.md §9.)

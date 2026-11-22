@@ -429,7 +429,7 @@ bind mount is kept anyway — it costs nothing, and it leaves the snapshots
 somewhere an external tool could pick them up later without touching this app.
 
 **Reversed 2026-11-18** (Dan asked on 2026-10-27, reverse-proxy#82): the
-fleet's nightly restic job now copies `~/sonde-backups` off-box to Dropbox,
+fleet's nightly restic job now copies the snapshot folder off-box to Dropbox,
 which is the external tool this bind mount was left for. Nothing here changed.
 
 ### 10. `/healthz` will 302 unless it gets its own router

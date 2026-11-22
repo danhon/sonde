@@ -15,6 +15,8 @@ __pycache__/
 *.db-wal
 *.db-shm
 sonde-backups/
+backups/
+logs/
 
 # Editor / OS
 .DS_Store
@@ -27,3 +29,6 @@ evals/eval.db-*
 
 # Subagent-driven-development scratch: ledgers, briefs, review packages.
 .superpowers/
+
+# The deployment's notes for Claude, linked in from outside the repo.
+CLAUDE.local.md

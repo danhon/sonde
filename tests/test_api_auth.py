@@ -244,25 +244,28 @@ def test_the_admin_surface_is_untouched_by_a_token(client):
     assert with_token.status_code == without.status_code == 200
 
 
-def test_the_compose_api_router_is_scoped_and_unguarded_deliberately():
+def test_the_deployments_api_router_is_scoped_and_unguarded_deliberately():
     """Cheap, and it catches the copy-paste that would matter most.
 
-    The API router is the one router in this deployment with no Authelia on it.
-    Its `PathPrefix` is therefore the containment: widened to `/api` it takes
-    `/api/status` out from behind Authelia, and dropped entirely it takes the
-    whole admin surface.
+    The API router is the one router in the author's deployment with no
+    sign-in on it. Its `PathPrefix` is therefore the containment: widened to
+    `/api` it takes `/api/status` out from behind the sign-in, and dropped
+    entirely it takes the whole admin surface. The routers are the
+    deployment's, outside this repo (reverse-proxy's fleet/sonde/), so this
+    runs where that is checked out and skips elsewhere.
     """
     from pathlib import Path
 
-    compose = Path(__file__).resolve().parents[1] / "compose.yml"
-    rule = [line for line in compose.read_text().splitlines()
-            if "-api.rule=" in line]
+    overlay = Path.home() / "dev" / "reverse-proxy" / "fleet" / "sonde" / "compose.ubuntuplex.yml"
+    if not overlay.is_file():
+        pytest.skip("no deployment checked out here")
+    lines = overlay.read_text().splitlines()
+    rule = [line for line in lines if "-api.rule=" in line]
     assert len(rule) == 1, "exactly one API router"
     assert "PathPrefix(`/api/v1`)" in rule[0]
     assert "Host(`${SERVICE_HOST}`)" in rule[0]
 
-    middlewares = [line for line in compose.read_text().splitlines()
-                   if "-api.middlewares=" in line]
+    middlewares = [line for line in lines if "-api.middlewares=" in line]
     assert middlewares and "authelia" not in middlewares[0], (
         "the API router is unguarded by design — if this ever gains authelia@file "
         "the CRM stops working, and if it gains it silently nobody will know why")
@@ -340,9 +343,9 @@ def test_the_compose_log_is_bounded():
     whether or not the exception is fixed, and it is the fleet's Python-app
     pattern besides.
 
-    Since LOG-3 (reverse-proxy#126) the container logs to the journal, which
-    journald caps (SystemMaxUse), so the json-file max-size/max-file options
-    no longer apply. Either is bounded; no logging block is not.
+    The base file caps json-file for anyone running it; a deployment's overlay
+    may swap the driver (the author's uses the journal, which journald caps).
+    Either is bounded; no logging block is not.
     """
     from pathlib import Path
 

@@ -202,7 +202,7 @@ class Settings:
 
     @property
     def service_host(self) -> str:
-        return os.environ.get("SERVICE_HOST", "sonde.sgc.rayandhon.com")
+        return os.environ.get("SERVICE_HOST", "localhost:8090")
 
     @property
     def page_size(self) -> int:

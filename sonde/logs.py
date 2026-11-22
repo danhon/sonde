@@ -1,7 +1,7 @@
 """The fleet's log format (reverse-proxy LOG-1, decisions/019; python-apps.md, "Logging").
 
 One text line on stdout for people (`docker logs`, `make logs`), and JSON lines
-in /logs/app.log, bind-mounted from ~/sonde-logs, for machines (VictoriaLogs,
+in /logs/app.log, bind-mounted from the host's log folder, for machines (VictoriaLogs,
 `jq`). Same records, two formatters.
 """
 

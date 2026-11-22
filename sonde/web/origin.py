@@ -2,17 +2,17 @@
 
 sonde has no CSRF tokens, and nothing used to check that a write came from
 sonde at all. The Authelia cookie was doing that work by accident, and it does
-not actually do it. The cookie is scoped to `domain: sgc.rayandhon.com` with
-Authelia's default `same_site: lax`, and `SameSite=Lax` stops *cross-site*
+not actually do it. The cookie is scoped to the parent domain the operator's
+services share, with Authelia's default `same_site: lax`, and `SameSite=Lax` stops *cross-site*
 requests — but subdomains of one registrable domain are **same-site**. So any
-other service on the fleet (calibre-web, which serves user-supplied ebook
-content; homepage; docs; scrypted; birdnet-go; the watchdog) could POST here and
+other service under that domain (an ebook server showing user-supplied
+content, a dashboard, a camera console) could POST here and
 the browser would attach the operator's session. An XSS in any of them was write
 access to sonde: follow, unfollow, archive a circle, merge two, start a batch.
 
 So the check is on where the request says it came from, and the load-bearing
 line is the one that rejects `same-site` — that value means a different host
-under `sgc.rayandhon.com`, which is exactly the attack. Most CSRF advice treats
+under the shared parent domain, which is exactly the attack. Most CSRF advice treats
 same-site as friendly. Here it is the threat.
 
 Kept apart from `app.py` because it is a trust boundary and a rule about

@@ -16,7 +16,7 @@ log = logging.getLogger("sonde")
 
 def _configure_logging() -> None:
     # The fleet's format (LOG-1): text on stdout, JSON in /logs/app.log when
-    # ~/sonde-logs is mounted there (compose.yml); nowhere else, so a run on
+    # the log folder is mounted there (compose.yml); nowhere else, so a run on
     # the Mac or a one-off sweep outside the container writes no file.
     from pathlib import Path
 

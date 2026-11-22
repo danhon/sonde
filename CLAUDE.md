@@ -1,10 +1,8 @@
 # sonde — operational notes for Claude
 
-Fleet docs for ubuntuplex live in `~/dev/reverse-proxy/`; read its
-[DOCUMENTING.md](../reverse-proxy/DOCUMENTING.md) before editing them, and record
-the fleet-relevant part of work here as its own commit there. On the box,
-`~/.claude/CLAUDE.md` carries the fleet-wide rules. This app follows
-[python-apps.md](../reverse-proxy/docs-site/docs/services/python-apps.md).
+How the author's box runs it (routing, sign-in, deploys, backups) isn't in
+this repo: on that box it is in `CLAUDE.local.md`, linked from the
+deployment, which Claude Code loads beside this file.
 
 Docs in this repo, split by what they answer:
 
@@ -21,12 +19,6 @@ All grounded in measurements against the live API from 2026-07-26 onward — if
 you change a number, re-measure rather than re-estimate. Put new milestone
 narrative in HISTORY.md, not PLAN.md: that is how PLAN.md reached 1,888 lines,
 three quarters of which was changelog appended to a design document.
-
-## Deployment: always `make deploy`, never bare `docker compose`
-
-`SERVICE_HOST` is only ever injected by the Makefile. Bypass it and Traefik's
-router rule becomes `Host(``)`, silently 404ing the site while `docker ps` shows
-the container perfectly healthy. `make verify` checks the label after a deploy.
 
 ## Non-obvious things that will bite
 
@@ -87,7 +79,7 @@ write route and checks both directions.
 program cannot do an interactive 2FA login. A bearer token checked in
 `sonde/web/apikey.py` stands in for it, as a middleware over the whole prefix.
 
-**`PathPrefix(`/api/v1`)` in `compose.yml` is the containment.** Widen it to
+**`PathPrefix(`/api/v1`)` on the deployment's API router is the containment.** Widen it to
 `/api` and `/api/status` — scheduler internals — loses Authelia. Drop it and the
 whole admin surface does. `make verify` and `tests/test_api_auth.py` both assert
 the rule; keep it that way.
@@ -180,8 +172,4 @@ The scheduler isn't the cause: `create_app()` never attaches it, only
 `follow_events` is the only table that cannot be re-fetched from Bluesky. A
 nightly `VACUUM INTO` writes a snapshot to `/backup` (a host bind mount, 14 kept).
 
-**Off-box since 2026-11-18**: the fleet's nightly restic job copies
-`~/sonde-backups` to Dropbox (reverse-proxy#82; Dan asked on 2026-10-27,
-reversing PLAN.md §9). Nothing in this repo takes part: the app only writes
-the snapshots. The live volume itself is not backed up, so a failed snapshot
-means no copy that night.
+The deployment decides where the snapshots go after that.
