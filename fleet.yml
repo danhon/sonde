@@ -8,3 +8,4 @@ kind: web
 host: sonde.sgc.rayandhon.com
 internet: false
 issue: 4
+audience: users   # Dan, 2026-11-22 (reverse-proxy#144, decisions/047 §4)
