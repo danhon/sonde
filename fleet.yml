@@ -1,13 +1,10 @@
 # fleet.yml: what sonde says it is, for fleet-check (reverse-proxy
 # docs-site/docs/services/fleet-check.md). The gaps found when the gate started
-# (reverse-proxy#15) were closed on 2026-11-22 (#4), but one: the -api router
-# answers the internet without Authelia (a bearer token instead), which needs
-# Dan's `fleet-ok: internet` on #4 and then `internet: true` here.
+# (reverse-proxy#15) were closed on 2026-11-22 (#4). The -api router has no
+# Authelia (a program can't do 2FA): it is internal-only plus a bearer token,
+# never the internet (Dan on #4, 2026-11-22).
 service: sonde
 kind: web
 host: sonde.sgc.rayandhon.com
 internet: false
 issue: 4
-waivers:
-- {check: public-guard, until: 2026-12-15, issue: 4, why: router open without Authelia
-    or public-guard, bootstrap: true}

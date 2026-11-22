@@ -49,13 +49,15 @@ services:
       # dangerous label in this file: widen it to `/api` and `/api/status`
       # loses Authelia; drop the PathPrefix and the whole admin surface does.
       # `make verify` asserts the rule for that reason. What stands in for
-      # Authelia here is the bearer token checked in sonde/web/apikey.py.
+      # Authelia is two locks: internal-only (the LAN, Tailscale and the box;
+      # never the internet: Dan, 2026-11-22, #4) and the bearer token checked
+      # in sonde/web/apikey.py.
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.rule=Host(`${SERVICE_HOST}`) && PathPrefix(`/api/v1`)"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.entrypoints=websecure"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.tls.certresolver=le"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.priority=90"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.service=${COMPOSE_PROJECT_NAME}"
-      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.middlewares=${COMPOSE_PROJECT_NAME}-api-rate@docker"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.middlewares=internal-only@file,${COMPOSE_PROJECT_NAME}-api-rate@docker"
       # Not a defence against token guessing — a 43-character secret does not
       # fall to a rate limit — but it keeps one runaway client from putting a
       # sustained read load on a SQLite file that the sweeps are writing to.

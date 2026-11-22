@@ -171,7 +171,7 @@ reachable without a browser login needs its own.
 |---|---|---|
 | main | `Host(sonde…)` | `authelia@file` |
 | `-health` | `… && Path(/healthz)`, priority 100 | none — liveness and sync age only |
-| `-api` | `… && PathPrefix(/api/v1)`, priority 90 | none from Traefik; a bearer token in the app |
+| `-api` | `… && PathPrefix(/api/v1)`, priority 90 | `internal-only@file` (LAN, Tailscale, the box; never the internet: Dan, 2026-11-22, #4) and a bearer token in the app |
 
 On a single router `/healthz` 302s to the login page and the watchdog reads the
 app as down, and the API is unusable by any program.
@@ -182,8 +182,8 @@ drop it and the entire admin surface does. `make verify` asserts the rule, that
 the router carries no Authelia, that `/api/v1/meta` answers 401 without a token
 (302 there means the router is missing) and that `/api/status` still answers 302.
 
-**A router without Authelia makes the app's own error handling
-internet-facing.** sonde once shipped an unhandled `TypeError` in its token
+**A router without Authelia exposes the app's own error handling** (to
+the internet until 2026-11-22, to the LAN and Tailscale since). sonde once shipped an unhandled `TypeError` in its token
 check (`hmac.compare_digest` on a non-ASCII `str`), which any anonymous caller
 could turn into a 500 and 8 KB of traceback per request. It was fixed on
 2026-08-31 (see [HISTORY.md](HISTORY.md)). So a router like `-api` needs a
