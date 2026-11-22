@@ -81,8 +81,9 @@ program cannot do an interactive 2FA login. A bearer token checked in
 
 **`PathPrefix(`/api/v1`)` on the deployment's API router is the containment.** Widen it to
 `/api` and `/api/status` — scheduler internals — loses Authelia. Drop it and the
-whole admin surface does. `make verify` and `tests/test_api_auth.py` both assert
-the rule; keep it that way.
+whole admin surface does. The deployment's `make verify` and
+`tests/test_api_auth.py` (where the deployment is checked out) both assert the
+rule, and so does reverse-proxy's own test of the overlay; keep it that way.
 
 Consequences for anything added later: a route added under `/api/v1` is
 token-guarded before it is written, and a route added anywhere else is not

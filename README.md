@@ -40,8 +40,8 @@ A sonde is an instrument you send up into something you can't observe directly,
 to take measurements and radio them back. Same idea.
 ## Web UI
 
-**FastAPI** + **Jinja2** + **Tailwind CSS** (CDN), server-rendered. Behind
-Authelia 2FA at `sonde.sgc.rayandhon.com`.
+**FastAPI** + **Jinja2** + **Tailwind CSS** (CDN), server-rendered. It has no
+login of its own: run it behind one (Running it yourself).
 
 | Route | Description |
 |---|---|

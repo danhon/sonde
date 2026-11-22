@@ -18,10 +18,18 @@ test:
 	uv run pytest -q
 
 # Run it yourself, in Docker: http://127.0.0.1:8090 (compose.override.yml).
-# Needs a .env (cp .env.example .env, then set BLUESKY_ACTOR).
+# Needs a .env (cp .env.example .env, then set BLUESKY_ACTOR). Its own compose
+# project, with only this repo's compose files, so it can't take over a
+# deployment's container on the same host. The container runs as uid 10001:
+# an ACL lets it write where setfacl works (Linux), and Docker Desktop maps
+# ownership itself, so elsewhere the folders are left as they are.
 run:
 	mkdir -p backups logs
-	chmod a+rwx backups logs   # the container runs as uid 10001
+	chmod 700 backups logs
+	setfacl -m u:10001:rwx backups logs 2>/dev/null || true
+	env -u COMPOSE_FILE \
+	COMPOSE_PROJECT_NAME=sonde-local \
+	BACKUP_HOST_DIR=./backups SONDE_LOG_DIR=./logs \
 	GIT_SHA=$$(git rev-parse --short HEAD) \
 	BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
 	docker compose up --build
