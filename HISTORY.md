@@ -1640,3 +1640,39 @@ supplies security headers: it does not). And the read half of the shared-cookie
 problem is unchanged and still not fixable here — an XSS in any sibling service
 on `sgc.rayandhon.com` reads sonde as the operator, which BUGS.md has recorded
 since 2026-08-06.
+
+## 2026-11-22 — off the Play CDN, and a CSP (sonde#6)
+
+BUG-20 had been open since 2026-08-31: every page loaded Tailwind from
+`cdn.tailwindcss.com` with no integrity check, so that origin ran script
+same-origin in the operator's session and could drive the follow button. The
+Play CDN also needs `'unsafe-eval'`, so no useful CSP could be sent (BUG-21).
+
+Decided with Dan: compile with Tailwind's standalone CLI (one binary, no Node),
+pinned to **3.4.17** because that is exactly what the Play CDN was serving, and
+commit `static/app.css` rather than building it in the Dockerfile. Committing
+it means `make run`, the tests and the mobile eval need no extra tooling, and an
+image build doesn't depend on GitHub releases. `make css-check` in CI keeps it
+honest. The CSP is strict for scripts (`script-src 'self'`) and allows inline
+style *attributes* only (`style-src-attr 'unsafe-inline'`), because bar widths
+and chart font sizes are per-row `style="…"` values and an attribute can't run
+code. `Referrer-Policy: same-origin` went in alongside it, so links out to
+Bluesky don't reveal whose page they came from.
+
+What it took. The one inline script (the activity strip, circle chips,
+select-all) moved to `static/sonde.js` unchanged. An avatar's
+`onerror="this.style.visibility='hidden'"` became a capturing listener in the
+same file; the grep for inline handlers had missed it, and the new template test
+caught it. `text-{{ align }}` in three table headers became a full class name:
+`text-right` was in the compiled CSS only because another template happened to
+spell it out. The wheel's explicit include list had no entry for `static/`, so
+the first build served pages whose stylesheet 404'd.
+
+How it was checked. With the July eval database, the old code (Play CDN) and
+the new were screenshotted on every eval route at 390 and 1280 px in Chromium:
+0 pixels differ on all 30 renders. A control with `app.css` blocked differs by
+939,097 pixels, so the comparison can tell. The mobile eval gained two checks:
+CSP violations, and rendered classes with no rule. Both pass on 210 renders, and
+both fire when an unstyled class, an inline script and an off-site image are
+planted, in Chromium and WebKit. The planted inline script did not run.
+

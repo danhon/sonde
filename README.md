@@ -40,7 +40,7 @@ A sonde is an instrument you send up into something you can't observe directly,
 to take measurements and radio them back. Same idea.
 ## Web UI
 
-**FastAPI** + **Jinja2** + **Tailwind CSS** (CDN), server-rendered. It has no
+**FastAPI** + **Jinja2** + **Tailwind CSS** (compiled and committed, `make css`), server-rendered. It has no
 login of its own: run it behind one (Running it yourself).
 
 | Route | Description |
@@ -94,6 +94,15 @@ $EDITOR .env
 
 uv run pytest
 ```
+
+The stylesheet, `sonde/web/static/app.css`, is compiled from the templates by
+Tailwind 3.4.17's standalone CLI and committed, so nothing else needs Node or
+a build step. After adding or changing a class in a template, run `make css`
+(it downloads the pinned CLI once and checks its SHA-256) and commit the
+result; CI's `make css-check` fails when they disagree. Pages send a
+`Content-Security-Policy` of `script-src 'self'`, so behaviour goes in
+`sonde/web/static/sonde.js`, never in an inline `<script>` or `on…=`
+attribute (`sonde/web/headers.py`).
 ## Configuration
 
 Copy `.env.example` to `.env` and fill it in. **Never commit `.env`.**

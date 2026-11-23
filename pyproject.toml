@@ -33,7 +33,9 @@ build-backend = "hatchling.build"
 # Hatchling only packages .py by default — schema.sql and templates would be
 # missing at runtime. See reverse-proxy troubleshooting.md.
 [tool.hatch.build.targets.wheel]
-include = ["sonde/**/*.py", "sonde/**/*.sql", "sonde/**/*.html"]
+# static/: the compiled stylesheet and sonde.js (sonde#6). Without them the
+# image serves pages that 404 their own CSS.
+include = ["sonde/**/*.py", "sonde/**/*.sql", "sonde/**/*.html", "sonde/web/static/*"]
 
 [tool.uv]
 package = true

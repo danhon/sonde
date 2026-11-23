@@ -17,6 +17,7 @@ from fastapi.responses import (
     RedirectResponse,
     StreamingResponse,
 )
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -50,6 +51,10 @@ def _step_label(key: str) -> str:
 
 
 TEMPLATES.env.filters["step_label"] = _step_label
+
+from sonde.web import headers as _headers  # noqa: E402
+
+TEMPLATES.env.globals["static_url"] = _headers.static_url
 
 
 def _as_int(value: str | int | None) -> int | None:
@@ -302,6 +307,20 @@ def create_app() -> FastAPI:
                     "%s %s %d %dms", request.method, path, status, ms,
                     extra={"method": request.method, "path": path, "status": status, "ms": ms},
                 )
+
+    # Added last, so it is outermost: the guards' 401s and 403s carry the
+    # policy too. Every response gets it, JSON and CSS included; a policy is
+    # only consulted where it applies, and "every response" is easier to keep
+    # true than a list of the ones that matter (sonde/web/headers.py).
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers.update(_headers.HEADERS)
+        return response
+
+    # app.css and sonde.js. Behind Authelia like every page, on the main
+    # router; the access log already skips /static/ (access_line).
+    app.mount("/static", StaticFiles(directory=_headers.STATIC_DIR), name="static")
 
     @app.get("/healthz")
     async def healthz() -> JSONResponse:

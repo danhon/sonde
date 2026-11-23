@@ -23,7 +23,7 @@
 {% macro th(key, label, align='left') -%}
   {%- set active = (order == key) -%}
   {%- set flip = 'asc' if (active and direction == 'desc') else 'desc' -%}
-  <th class="py-2 pr-4 text-{{ align }} font-mono text-[10px] uppercase tracking-widest
+  <th class="py-2 pr-4 {{ 'text-right' if align == 'right' else 'text-left' }} font-mono text-[10px] uppercase tracking-widest
              {% if active %}text-red-800{% else %}text-slate-500{% endif %}">
     <a href="{{ qs({'order': key, 'direction': flip, 'page': 1}) }}"
        class="inline-flex items-center gap-1 hover:text-red-800"

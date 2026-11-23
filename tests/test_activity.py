@@ -6,6 +6,7 @@ if it's working properly or if it's running anything in the background."
 """
 
 import asyncio
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -200,23 +201,35 @@ def test_status_endpoint_leaks_no_follower_data(client):
     assert "bsky.social" not in blob
 
 
+def page_and_script(client, path: str) -> str:
+    """The page plus the script it loads.
+
+    The strip's code moved out of base.html into static/sonde.js so the CSP
+    can refuse inline script (sonde#6); a page still has to *load* it.
+    """
+    html = client.get(path).text
+    src = re.search(r'<script src="(/static/sonde\.js[^"]*)"', html)
+    assert src, f"{path} does not load sonde.js"
+    return html + client.get(src.group(1)).text
+
+
 def test_every_page_carries_the_activity_strip(client):
     """The complaint was not being able to tell from anywhere that it works."""
     for path in ("/", "/followers", "/influential", "/verified", "/changes", "/settings"):
-        html = client.get(path).text
+        html = page_and_script(client, path)
         assert 'id="activity"' in html, path
         assert "/api/status" in html, path
 
 
 def test_the_strip_handles_an_expired_session(client):
     """The poll gets an Authelia redirect, not JSON; it must say so."""
-    html = client.get("/").text
+    html = page_and_script(client, "/")
     assert 'redirect: "error"' in html
     assert "Session expired" in html
 
 
 def test_polling_adapts_to_whether_anything_is_running(client):
-    html = client.get("/").text
+    html = page_and_script(client, "/")
     assert "BUSY = 3000" in html and "IDLE = 15000" in html
 
 
@@ -393,5 +406,5 @@ async def test_an_explicit_rate_still_gets_a_private_limiter():
 
 
 def test_the_strip_names_every_running_job(client):
-    html = client.get("/").text
+    html = page_and_script(client, "/")
     assert "Running ${plural(jobs.length" in html or "plural(jobs.length" in html

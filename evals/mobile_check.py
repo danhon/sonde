@@ -11,6 +11,13 @@ Three things are measured, on every route, at seven widths, in two engines:
   reachable every section is visible, or reachable by opening the menu
   intact    nav links do not overlap the activity strip or escape the nav
 
+and two that hold the Content-Security-Policy to the pages (sonde#6):
+
+  csp       the browser reported no violation of the policy sonde sends
+  styled    every class on the rendered page has a rule in app.css; the
+            compiled stylesheet only holds classes Tailwind found in source,
+            where the Play CDN it replaced read the live DOM
+
 The middle one exists because overflow and tap-size checks both passed a build
 whose desktop nav had no visible links at all. Everything here asks
 `checkVisibility()` rather than measuring boxes: the regression's links had
@@ -153,6 +160,46 @@ TAP_JS = f"""() => {{
 }}"""
 
 
+# Registered before any page script runs, so a violation during load counts.
+CSP_LISTENER_JS = """
+window.__cspViolations = [];
+document.addEventListener("securitypolicyviolation", (e) => {
+  window.__cspViolations.push(`${e.effectiveDirective} refused ${e.blockedURI || "inline"}`);
+});
+"""
+
+# Class names on the page with no selector in any stylesheet. Tailwind escapes
+# `:` `/` `[` `.` in selectors, so names are read back out of selectorText and
+# unescaped rather than matched as text.
+UNSTYLED_JS = """(hooks) => {
+  const names = new Set();
+  const walk = (rules) => {
+    for (const rule of rules) {
+      if (rule.selectorText) {
+        for (const m of rule.selectorText.matchAll(/\\.((?:\\\\.|[A-Za-z0-9_-])+)/g)) {
+          names.add(m[1].replace(/\\\\(.)/g, "$1"));
+        }
+      }
+      if (rule.cssRules) walk(rule.cssRules);
+    }
+  };
+  for (const sheet of document.styleSheets) {
+    try { walk(sheet.cssRules); } catch (e) { /* cross-origin: there are none */ }
+  }
+  const missing = new Set();
+  for (const el of document.querySelectorAll("[class]")) {
+    for (const c of (el.getAttribute("class") || "").split(/\\s+/)) {
+      if (c && !names.has(c) && !hooks.includes(c)) missing.add(c);
+    }
+  }
+  return [...missing].sort();
+}"""
+
+# Classes that are markers, not styles: Tailwind's `group` has no rule of its
+# own, only the `group-hover:` variants that refer to it do.
+CLASS_HOOKS = ["group", "peer"]
+
+
 async def main() -> int:
     try:
         from playwright.async_api import async_playwright
@@ -176,6 +223,7 @@ async def main() -> int:
                     device_scale_factor=2, is_mobile=width < 768,
                     has_touch=width < 768,
                 )
+                await context.add_init_script(CSP_LISTENER_JS)
                 page = await context.new_page()
                 for route in ROUTES:
                     where = f"{engine} {width}px {route}"
@@ -190,6 +238,19 @@ async def main() -> int:
                         failures.append(f"{where}: HTTP {response.status}")
                         continue
                     checked += 1
+
+                    violations = await page.evaluate("window.__cspViolations || []")
+                    if violations:
+                        failures.append(
+                            f"{where}: CSP refused {sorted(set(violations))}")
+                    # Once per engine and route: the class list doesn't
+                    # depend on the width.
+                    if width == VIEWPORTS[0][0]:
+                        unstyled = await page.evaluate(UNSTYLED_JS, CLASS_HOOKS)
+                        if unstyled:
+                            failures.append(
+                                f"{where}: classes with no rule in app.css "
+                                f"(make css?) — {', '.join(unstyled)}")
 
                     overflow = await page.evaluate(OVERFLOW_JS)
                     if overflow:
@@ -276,6 +337,7 @@ async def main() -> int:
             # through, so this writes nothing: an eval must stay safe to point
             # at a populated database.
             context = await browser.new_context(viewport={"width": 1280, "height": 900})
+            await context.add_init_script(CSP_LISTENER_JS)
             page = await context.new_page()
             posted: list[str] = []
 
@@ -306,6 +368,10 @@ async def main() -> int:
                             f"{engine} chip did not change state on click "
                             f"(stayed aria-pressed={before})")
                     checked += 1
+                violations = await page.evaluate("window.__cspViolations || []")
+                if violations:
+                    failures.append(f"{engine} chip check: CSP refused "
+                                    f"{sorted(set(violations))}")
             except Exception as exc:  # noqa: BLE001
                 failures.append(f"{engine} chip check errored: {exc!r}")
             await context.close()
@@ -319,7 +385,7 @@ async def main() -> int:
         print(f"\n  {len(failures)} problems\n")
         return 1
     print("    no page scrolls sideways; every section reachable; "
-          "every nav target tappable\n")
+          "every nav target tappable; no CSP violation; every class styled\n")
     return 0
 
 

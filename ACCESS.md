@@ -383,10 +383,11 @@ rather than merely how, and neither of which is the author's to make:
   input was public. There is no in-app way to honour that request today. If one
   is wanted, the smallest version is a per-DID `public_hidden` flag respected by
   L3 — worth having before, not after, the first request arrives.
-- **It does not stop the page phoning home for the visitor.** `base.html` loads
-  Tailwind from `cdn.tailwindcss.com` and every avatar comes from Bluesky's CDN.
-  Behind Authelia that is one known browser. Publicly, every anonymous reader's
-  IP goes to two third parties on every page load. Not a blocker for public
+- **It does not stop the page phoning home for the visitor.** Every avatar
+  comes from Bluesky's CDN. Behind Authelia that is one known browser.
+  Publicly, every anonymous reader's IP goes to a third party on every page
+  load. (Until 2026-11-22 Tailwind's Play CDN was a second one; sonde#6
+  compiled it into `static/app.css`.) Not a blocker for public
   mode — but it is a claim not to make if the site is ever described as private
   for its readers.
 
@@ -396,6 +397,7 @@ rather than merely how, and neither of which is the author's to make:
   telemetry, that script runs same-origin with sonde in the operator's own
   authenticated session, and can drive the follow write. It is BUG-20, and the
   build step should happen whether or not this design is ever implemented.
+  It did, on 2026-11-22 (sonde#6): `make css`, and a CSP of `script-src 'self'`.
 - **It does not protect `/healthz`,** which was already public and already
   audited (`tests/test_web.py::test_healthz_leaks_no_follower_data`). Public
   mode adds no new obligation there, but that test is now guarding a busier

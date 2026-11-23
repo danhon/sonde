@@ -1,0 +1,11 @@
+/* The source of sonde/web/static/app.css. Edit this, then `make css`. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Safari draws a disclosure triangle that `list-style: none` alone does
+     not remove, so both rules are needed. */
+  summary { list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+}

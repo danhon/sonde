@@ -20,7 +20,8 @@ added since that review — the token-guarded API, which had never been reviewed
 and the page the operator's browser actually runs. Six findings came from it;
 two — the API's 500 on a non-ASCII bearer token, and the uncapped container log
 that made it expensive — were fixed the same day and are gone from this list,
-leaving BUG-20, BUG-21, BUG-23 and BUG-24. Every finding was reproduced against
+leaving BUG-20, BUG-21, BUG-23 and BUG-24. BUG-20 was fixed on 2026-11-22
+(sonde#6), along with all of BUG-21 except `Cache-Control`. Every finding was reproduced against
 running code before being written here, and one candidate was checked and
 withdrawn; HISTORY.md says which, and what the scan covered and found clean.
 
@@ -93,24 +94,6 @@ byte sequence that another program executes.
 *Fix:* prefix a cell beginning `= + - @` or a control character with `'`. Do it
 in the writer, not the query, or the same text leaks through the next exporter.
 
-**BUG-20 · Every page runs third-party JavaScript inside the operator's
-session.** `base.html` loads Tailwind from `cdn.tailwindcss.com` with no
-`integrity` attribute and no CSP to constrain it (BUG-21). It is the Play CDN,
-which compiles at runtime and is documented as not for production. Whoever
-controls that origin runs arbitrary JavaScript *same-origin* with sonde — which
-means it satisfies the `Sec-Fetch-Site` write guard rather than being stopped by
-it, and can drive `/followers/{did}/follow`, a real and public write on the
-operator's Bluesky account, as well as read the whole follower set. Confirmed by
-rendering `/` on 2026-08-31: the script tag is there and no `integrity=`
-attribute appears anywhere in the page. ACCESS.md §8 already names this script,
-as a *privacy* problem for a hypothetical public view, and concludes it is "not
-worth a build step today". That judgement was about anonymous readers' IP
-addresses reaching a third party. This is code execution in an authenticated
-session, and it is the reason to build.
-*Fix:* compile Tailwind at image-build time and serve the CSS from sonde. It
-also unblocks BUG-21 — the Play CDN needs `unsafe-eval` and inline styles, so no
-CSP worth writing can be written while it is there.
-
 ### P3 — cosmetic, dead, or preventive
 
 **BUG-15 · `iter_follows` has no page cap** where `iter_followers` has one.
@@ -141,19 +124,17 @@ handles `inf`, `-5` and `1e308` correctly — all three were checked and stored
 possible institution weight rather than being rejected. Reproduced.
 *Fix:* reject a non-finite weight rather than clamping it.
 
-**BUG-21 · sonde sends no security response headers, and none arrive from
-Traefik either.** Measured 2026-08-31: `/`, `/verified` and `/settings` come
-back carrying `content-type` and `content-length` and nothing else. No
-`Content-Security-Policy`, no `X-Content-Type-Options`, no `Referrer-Policy`, no
-frame-ancestors — and no `Cache-Control` on pages listing ten thousand people's
-names, bios and follow dates, while `/api/v1` correctly sets
-`private, no-store` on both its answers and its refusals. Traefik does not
-supply them: `~/dev/reverse-proxy/traefik/dynamic/` defines no headers
-middleware, so this is the fleet's default rather than sonde's omission alone.
-Preventive — nothing needs it today, and clickjacking is already covered, since
-a framed cross-site form POST is refused by the same-origin middleware.
-*Fix:* here, a small middleware setting the four headers on HTML responses;
-fleet-wide, a Traefik `headers` middleware. The CSP half is blocked on BUG-20.
+**BUG-21 · Pages listing ten thousand people's names carry no `Cache-Control`.**
+`/api/v1` sets `private, no-store` on its answers and its refusals; the HTML
+pages set nothing, so a shared cache between the browser and Traefik would be
+free to keep them. Preventive: there is no such cache today. What else this
+entry once covered is done. Traefik sends `nosniff` and `X-Frame-Options`
+everywhere (NET-7). Since 2026-11-22 (sonde#6) sonde itself sends a
+`Content-Security-Policy` with `frame-ancestors` and a `Referrer-Policy`
+(`sonde/web/headers.py`).
+*Fix:* `Cache-Control: private` on HTML responses, in the same middleware.
+`no-store` would also turn off the browser's back/forward cache, so measure the
+cost before choosing it.
 
 **BUG-23 · The SMTP password and the GitHub token are fields on the object
 passed into every template render.** `apikey.py` states the invariant in its own

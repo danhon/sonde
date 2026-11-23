@@ -22,7 +22,7 @@
 {% macro sth(key, label, align='left') -%}
   {%- set active = (order == key) -%}
   {%- set flip = 'asc' if (active and sort == 'desc') else 'desc' -%}
-  <th class="py-2 pr-4 text-{{ align }} font-mono text-[10px] uppercase tracking-widest
+  <th class="py-2 pr-4 {{ 'text-right' if align == 'right' else 'text-left' }} font-mono text-[10px] uppercase tracking-widest
              {% if active %}text-red-800{% else %}text-slate-500{% endif %}">
     <a href="{{ link({'order': key, 'sort': flip}) }}"
        class="inline-flex min-h-[36px] items-center gap-1 py-2 hover:text-red-800">

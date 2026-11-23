@@ -99,6 +99,25 @@ purpose. API.md is the contract other projects read; `/openapi.json` is off.
 `settings`, so the follow button silently never renders. Every import of
 `_sort.html` carries `with context`, and a test enforces it.
 
+## The CSS is compiled, and the CSP refuses inline script
+
+`sonde/web/static/app.css` is built by `make css` (Tailwind 3.4.17's standalone
+CLI, pinned by SHA-256) and committed. Tailwind finds classes by **reading
+source files**, not rendered pages, so:
+
+- A new class in a template renders unstyled until `make css` runs. CI's
+  `make css-check` fails if the committed file is stale.
+- A class assembled from parts, like `text-{{ align }}`, is never seen whole
+  and silently goes missing. Spell it out in full:
+  `{{ 'text-right' if align == 'right' else 'text-left' }}`. A test refuses
+  the fragment form.
+
+Every response carries `script-src 'self'` (`sonde/web/headers.py`). An
+inline `<script>`, an `onerror=`/`onclick=` attribute or a third-party asset is
+refused by the browser and by `tests/test_headers.py`. Behaviour goes in
+`static/sonde.js`. The mobile eval reports any CSP violation and any rendered
+class without a rule.
+
 ## Point the mobile eval at a POPULATED database
 
 The env var is `DB_PATH`, not `SONDE_DB_PATH`. Getting it wrong starts the

@@ -548,7 +548,7 @@ Mutual = present in `my_follows` **and** `follower_state WHERE is_current`.
 
 ## Web UI
 
-FastAPI + Jinja2 + Tailwind (CDN), server-rendered, behind Authelia. Server-side
+FastAPI + Jinja2 + Tailwind (compiled, `make css`; the Play CDN until sonde#6), server-rendered, behind Authelia. Server-side
 pagination and sorting throughout — 10k rows is too many to ship to a browser and
 too few to justify a JS framework. Every route needs a designed empty state; the
 first thing anyone sees after M0 is an app with nothing in it.

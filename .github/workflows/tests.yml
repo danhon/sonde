@@ -32,3 +32,6 @@ jobs:
           python-version: "3.12"     # the image's Python
       - run: uv sync --frozen
       - run: make test               # uv run pytest -q
+      # The committed app.css must be what Tailwind compiles from today's
+      # templates; a class added without `make css` renders unstyled (sonde#6).
+      - run: make css-check

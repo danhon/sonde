@@ -12,10 +12,18 @@ deploy install-units: fleet-missing
 .DEFAULT_GOAL := $(_FLEET_SAVED_GOAL)
 endif
 
-.PHONY: test run
+.PHONY: test run css css-check
 
 test:
 	uv run pytest -q
+
+# The stylesheet, compiled from sonde/web/tailwind.css and committed (sonde#6).
+# Run css after changing a class in a template; CI runs css-check.
+css:
+	scripts/tailwind.sh
+
+css-check:
+	scripts/tailwind.sh --check
 
 # Run it yourself, in Docker: http://127.0.0.1:8090 (compose.override.yml).
 # Needs a .env (cp .env.example .env, then set BLUESKY_ACTOR). Its own compose
