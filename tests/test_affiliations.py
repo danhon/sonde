@@ -167,3 +167,68 @@ async def test_a_human_set_organisation_weight_is_never_overwritten(db):
 
     async with conn.execute("SELECT weight FROM organisations WHERE id = ?", (org_id,)) as cur:
         assert (await cur.fetchone())["weight"] == 0.99
+
+
+# ------------------------------------------- the weight route (BUG-17, BUG-18)
+
+@pytest.fixture
+def web(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from sonde.web.app import create_app
+
+    store.set_db_path(str(tmp_path / "weights.db"))
+    with TestClient(create_app()) as c:
+        yield c
+    store.set_db_path(None)
+
+
+async def _weight(name):
+    conn = await store._db()
+    async with conn.execute(
+            "SELECT weight FROM organisations WHERE name = ?", (name,)) as cur:
+        return (await cur.fetchone())["weight"]
+
+
+def test_the_redirect_keeps_a_name_with_url_syntax_whole(web):
+    """BUG-17: `A&b=1#x` used to come back as name=A plus a stray b=1."""
+    from urllib.parse import parse_qs, urlsplit
+
+    name = "A&b=1#x"
+    response = web.post(f"/institutions/{name.replace('#', '%23')}/weight",
+                        params={"weight": 0.5}, follow_redirects=False)
+    assert response.status_code == 303
+    location = urlsplit(response.headers["location"])
+    assert location.path == "/institutions"
+    assert parse_qs(location.query) == {"name": [name]}
+    assert location.fragment == ""
+
+
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf"])
+def test_a_non_finite_weight_is_refused_not_clamped(web, monkeypatch, bad):
+    """BUG-18: nan slipped through max(0, min(1, w)) and was stored as 1.0."""
+    calls = []
+
+    async def record(name, weight):
+        calls.append(weight)
+
+    monkeypatch.setattr(store, "set_organisation_weight", record)
+    response = web.post("/institutions/Signal/weight", params={"weight": bad},
+                        follow_redirects=False)
+    assert response.status_code == 400
+    assert calls == [], "a non-finite weight reached the store"
+
+
+async def test_the_store_refuses_nan_too(db):
+    await store.upsert_organisation("Signal", sitelinks=5)
+    with pytest.raises(ValueError):
+        await store.set_organisation_weight("Signal", float("nan"))
+
+
+async def test_finite_weights_are_still_clamped(db):
+    """inf and 1e308 were already right; keep them right."""
+    await store.upsert_organisation("Signal", sitelinks=5)
+    await store.set_organisation_weight("Signal", 1e308)
+    assert await _weight("Signal") == 1.0
+    await store.set_organisation_weight("Signal", -5)
+    assert await _weight("Signal") == 0.0

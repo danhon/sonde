@@ -147,3 +147,23 @@ def test_no_class_name_assembled_from_parts(page):
     """
     found = re.findall(r"[a-z0-9]-\{\{", page.read_text())
     assert not found, f"{page.name}: class name built from a fragment"
+
+
+# ------------------------------------------------- Cache-Control (BUG-21)
+
+@pytest.mark.parametrize("path", ["/", "/followers", "/settings"])
+def test_pages_are_private_to_the_browser(client, path):
+    """No shared cache between the browser and Traefik may keep a page."""
+    response = client.get(path)
+    assert response.headers["content-type"].startswith("text/html")
+    assert response.headers["cache-control"] == "private"
+
+
+def test_the_api_keeps_its_stricter_cache_control(client, monkeypatch):
+    """The API sets `private, no-store` itself; the page rule must not soften it."""
+    token = "r" * 40
+    monkeypatch.setenv("SONDE_API_TOKENS", f"reader:{token}")
+    response = client.get("/api/v1/meta",
+                          headers={"authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, no-store"

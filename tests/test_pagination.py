@@ -115,3 +115,54 @@ async def test_get_profiles_handles_a_wholly_unresolvable_batch():
 
     assert by_did == {}
     assert missing == ["did:plc:ghost"]
+
+
+# ------------------------------------------------- follows: the page cap (BUG-15)
+
+def endless_follows(request: httpx.Request) -> httpx.Response:
+    """A cursor that never ends: the fault the cap exists for."""
+    n = int(request.url.params.get("cursor") or 0)
+    return httpx.Response(200, json={"follows": [actor(f"did:plc:f{n}")],
+                                     "cursor": str(n + 1)})
+
+
+def capped(monkeypatch, pages: int) -> None:
+    import dataclasses
+
+    from sonde.api import graph
+    monkeypatch.setattr(graph, "settings",
+                        dataclasses.replace(graph.settings, follows_max_pages=pages))
+
+
+async def test_a_cursor_that_never_ends_stops_at_the_cap(monkeypatch):
+    from sonde.api.graph import PageCapReached, iter_follows
+
+    capped(monkeypatch, 3)
+    client = _client(routed({"app.bsky.graph.getFollows": endless_follows}))
+    seen = []
+    with pytest.raises(PageCapReached):
+        async for _page, follows in iter_follows(client, "danhon.com"):
+            seen.extend(follows)
+    await client.aclose()
+
+    assert client.calls == 3
+    assert len(seen) == 3
+
+
+async def test_a_list_that_ends_on_the_cap_is_not_an_error(monkeypatch):
+    from sonde.api.graph import iter_follows
+
+    capped(monkeypatch, 3)
+    pages = [[actor(f"did:plc:p{i}")] for i in range(3)]
+
+    def handler(request):
+        i = int(request.url.params.get("cursor") or 0)
+        body = {"follows": pages[i]}
+        if i + 1 < len(pages):
+            body["cursor"] = str(i + 1)
+        return httpx.Response(200, json=body)
+
+    client = _client(routed({"app.bsky.graph.getFollows": handler}))
+    got = [f async for _p, page in iter_follows(client, "danhon.com") for f in page]
+    await client.aclose()
+    assert len(got) == 3

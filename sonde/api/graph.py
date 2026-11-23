@@ -53,9 +53,20 @@ async def iter_followers(
             return
 
 
+class PageCapReached(RuntimeError):
+    """A list still had a cursor after its page cap: an error, not an end."""
+
+
 async def iter_follows(
     client: BlueskyClient, actor: str
 ) -> AsyncIterator[tuple[int, list[dict]]]:
+    """Yield (page_number, follows). Ends only on an absent cursor.
+
+    Past `settings.follows_max_pages` with a cursor still present it raises
+    PageCapReached instead of stopping quietly (BUG-15). Callers treat a
+    partial list as complete: sync_follows would replace the stored follows
+    with it and lose the follow-record URIs of everyone it missed.
+    """
     cursor: str | None = None
     page = 0
     while True:
@@ -68,6 +79,10 @@ async def iter_follows(
         cursor = data.get("cursor")
         if not cursor:
             return
+        if page >= settings.follows_max_pages:
+            raise PageCapReached(
+                f"getFollows for {actor} still had a cursor after "
+                f"{settings.follows_max_pages} pages (FOLLOWS_MAX_PAGES)")
 
 
 async def get_profile(client: BlueskyClient, actor: str) -> dict:

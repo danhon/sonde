@@ -432,3 +432,40 @@ async def test_every_batch_resolves(client, key, monkeypatch):
     assert client.post(f"/settings/batch/{key}",
                        follow_redirects=False).status_code == 303
     assert spawned == [key]
+
+
+async def test_a_capped_follows_sync_keeps_the_stored_follows(monkeypatch):
+    """BUG-15: a list cut short by the page cap must not replace the real one.
+
+    replace_my_follows deletes and reinserts, so a truncated list would drop
+    everyone past the cap, and their follow_uri with them for good.
+    """
+    import dataclasses
+
+    import httpx
+
+    from sonde.api import graph
+    from sonde.api.client import BlueskyClient
+    from tests.fakes import routed
+
+    await add_follower(actor("did:plc:x"), 0)
+    c = follows_client([[actor("did:plc:x")]])
+    await mutuals.sync_follows(c)
+    await c.aclose()
+    assert await store.mutual_count() == 1
+
+    monkeypatch.setattr(graph, "settings",
+                        dataclasses.replace(graph.settings, follows_max_pages=2))
+
+    def endless(request):
+        n = int(request.url.params.get("cursor") or 0)
+        return httpx.Response(200, json={"follows": [actor(f"did:plc:o{n}")],
+                                         "cursor": str(n + 1)})
+
+    c = BlueskyClient("https://fake", per_second=1000,
+                      transport=routed({"app.bsky.graph.getFollows": endless}))
+    with pytest.raises(graph.PageCapReached):
+        await mutuals.sync_follows(c)
+    await c.aclose()
+
+    assert await store.mutual_count() == 1, "the capped list replaced the real one"

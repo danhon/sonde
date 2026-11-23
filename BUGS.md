@@ -21,7 +21,8 @@ and the page the operator's browser actually runs. Six findings came from it;
 two — the API's 500 on a non-ASCII bearer token, and the uncapped container log
 that made it expensive — were fixed the same day and are gone from this list,
 leaving BUG-20, BUG-21, BUG-23 and BUG-24. BUG-20 was fixed on 2026-11-22
-(sonde#6), along with all of BUG-21 except `Cache-Control`. Every finding was reproduced against
+(sonde#6), along with all of BUG-21 except `Cache-Control`, which followed
+the same evening with BUG-15, BUG-17 and BUG-18. Every finding was reproduced against
 running code before being written here, and one candidate was checked and
 withdrawn; HISTORY.md says which, and what the scan covered and found clean.
 
@@ -95,46 +96,6 @@ byte sequence that another program executes.
 in the writer, not the query, or the same text leaks through the next exporter.
 
 ### P3 — cosmetic, dead, or preventive
-
-**BUG-15 · `iter_follows` has no page cap** where `iter_followers` has one.
-Both terminate only on a missing cursor, which is right (see the module
-docstring). But `head_sweep_max_pages` exists because a cursor that never
-advances would otherwise walk forever, and `iter_follows` has no equivalent —
-so the same fault on `getFollows` spins indefinitely against an IP budget shared
-house-wide with BlueBirdNET and atproto-labeler. Preventive: not observed, and
-the reasoning for the cap on the other iterator is already written down in
-`config.py`.
-*Fix:* the same page cap, defaulted well above any real follow list.
-
-**BUG-17 · `name` is interpolated into a redirect unencoded.**
-`set_org_weight` returns `f"/institutions?name={name}"`, so an organisation
-whose name contains `&`, `=` or `#` breaks out of its own query parameter.
-Reproduced: `A&b=1#x` yields `Location: /institutions?name=A&b=1#x`, which the
-page then reads as `name=A` plus a stray `b=1`. Not an open redirect — the path
-is rooted, and `_safe_path` governs the routes that take a caller-supplied
-target. Organisation names come from seeding and verification issuers rather
-than free text, which is why nothing has hit it.
-*Fix:* `urlencode` the parameter.
-
-**BUG-18 · A weight of `nan` becomes the maximum weight.**
-`set_organisation_weight` clamps with `max(0.0, min(1.0, weight))`, which
-handles `inf`, `-5` and `1e308` correctly — all three were checked and stored
-0.0 or 1.0. `nan` compares false against everything, so `min(1.0, nan)` returns
-`1.0` and the clamp passes it through: garbage silently becomes the strongest
-possible institution weight rather than being rejected. Reproduced.
-*Fix:* reject a non-finite weight rather than clamping it.
-
-**BUG-21 · Pages listing ten thousand people's names carry no `Cache-Control`.**
-`/api/v1` sets `private, no-store` on its answers and its refusals; the HTML
-pages set nothing, so a shared cache between the browser and Traefik would be
-free to keep them. Preventive: there is no such cache today. What else this
-entry once covered is done. Traefik sends `nosniff` and `X-Frame-Options`
-everywhere (NET-7). Since 2026-11-22 (sonde#6) sonde itself sends a
-`Content-Security-Policy` with `frame-ancestors` and a `Referrer-Policy`
-(`sonde/web/headers.py`).
-*Fix:* `Cache-Control: private` on HTML responses, in the same middleware.
-`no-store` would also turn off the browser's back/forward cache, so measure the
-cost before choosing it.
 
 **BUG-23 · The SMTP password and the GitHub token are fields on the object
 passed into every template render.** `apikey.py` states the invariant in its own

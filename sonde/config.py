@@ -56,6 +56,13 @@ class Settings:
     # new and it would walk all 115. At a 15-minute cadence that is ~11k calls a
     # day on a shared IP. The full sweep picks up whatever the cap leaves.
     head_sweep_max_pages: int = field(default_factory=lambda: _int("HEAD_SWEEP_MAX_PAGES", 10))
+    # The same guard for getFollows (BUG-15): a cursor that never stops would
+    # otherwise walk forever against the shared IP budget. 1,000 pages is 100k
+    # follows, far above any list sonde reads (affinity sources stop at
+    # AFFINITY_MAX_FOLLOWS). Reaching it RAISES rather than truncating: a
+    # short list handed to replace_my_follows would lose follow_uri for
+    # everyone past the cap, and those can never be recovered.
+    follows_max_pages: int = field(default_factory=lambda: _int("FOLLOWS_MAX_PAGES", 1000))
     full_sweep_hours: int = field(default_factory=lambda: _int("FULL_SWEEP_HOURS", 6))
     profile_ttl_days: int = field(default_factory=lambda: _int("PROFILE_TTL_DAYS", 7))
 

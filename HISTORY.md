@@ -1676,3 +1676,16 @@ CSP violations, and rendered classes with no rule. Both pass on 210 renders, and
 both fire when an unstyled class, an inline script and an off-site image are
 planted, in Chromium and WebKit. The planted inline script did not run.
 
+Later the same evening, the four short fixes left in BUGS.md went in together.
+**BUG-15**: `iter_follows` gained the page cap `iter_followers` always had
+(`FOLLOWS_MAX_PAGES`, 1,000). Reaching it *raises* rather than ending the list,
+because `sync_follows` hands the list to `replace_my_follows`, and a truncated
+list would delete everyone past the cap along with their unrecoverable
+`follow_uri`. A test proves the stored follows survive a capped sync, and
+swapping the raise for a quiet `return` fails it. **BUG-17**: the weight route
+urlencodes the organisation name in its redirect. **BUG-18**: a non-finite
+weight is refused, 400 at the route and `ValueError` in the store, rather than
+clamped to 1.0. **BUG-21**'s remainder: HTML responses carry
+`Cache-Control: private`. Not `no-store`, which would also switch off the
+browser's back/forward cache; the API keeps its own `private, no-store`.
+

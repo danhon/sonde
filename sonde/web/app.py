@@ -316,6 +316,11 @@ def create_app() -> FastAPI:
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
         response.headers.update(_headers.HEADERS)
+        # Pages list thousands of people by name: no shared cache may keep
+        # one (BUG-21). `private`, not `no-store`, so the browser's own
+        # back/forward cache still works. The API sets its own.
+        if response.headers.get("content-type", "").startswith("text/html"):
+            response.headers.setdefault("Cache-Control", "private")
         return response
 
     # app.css and sonde.js. Behind Authelia like every page, on the main
@@ -528,10 +533,18 @@ def create_app() -> FastAPI:
 
     @app.post("/institutions/{name}/weight")
     async def set_org_weight(name: str, weight: float = 0.7) -> RedirectResponse:
+        import math
+        from urllib.parse import urlencode
+
         from sonde.db import store
 
+        # BUG-18: FastAPI parses "nan" and "inf" as floats.
+        if not math.isfinite(weight):
+            raise StarletteHTTPException(400, "weight must be a finite number")
         await store.set_organisation_weight(name, weight)
-        return RedirectResponse(f"/institutions?name={name}", status_code=303)
+        # BUG-17: encoded, or a name with & = # breaks out of its parameter.
+        return RedirectResponse(f"/institutions?{urlencode({'name': name})}",
+                                status_code=303)
 
     # Circles were called Groups until 2026-07-29. These keep every bookmark,
     # and every link in a digest email already sent, working. 308 rather than

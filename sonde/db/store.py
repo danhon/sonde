@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -2831,7 +2832,14 @@ async def organisation_kinds() -> list[str]:
 
 
 async def set_organisation_weight(name: str, weight: float) -> None:
-    """A human-set weight is locked; automation must not move it."""
+    """A human-set weight is locked; automation must not move it.
+
+    Out-of-range values are clamped, but a non-finite one is refused (BUG-18):
+    `nan` compares false with everything, so `min(1.0, nan)` is 1.0 and the
+    clamp used to store garbage as the strongest weight there is.
+    """
+    if not math.isfinite(weight):
+        raise ValueError(f"weight must be a finite number, not {weight!r}")
     db = await _db()
     await db.execute(
         "UPDATE organisations SET weight = ?, weight_locked = 1 WHERE name = ?",
