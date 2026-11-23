@@ -31,6 +31,11 @@ RUN uv sync --frozen --no-dev
 
 # Runtime stage: the builder's base, so the .venv's python is the same one.
 FROM python:3.12-slim
+# Debian's security fixes, ahead of the base image's next publish: on
+# 2026-11-22 python:3.12-slim (published 2026-11-05) still had zlib
+# 1.3.1-1+b1, open to CVE-2026-85091 (reverse-proxy python-apps.md).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -u 10001 appuser
 
