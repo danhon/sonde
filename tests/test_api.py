@@ -15,6 +15,7 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
+from sonde.config import settings
 from sonde.db import store
 from sonde.web.app import create_app
 
@@ -41,7 +42,8 @@ async def _seed(path: str) -> None:
                  labels=[{"val": "!no-unauthenticated"}])
     await person("did:plc:hidden", "hidden.test")
     await person("did:plc:gone", "gone.test")
-    await person("did:plc:danhon", "danhon.com")
+    # Whoever the .env names: the operator is recognized by settings.actor.
+    await person("did:plc:danhon", settings.actor)
 
     for rank, did in enumerate(["did:plc:alice", "did:plc:bob", "did:plc:carol",
                                 "did:plc:hidden", "did:plc:gone",

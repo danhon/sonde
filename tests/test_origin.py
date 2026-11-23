@@ -10,6 +10,7 @@ of what most CSRF advice says to do with it.
 
 from __future__ import annotations
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -19,7 +20,26 @@ from sonde.web.app import create_app
 
 
 @pytest.fixture
-def client(tmp_path):
+def client(tmp_path, monkeypatch):
+    """The app, with a Bluesky that answers every call with an empty result.
+
+    The sweeps below POST to every write route with placeholder ids, and some
+    of those routes ask Bluesky on demand (`/followers/{did}/posts`,
+    `/followers/{did}/known`). Without the fake they reached the real API, and
+    on a machine with an app password `getKnownFollowers?actor=1` answered 400
+    and the test failed (sonde#7). Routes import `BlueskyClient` when called,
+    so replacing it on its module reaches all of them.
+    """
+    from sonde.api import client as client_module
+
+    real = client_module.BlueskyClient
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={}))
+
+    def fake_bluesky(*args, **kwargs):
+        kwargs["transport"] = transport
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(client_module, "BlueskyClient", fake_bluesky)
     store.set_db_path(str(tmp_path / "origin.db"))
     with TestClient(create_app(), base_url="http://sonde.test") as c:
         yield c

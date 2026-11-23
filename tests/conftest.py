@@ -57,6 +57,27 @@ def _no_real_email(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_bluesky_login(monkeypatch):
+    """No test signs in to Bluesky, whatever the machine's `.env` holds.
+
+    `sonde/config.py` loads `.env` at import, and `sonde.api.auth.authenticator`
+    is built from it, so a checkout with a real `BLUESKY_APP_PASSWORD` (the
+    box's had one, sonde#7) made every test configured: sweep tests logged in
+    to bsky.social with the real password, an on-demand route called the real
+    `getKnownFollowers`, and the digest reported "app password is set but not
+    authenticating" on a quiet day. Blanking the credentials gives every test
+    the unconfigured authenticator CI has. A test that wants auth patches
+    `token` or `session` itself, as test_relevance and test_follow_back do.
+    """
+    from sonde.api import auth
+
+    monkeypatch.setattr(auth.authenticator, "identifier", None)
+    monkeypatch.setattr(auth.authenticator, "password", None)
+    monkeypatch.setattr(auth.authenticator, "session", None)
+    monkeypatch.setattr(auth.authenticator, "last_error", None)
+
+
+@pytest.fixture(autouse=True)
 def _no_writes_to_the_real_database(tmp_path_factory):
     """Fail loudly if a test ever opens the configured production database.
 
