@@ -193,3 +193,17 @@ The scheduler isn't the cause: `create_app()` never attaches it, only
 nightly `VACUUM INTO` writes a snapshot to `/backup` (a host bind mount, 14 kept).
 
 The deployment decides where the snapshots go after that.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on danhon/sonde, through `gh`; BUGS.md stays the ranked list of reproduced bugs. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five defaults: needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context. Until GLOSSARY.md and docs/adr/ exist, the design lives in PLAN.md, HISTORY.md and SCORING.md. See `docs/agents/domain.md`.
