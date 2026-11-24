@@ -1,5 +1,11 @@
 # ACCESS — who can see what
 
+> **Parked 2026-11-24 (Dan).** The public read-only view is not wanted for now.
+> The design below is kept because it would be costly to redo, but nothing in
+> it is planned work: don't start a phase, and don't treat its two open
+> questions (indexing, departures on public `/changes`) as blocking anything.
+> Reopening it is Dan's call. The API router (`/api/v1`) is separate and live.
+
 > **Status as of 2026-08-06: NOT IMPLEMENTED. There is no public URL.**
 >
 > This is a design, not a description. Nothing in it has been built: no second

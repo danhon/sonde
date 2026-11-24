@@ -68,8 +68,10 @@ route now does.
 `archive_group(slug, archived=False)` clears `archived_at` but not
 `merged_into`, so a restored circle is live again while still recording that its
 people went elsewhere — and they are now in both. Reproduced. Nothing warns
-before restoring a merged circle, which is the more useful fix.
-*Fix:* clear `merged_into` on restore, and say what restoring will produce.
+before restoring a merged circle.
+*Fix (decided 2026-11-24, see GLOSSARY.md "Merged circle"):* a merged circle
+cannot be restored. Refuse the restore and show where its people went; undoing
+a merge means making a new circle.
 
 **BUG-04 · Dead phrase candidates accumulate forever.** Discovery only inserts
 and updates; nothing prunes. 18 undecided candidates currently match nobody, and

@@ -58,3 +58,12 @@ sonde has no `GLOSSARY.md` or `docs/adr/` yet. Until it does, read these instead
 - **`HISTORY.md`**: why things were built as they were, and where each threshold's justification lives.
 - **`SCORING.md`**: the influence score in full.
 - **`ACCESS.md`**: who can see what.
+- **`GLOSSARY.md`**: the domain language, settled 2026-11-24.
+
+## sonde: code names lag the glossary
+
+The code predates the glossary and still says `group`, `ignored`, `organisation`, `lost` and `known_followers`. The rule:
+
+- **Python names and page text** follow the glossary whenever a change touches them anyway. One deliberate cleanup pass goes with BUG-06 and BUG-10.
+- **Database columns and URLs keep their old names.** Renaming them costs a migration or redirects and buys only tidiness. The old words appear in the glossary's _Avoid_ lists, so a reader can map them.
+- New code uses the glossary's terms from the start.
