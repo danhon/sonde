@@ -80,9 +80,18 @@ class FakeBluesky:
                 return httpx.Response(400, json={"error": "InvalidRequest"})
             return profiles(request)
 
+        self.posts = {POST: "my post"}
+
+        def get_posts(request: httpx.Request) -> httpx.Response:
+            uris = request.url.params.get_list("uris")
+            return httpx.Response(200, json={"posts": [
+                {"uri": u, "record": {"text": self.posts[u]}}
+                for u in uris if u in self.posts]})
+
         inner = routed({
             "app.bsky.notification.listNotifications": list_notifications,
             "app.bsky.actor.getProfiles": get_profiles,
+            "app.bsky.feed.getPosts": get_posts,
         })
 
         def record(request: httpx.Request) -> httpx.Response:
@@ -343,3 +352,124 @@ async def test_the_page_cap_bounds_a_long_backlog(monkeypatch):
     await notifications.check_notifications(bsky.client)
 
     assert len(bsky.calls("app.bsky.notification.listNotifications")) == 2
+
+
+# ------------------------------------------------- review fixes (sonde#11)
+
+def _signed_in(monkeypatch) -> None:
+    from sonde.api import auth
+
+    async def token(self=None):
+        return "fake"
+    monkeypatch.setattr(auth.authenticator, "token", token)
+
+
+def _sync_client(pages: list[list[dict]]) -> BlueskyClient:
+    def handler(request):
+        cursor = request.url.params.get("cursor")
+        index = int(cursor) if cursor else 0
+        body = {"notifications": pages[index] if pages else []}
+        if index + 1 < len(pages):
+            body["cursor"] = str(index + 1)
+        return httpx.Response(200, json=body)
+    return BlueskyClient("https://fake", per_second=1000, transport=routed({
+        "app.bsky.notification.listNotifications": handler,
+        "app.bsky.feed.getAuthorFeed": lambda r: httpx.Response(200, json={"feed": []}),
+    }))
+
+
+async def test_a_stranger_stored_only_by_the_6_hourly_sync_is_known(monkeypatch):
+    """The sync stores likes the check never saw (its cap, an outage). Their
+    authors need an actors row too, or notability can never be judged."""
+    from sonde.sync import interactions
+    _signed_in(monkeypatch)
+
+    await interactions.sync(_sync_client(
+        [[note(verified("did:plc:v"), "like", at(10), 1)]]), max_pages=5)
+
+    since = (_DAY - timedelta(hours=1)).isoformat()
+    assert [r["did"] for r in await store.notable_interactions_since(since)] == ["did:plc:v"]
+    assert "did:plc:v" not in await store.known_dids()
+
+
+async def test_the_first_sync_after_the_check_on_a_fresh_database_walks_all_history(
+        monkeypatch):
+    """A fresh install: the check runs (every 15 minutes) before the first
+    6-hourly sync. The sync must still read inbound history in full rather
+    than stop at the check's newest row."""
+    from sonde.sync import interactions
+    _signed_in(monkeypatch)
+
+    fan = actor("did:plc:fan")
+    pages = [[note(fan, "like", at(11), 3)], [note(fan, "like", at(10), 2)],
+             [note(fan, "like", at(8), 1)]]
+    configure(monkeypatch, notification_check_max_pages=1)
+    await notifications.check_notifications(FakeBluesky(pages).client)
+    assert len(await store.interactions_for("did:plc:fan")) == 1
+
+    await interactions.sync(_sync_client(pages), max_pages=5)
+
+    assert len(await store.interactions_for("did:plc:fan")) == 3
+
+
+async def test_an_old_database_the_check_never_saw_still_syncs_incrementally(
+        monkeypatch):
+    """Before the check ever runs, an old database has no sync marker: the
+    sync resumes from the table's newest inbound row, as it always did."""
+    from sonde.sync import interactions
+    _signed_in(monkeypatch)
+
+    fan = actor("did:plc:fan")
+    await store.record_interactions([{
+        "did": "did:plc:fan", "direction": "inbound", "kind": "like",
+        "uri": "at://old", "subject": POST, "thread": POST, "occurred_at": at(9)}])
+    pages = [[note(fan, "like", at(10), 2)], [note(fan, "like", at(8), 1)]]
+
+    await interactions.sync(_sync_client(pages), max_pages=5)
+
+    uris = {r["uri"] for r in await store.interactions_for("did:plc:fan")}
+    assert pages[1][0]["uri"] not in uris
+    assert pages[0][0]["uri"] in uris
+
+
+async def test_an_author_bluesky_cannot_serve_is_not_asked_about_every_check():
+    gone = actor("did:plc:gone")
+    bsky = FakeBluesky([[note(gone, "like", at(10), 1)]], known={})
+    await notifications.check_notifications(bsky.client)
+    assert len(bsky.calls("app.bsky.actor.getProfiles")) == 1
+
+    bsky.pages = [[note(gone, "repost", at(11), 2)]]
+    bsky.requests.clear()
+    await notifications.check_notifications(bsky.client)
+
+    assert bsky.calls("app.bsky.actor.getProfiles") == []
+
+
+async def test_a_notable_likes_post_text_is_fetched_even_with_alerts_off():
+    """The digest names each post by its first line; with the alert email
+    switched off, nothing else would ever fetch it."""
+    other = "at://did:plc:me/app.bsky.feed.post/2"
+    bsky = FakeBluesky([[note(verified("did:plc:v"), "like", at(10), 1),
+                         {**note(actor("did:plc:plain"), "like", at(9), 2),
+                          "reasonSubject": other}]])
+
+    await notifications.check_notifications(bsky.client)
+
+    posts = bsky.calls("app.bsky.feed.getPosts")
+    assert [r.url.params.get_list("uris") for r in posts] == [[POST]]
+    assert await store.post_previews([POST, other]) == {POST: "my post"}
+
+    bsky.requests.clear()
+    await notifications.check_notifications(bsky.client)
+    assert bsky.calls("app.bsky.feed.getPosts") == []
+
+
+async def test_a_failed_check_is_recorded_as_a_failed_run():
+    bsky = FakeBluesky([[note(actor("did:plc:fan"), "like", at(10), 1)]])
+    bsky.fail_notifications = True
+
+    await notifications.check_notifications(bsky.client)
+
+    runs = await store.recent_runs(1)
+    assert runs[0]["kind"] == "notifications"
+    assert runs[0]["status"] == "failed"

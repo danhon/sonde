@@ -164,6 +164,25 @@ async def test_the_email_says_why_each_arrival_is_notable(outbox):
     assert "· verified" in body
 
 
+async def test_a_large_unverified_arrival_links_to_their_page_not_verified(outbox):
+    """/verified lists verified followers; a large account isn't on it."""
+    await started()
+    await large_arrival("did:plc:big", 25_400)
+    await alerts.run_alerts()
+
+    last = alerts.render_text(outbox[0]).splitlines()[-1]
+    assert last == f"https://{settings.service_host}/followers/did:plc:big"
+
+
+async def test_a_verified_arrival_still_links_to_verified(outbox):
+    await started()
+    await arrival("did:plc:v")
+    await alerts.run_alerts()
+
+    last = alerts.render_text(outbox[0]).splitlines()[-1]
+    assert last == f"https://{settings.service_host}/verified"
+
+
 async def test_exactly_ten_thousand_followers_is_not_large(outbox):
     await started()
     await large_arrival("did:plc:edge", 10_000)

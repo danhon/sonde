@@ -348,6 +348,27 @@ async def test_the_first_enabled_run_alerts_nothing_earlier(bsky, outbox):
     assert "@new." in body(outbox[0]) and "@old." not in body(outbox[0])
 
 
+async def test_a_like_from_before_the_first_run_backfilled_later_is_not_emailed(
+        bsky, outbox):
+    """The 6-hourly sync stores older likes after the watermark was stamped:
+    higher ids, earlier times. They are the past, however late they arrive."""
+    await run(bsky, pacific(10))            # first enabled run: the watermark
+
+    old = verified("did:plc:old")
+    await store.upsert_actor(old)
+    await store.record_interactions([{
+        "did": "did:plc:old", "direction": "inbound", "kind": "like",
+        "uri": "at://did:plc:old/app.bsky.feed.like/backfilled", "subject": POST_A,
+        "thread": POST_A, "occurred_at": stamp(pacific(9))}])
+    await store.commit()
+    bsky.add(verified("did:plc:new"), "like", pacific(10, 5))
+
+    await run(bsky, pacific(10, 15))
+
+    assert len(outbox) == 1
+    assert "@new." in body(outbox[0]) and "@old." not in body(outbox[0])
+
+
 async def test_a_disabled_run_stamps_no_watermark(monkeypatch, bsky, outbox):
     configure(monkeypatch, enable_interaction_alerts=False)
     bsky.add(verified("did:plc:v"), "like", pacific(9, 50))
@@ -356,6 +377,7 @@ async def test_a_disabled_run_stamps_no_watermark(monkeypatch, bsky, outbox):
 
     assert result["skipped"] == "disabled"
     assert await store.get_meta(ia.WATERMARK_KEY) is None
+    assert await store.get_meta(ia.WATERMARK_AT_KEY) is None
     assert outbox == []
 
 
@@ -456,6 +478,7 @@ async def test_a_failed_notifications_read_does_not_move_the_marker(bsky, outbox
     result = await run(bsky, pacific(10))
 
     assert result["check"]["status"] == "failed"
+    assert result["status"] == "failed"
     assert await store.get_meta(notifications.MARKER_KEY) is None
     assert outbox == []
 

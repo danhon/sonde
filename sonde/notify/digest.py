@@ -25,6 +25,7 @@ from sonde.config import settings
 from sonde.db import store
 from sonde.notify.interaction_alerts import describe as describe_interaction
 from sonde.notify.interaction_alerts import post_link
+from sonde.notify.interaction_alerts import subject as interaction_counts
 
 log = logging.getLogger("sonde.digest")
 
@@ -65,7 +66,12 @@ class Digest:
     def subject(self) -> str:
         if self.problems and not self.has_news:
             return f"sonde: {len(self.problems)} thing(s) need attention"
-        summary = f"+{len(self.arrivals)}" if self.arrivals else "no change"
+        parts = [f"+{len(self.arrivals)}"] if self.arrivals else []
+        if self.notable_interactions:
+            # Counts only, as in the alert: the subject shows on a lock screen.
+            parts.append(interaction_counts(self.notable_interactions)
+                         .removeprefix("sonde: "))
+        summary = " · ".join(parts) or "no change"
         warn = f" · {len(self.problems)} warning(s)" if self.problems else ""
         return f"sonde: {summary} · {self.counts.get('tracked', 0):,} followers{warn}"
 
@@ -121,22 +127,26 @@ async def gather(hours: int = 24) -> Digest:
 
     # The digest is the backstop for alerting, so it has to say when alerting
     # gave up — otherwise a dead mailer looks exactly like a quiet week.
-    abandoned = await store.abandoned_alerts()
+    # Only those given up within this digest's window, so each is reported
+    # once rather than in every digest from then on.
+    abandoned = await store.abandoned_alerts(since_iso=since_iso)
     if abandoned:
         handles = ", ".join(f"@{a['handle']}" for a in abandoned[:5] if a["handle"])
         digest.problems.append(
-            f"{len(abandoned)} arrival alert(s) were abandoned after "
-            f"repeated send failures{' — ' + handles if handles else ''}. They are "
-            f"listed below and on /changes; only the instant email was lost."
+            f"{len(abandoned)} arrival alert(s) were abandoned in the last "
+            f"{hours} hours after repeated send failures"
+            f"{' — ' + handles if handles else ''}. Only the instant email was "
+            f"lost; the arrivals are on /changes."
         )
-    given_up = await store.abandoned_interaction_alerts()
+    given_up = await store.abandoned_interaction_alerts(since_iso=since_iso)
     if given_up:
         handles = ", ".join(
             sorted({f"@{a['handle']}" for a in given_up if a["handle"]})[:5])
         digest.problems.append(
-            f"{len(given_up)} like and repost alert(s) were abandoned after "
-            f"repeated send failures{' — ' + handles if handles else ''}. Only "
-            f"the instant email was lost; yesterday's are listed below."
+            f"{len(given_up)} like and repost alert(s) were abandoned in the "
+            f"last {hours} hours after repeated send failures"
+            f"{' — ' + handles if handles else ''}. Only the instant email was "
+            f"lost; those from the last {hours} hours are listed below."
         )
 
     for run in await store.recent_runs(12):

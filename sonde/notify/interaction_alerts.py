@@ -9,10 +9,12 @@ notable likes and reposts still owe an email.
 It keeps the arrival alert's rules (see `alerts.py` and CLAUDE.md, "Alerting
 never reports the past, and claims before it sends"):
 
-**It never reports the past.** Its own watermark, the highest interaction id,
-is stamped on the first run with the switch on and SMTP configured, and nothing
-at or below it is ever emailed. A lookback window bounds it from the other
-side: after an outage, old likes are left to the digest.
+**It never reports the past.** Its own watermark, the highest interaction id
+and the moment it was taken, is stamped on the first run with the switch on and
+SMTP configured. Nothing at or below that id is ever emailed, and nothing that
+happened before that moment either: the 6-hourly sync backfills older likes
+later, with higher ids. A lookback window bounds it from the other side: after
+an outage, old likes are left to the digest.
 
 **It claims before it sends.** The `interaction_alerts` row goes in first, so
 a crash mid-send costs a missed email rather than a duplicate. A failed send
@@ -43,19 +45,19 @@ from sonde.api.client import BlueskyClient
 from sonde.config import settings
 from sonde.db import store
 from sonde.notify.alerts import why_notable
-from sonde.sync.notifications import check_notifications
+from sonde.sync.notifications import check_notifications, fetch_previews
 
 log = logging.getLogger("sonde.interaction_alerts")
 
 # A floor, not a cursor: set once, on the first enabled run, then left alone.
 WATERMARK_KEY = "interaction_alert_watermark"
+# When it was stamped. Ids alone are not time: a like the sync backfills after
+# the stamp gets a higher id than one the check stored before it.
+WATERMARK_AT_KEY = "interaction_alert_watermark_at"
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
 QUIET_FROM = time(23, 0)
 QUIET_UNTIL = time(7, 0)
-
-# getPosts accepts at most 25 URIs a call.
-POSTS_BATCH = 25
 
 
 def in_quiet_hours(now: datetime) -> bool:
@@ -63,18 +65,30 @@ def in_quiet_hours(now: datetime) -> bool:
     return local >= QUIET_FROM or local < QUIET_UNTIL
 
 
-async def _watermark() -> int:
-    """The interaction id alerting started from, stamped on first enabled use."""
+async def _watermark(now: datetime) -> tuple[int, datetime | None]:
+    """The interaction id and moment alerting started from, stamped together
+    on first enabled use. The moment is None only for a watermark stamped
+    before it was recorded."""
     raw = await store.get_meta(WATERMARK_KEY)
     if raw:
         try:
-            return int(raw)
+            after = int(raw)
         except ValueError:
             log.warning("unparseable interaction alert watermark %r; restamping", raw)
+        else:
+            stamped = await store.get_meta(WATERMARK_AT_KEY)
+            try:
+                return after, datetime.fromisoformat(stamped) if stamped else None
+            except ValueError:
+                log.warning("unparseable watermark time %r; ignoring it", stamped)
+                return after, None
     latest = await store.max_interaction_id()
+    stamped_at = now.astimezone(timezone.utc)
+    await store.set_meta(WATERMARK_AT_KEY, stamped_at.isoformat(timespec="seconds"))
     await store.set_meta(WATERMARK_KEY, str(latest))
-    log.info("like and repost alerts start after interaction id %d", latest)
-    return latest
+    log.info("like and repost alerts start after interaction id %d, %s",
+             latest, stamped_at.isoformat(timespec="seconds"))
+    return latest, stamped_at
 
 
 # ------------------------------------------------------------- the email
@@ -167,25 +181,6 @@ async def send(message: EmailMessage) -> bool:
     return True
 
 
-async def _previews(client: BlueskyClient, uris: list[str]) -> dict[str, str | None]:
-    """Each post's text, from the cache or getPosts. Best effort: a failed
-    lookup costs the first line, never the email."""
-    cached = await store.post_previews(uris)
-    missing = [u for u in uris if u and u not in cached]
-    fetched: dict[str, str | None] = {}
-    try:
-        for i in range(0, len(missing), POSTS_BATCH):
-            batch = missing[i:i + POSTS_BATCH]
-            data = await client.xrpc("app.bsky.feed.getPosts", {"uris": batch})
-            for post in data.get("posts") or []:
-                if post.get("uri") in batch:
-                    fetched[post["uri"]] = (post.get("record") or {}).get("text")
-    except Exception as exc:  # noqa: BLE001
-        log.warning("getPosts failed; alerting without post text: %s", exc)
-    await store.save_post_previews(fetched)
-    return {**cached, **fetched}
-
-
 # ------------------------------------------------------------------ the run
 
 async def run_interaction_alerts(client: BlueskyClient | None = None, *,
@@ -198,7 +193,9 @@ async def run_interaction_alerts(client: BlueskyClient | None = None, *,
         # Always read: the digest's record of notable likes needs the rows
         # and the follower counts even while the email switch is off.
         check = await check_notifications(client)
-        result = {"status": "ok", "kind": "like-alerts", "sent": 0,
+        # A failed read is the run's failure too, so the caller sees it; what
+        # is already stored is still emailed below.
+        result = {"status": check["status"], "kind": "like-alerts", "sent": 0,
                   "check": check}
 
         if not settings.interaction_alerts_configured:
@@ -207,20 +204,23 @@ async def run_interaction_alerts(client: BlueskyClient | None = None, *,
                                  else "SMTP not configured")
             return result
 
-        after = await _watermark()
+        after, stamped_at = await _watermark(now)
         if in_quiet_hours(now):
             result["skipped"] = "quiet hours"
             return result
-        return {**result, **await _alert(client, now, after)}
+        return {**result, **await _alert(client, now, after, stamped_at)}
     finally:
         if owns_client:
             await client.aclose()
 
 
-async def _alert(client: BlueskyClient, now: datetime, after: int) -> dict:
+async def _alert(client: BlueskyClient, now: datetime, after: int,
+                 stamped_at: datetime | None) -> dict:
     run_id = await store.start_run("like-alerts")
     try:
         since = now - timedelta(hours=settings.interaction_alert_lookback_hours)
+        if stamped_at is not None:
+            since = max(since, stamped_at)
         rows = await store.interaction_alert_candidates(
             since_iso=since.astimezone(timezone.utc).isoformat(timespec="seconds"),
             after_id=after)
@@ -229,7 +229,7 @@ async def _alert(client: BlueskyClient, now: datetime, after: int) -> dict:
             return {"skipped": "no notable likes or reposts"}
 
         retries = sum(1 for r in rows if r["attempts"])
-        previews = await _previews(
+        previews = await fetch_previews(
             client, list(dict.fromkeys(r["subject"] for r in rows if r["subject"])))
         message = build_message(rows, previews)
         await store.claim_interaction_alerts(rows)
