@@ -4368,3 +4368,139 @@ async def abandoned_alerts(max_attempts: int = ALERT_MAX_ATTEMPTS) -> list[dict]
         (max_attempts,),
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]
+
+
+# ------------------------------------------- notable like and repost alerts
+
+# The interaction kinds a notable account can be alerted for (sonde#11).
+# Replies, quotes and mentions are a separate decision.
+NOTABLE_INTERACTION_KINDS = ("like", "repost")
+
+
+async def max_interaction_id() -> int:
+    """The high-water mark of `interactions`. 0 on an empty database."""
+    db = await _db()
+    async with db.execute("SELECT COALESCE(MAX(id), 0) AS m FROM interactions") as cur:
+        row = await cur.fetchone()
+    return int(row["m"])
+
+
+async def interaction_alert_candidates(
+    *, since_iso: str, after_id: int,
+    max_attempts: int = ALERT_MAX_ATTEMPTS, limit: int = 1000,
+) -> list[dict]:
+    """Notable likes and reposts that still owe an email, new and retries alike.
+
+    Strangers count (no `follower_state` row, so not hidden); hidden
+    followers don't. Oldest first, so the email reads in the order it happened.
+    """
+    db = await _db()
+    notable, notable_params = notable_rule("a", "fs")
+    kinds = ",".join("?" for _ in NOTABLE_INTERACTION_KINDS)
+    async with db.execute(
+        f"""SELECT i.id AS interaction_id, i.did, i.kind, i.subject,
+                   i.occurred_at, a.handle, a.display_name, a.followers_count,
+                   a.verified_status, a.trusted_verifier_status,
+                   COALESCE(ia.attempts, 0) AS attempts
+              FROM interactions i
+              JOIN actors a ON a.did = i.did
+         LEFT JOIN follower_state fs ON fs.did = i.did
+         LEFT JOIN interaction_alerts ia ON ia.interaction_id = i.id
+             WHERE i.direction = 'inbound'
+               AND i.kind IN ({kinds})
+               AND i.id > ?
+               AND julianday(i.occurred_at) >= julianday(?)
+               AND {notable}
+               AND (ia.interaction_id IS NULL
+                    OR (ia.sent_at IS NULL AND ia.attempts < ?))
+             ORDER BY i.occurred_at ASC, i.id ASC
+             LIMIT ?""",
+        (*NOTABLE_INTERACTION_KINDS, after_id, since_iso, *notable_params,
+         max_attempts, limit),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def claim_interaction_alerts(rows: Sequence[dict]) -> None:
+    """Record the attempt BEFORE the email is sent, as `claim_alerts` does."""
+    if not rows:
+        return
+    db = await _db()
+    now = utcnow()
+    await db.executemany(
+        """INSERT INTO interaction_alerts (interaction_id, did, claimed_at, attempts)
+           VALUES (?,?,?,1)
+           ON CONFLICT (interaction_id) DO UPDATE SET
+               attempts   = interaction_alerts.attempts + 1,
+               claimed_at = excluded.claimed_at""",
+        [(r["interaction_id"], r["did"], now) for r in rows],
+    )
+    await db.commit()
+
+
+async def mark_interaction_alerts_sent(ids: Sequence[int]) -> None:
+    if not ids:
+        return
+    db = await _db()
+    await db.executemany(
+        "UPDATE interaction_alerts SET sent_at = ?, error = NULL "
+        "WHERE interaction_id = ?",
+        [(utcnow(), i) for i in ids],
+    )
+    await db.commit()
+
+
+async def mark_interaction_alerts_failed(ids: Sequence[int], error: str) -> None:
+    if not ids:
+        return
+    db = await _db()
+    await db.executemany(
+        "UPDATE interaction_alerts SET error = ? WHERE interaction_id = ?",
+        [(error[:300], i) for i in ids],
+    )
+    await db.commit()
+
+
+async def abandoned_interaction_alerts(
+    max_attempts: int = ALERT_MAX_ATTEMPTS,
+) -> list[dict]:
+    """Like and repost alerts that used up their attempts, for the digest."""
+    db = await _db()
+    async with db.execute(
+        """SELECT ia.interaction_id, ia.did, ia.attempts, ia.error, a.handle,
+                  i.kind, i.subject, i.occurred_at
+             FROM interaction_alerts ia
+        LEFT JOIN actors a ON a.did = ia.did
+        LEFT JOIN interactions i ON i.id = ia.interaction_id
+            WHERE ia.sent_at IS NULL AND ia.attempts >= ?
+            ORDER BY ia.interaction_id DESC""",
+        (max_attempts,),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def post_previews(uris: Sequence[str]) -> dict[str, str | None]:
+    """Cached post text by URI; a URI never fetched is absent."""
+    if not uris:
+        return {}
+    db = await _db()
+    async with db.execute(
+        f"SELECT uri, text FROM post_previews WHERE uri IN "
+        f"({','.join('?' for _ in uris)})",
+        tuple(uris),
+    ) as cur:
+        return {r["uri"]: r["text"] for r in await cur.fetchall()}
+
+
+async def save_post_previews(texts: dict[str, str | None]) -> None:
+    if not texts:
+        return
+    db = await _db()
+    now = utcnow()
+    await db.executemany(
+        """INSERT INTO post_previews (uri, text, fetched_at) VALUES (?,?,?)
+           ON CONFLICT (uri) DO UPDATE SET text = excluded.text,
+                                           fetched_at = excluded.fetched_at""",
+        [(uri, text, now) for uri, text in texts.items()],
+    )
+    await db.commit()

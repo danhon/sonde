@@ -175,6 +175,16 @@ class Settings:
     verified_alert_to: str = field(
         default_factory=lambda: os.environ.get("VERIFIED_ALERT_TO", "")
     )
+    # Notable likes and reposts of the operator's posts, emailed after each
+    # head sweep (sonde#11). Off until switched on: deploying must not start
+    # emailing. Sent to the same address as arrival alerts.
+    enable_interaction_alerts: bool = field(
+        default_factory=lambda: _bool("ENABLE_INTERACTION_ALERTS", False)
+    )
+    # Older than this is left to the digest rather than emailed late.
+    interaction_alert_lookback_hours: int = field(
+        default_factory=lambda: _int("INTERACTION_ALERT_LOOKBACK_HOURS", 48)
+    )
     # A large account has strictly more followers than this, and counts as
     # notable even unverified (GLOSSARY.md). 10,000 is from sonde#10: in the
     # 30 days measured, accounts above it were 70% of notable likes and reposts.
@@ -220,6 +230,13 @@ class Settings:
     def verified_alerts_configured(self) -> bool:
         return bool(
             self.enable_verified_alerts
+            and self.smtp_host and self.smtp_username and self.alert_to
+        )
+
+    @property
+    def interaction_alerts_configured(self) -> bool:
+        return bool(
+            self.enable_interaction_alerts
             and self.smtp_host and self.smtp_username and self.alert_to
         )
 

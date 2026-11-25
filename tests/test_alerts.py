@@ -149,6 +149,21 @@ async def test_a_large_unverified_arrival_is_emailed(outbox):
     assert [r["did"] for r in outbox[0]] == ["did:plc:big"]
 
 
+async def test_the_email_says_why_each_arrival_is_notable(outbox):
+    """The email covers large accounts too, so it says "notable", not
+    "verified", and gives each person's reason."""
+    await started()
+    await large_arrival("did:plc:big", 25_400)
+    await arrival("did:plc:v")
+    await alerts.run_alerts()
+
+    body = alerts.render_text(outbox[0])
+    assert body.startswith("2 notable accounts just followed you.")
+    assert "verified followers" not in body
+    assert "about 25k followers" in body
+    assert "· verified" in body
+
+
 async def test_exactly_ten_thousand_followers_is_not_large(outbox):
     await started()
     await large_arrival("did:plc:edge", 10_000)
@@ -251,7 +266,7 @@ async def test_a_burst_names_some_and_counts_the_rest(outbox):
 
     body = alerts.render_text(outbox[0], limit=10)
     assert "and 2 more" in body
-    assert alerts.subject(outbox[0]) == "sonde: 12 verified followers"
+    assert alerts.subject(outbox[0]) == "sonde: 12 notable followers"
 
 
 # ------------------------------------------------------------- when it fails
@@ -342,7 +357,7 @@ async def test_a_single_arrival_is_named_in_the_subject(outbox):
     await arrival("did:plc:v", handle="ana.example.com")
     await alerts.run_alerts()
 
-    assert alerts.subject(outbox[0]) == "sonde: verified follower — @ana.example.com"
+    assert alerts.subject(outbox[0]) == "sonde: notable follower — @ana.example.com"
 
 
 async def test_the_message_is_addressed_and_plain_text(outbox):
