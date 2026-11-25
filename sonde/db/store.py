@@ -4406,8 +4406,9 @@ async def interaction_alert_candidates(
     kinds = ",".join("?" for _ in NOTABLE_INTERACTION_KINDS)
     async with db.execute(
         f"""SELECT i.id AS interaction_id, i.did, i.kind, i.subject,
-                   i.occurred_at, a.handle, a.display_name, a.followers_count,
-                   a.verified_status, a.trusted_verifier_status,
+                   i.occurred_at, a.handle, a.display_name, a.description,
+                   a.followers_count, a.verified_status,
+                   a.trusted_verifier_status,
                    COALESCE(ia.attempts, 0) AS attempts
               FROM interactions i
               JOIN actors a ON a.did = i.did

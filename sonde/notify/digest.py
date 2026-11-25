@@ -274,7 +274,7 @@ def render_text(digest: Digest, limit: int = 25) -> str:
             first = _first_line(digest, uri)
             out.append(f"  “{first}”" if first else "  A post of yours")
             out.append(f"    {post_link(uri)}")
-            out += [f"  {describe_interaction(r)}" for r in events]
+            out += [f"  {describe_interaction(r)[0]}" for r in events]
         out.append("")
 
     if not digest.has_follower_news:
@@ -335,7 +335,7 @@ def render_html(digest: Digest, limit: int = 25) -> str:
             link = escape(post_link(uri))
             label = escape(f"“{first}”" if first else "A post of yours")
             out.append(f'<li><a href="{link}">{label}</a><ul>')
-            out += [f"<li>{escape(describe_interaction(r).strip())}</li>" for r in events]
+            out += [f"<li>{escape(describe_interaction(r)[0].strip())}</li>" for r in events]
             out.append("</ul></li>")
         out.append("</ul>")
 

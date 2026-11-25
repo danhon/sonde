@@ -497,3 +497,29 @@ async def test_update_seen_is_never_requested(bsky, outbox):
     assert bsky.requests
     assert not [r for r in bsky.requests if "updateSeen" in r.url.path]
     assert all(r.method == "GET" for r in bsky.requests)
+
+
+async def test_each_line_carries_the_accounts_bio(bsky, outbox):
+    """Who someone is matters as much as how many follow them (Dan, 2026-11-24)."""
+    await started()
+    bsky.add(verified("did:plc:nobio", handle="bo.example.com", displayName="Bo"),
+             "like", pacific(9, 40))
+    bsky.add(verified("did:plc:bio", handle="ana.example.com", displayName="Ana",
+                      description="Writes about trains.\nSecond line, left out."),
+             "like", pacific(9, 41))
+    bsky.add(verified("did:plc:long", handle="cy.example.com", displayName="Cy",
+                      description="x" * 200),
+             "like", pacific(9, 42))
+
+    await run(bsky, pacific(10))
+
+    lines = body(outbox[0]).splitlines()
+    at = {name: next(i for i, line in enumerate(lines) if f"{name} (@" in line)
+          for name in ("Ana", "Bo", "Cy")}
+    # No bio: the next line is the next person, not a stray indented line.
+    assert at["Ana"] == at["Bo"] + 1
+    # A bio: its first line only, quoted so it can't pass for sonde's own text.
+    assert lines[at["Ana"] + 1] == "    “Writes about trains.”"
+    assert "Second line" not in "\n".join(lines)
+    # A long bio says it was cut.
+    assert lines[at["Cy"] + 1] == f"    “{'x' * 160}…”"

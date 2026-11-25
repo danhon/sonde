@@ -129,12 +129,20 @@ def _when(occurred_at: str) -> str:
     return f"{local:%a} {hour}:{local:%M} {'am' if local.hour < 12 else 'pm'} PT"
 
 
-def describe(row: dict) -> str:
+def describe(row: dict) -> list[str]:
+    """One event: who, why notable, what, when; then the first line of their
+    bio, as the arrival alert gives it, so the name means something."""
     handle = row.get("handle") or row["did"]
     who = f"{row['display_name']} (@{handle})" if row.get("display_name") else f"@{handle}"
     verb = "liked" if row["kind"] == "like" else "reposted"
     why = ", ".join(why_notable(row)) or "notable"
-    return f"  {who} · {why} · {verb} · {_when(row['occurred_at'])}"
+    lines = [f"  {who} · {why} · {verb} · {_when(row['occurred_at'])}"]
+    # Quoted, so text the account wrote can't pass for a line sonde wrote.
+    bio = (row.get("description") or "").strip().splitlines()
+    if bio:
+        first = bio[0].strip()
+        lines.append(f"    “{first[:160]}{'…' if len(first) > 160 else ''}”")
+    return lines
 
 
 def render_text(rows: list[dict], previews: dict[str, str | None]) -> str:
@@ -147,7 +155,8 @@ def render_text(rows: list[dict], previews: dict[str, str | None]) -> str:
         first = (previews.get(uri) or "").strip().splitlines()
         out.append(f"“{first[0][:160]}”" if first else "A post of yours")
         out.append(f"  {post_link(uri)}")
-        out += [describe(r) for r in events]
+        for r in events:
+            out += describe(r)
         out.append("")
     out.append(
         "Notable means verified, a trusted verifier, or more than "
