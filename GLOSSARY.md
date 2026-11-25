@@ -101,7 +101,7 @@ The number of people you both know, for a given follower: whether they sit insid
 _Avoid_: closeness, relevance
 
 **Influence**:
-How far a follower's own reach extends, beyond their follower count: whether they matter in general.
+How far a follower's own reach extends, beyond their follower count: whether they matter in general. A large account is not necessarily influential.
 _Avoid_: popularity, fame
 
 **Relationship**:
@@ -116,11 +116,21 @@ The part of a relationship earned with nothing said: someone who follows very fe
 
 ### Telling the operator
 
+**Large account**:
+An account with more than 10,000 followers. A matter of size alone, not of influence.
+_Avoid_: influential, big account
+
 **Notable**:
-An arrival who is verified or a trusted verifier, and not hidden. Nothing else makes an arrival notable.
+An account that is verified, a trusted verifier, or a large account, and not hidden. Notability belongs to the account; an arrival or a like is news because of who did it.
+
+**Notable arrival**:
+A notable account starting to follow the operator.
+
+**Notable like or repost**:
+A notable account liking or reposting one of the operator's posts. Planned (sonde#10), not yet built.
 
 **Alert**:
-An email sent soon after a notable arrival. Nothing from before alerting was switched on is ever alerted.
+An email telling the operator, soon after it happens, about a notable arrival or (once sonde#10 is built) every notable like or repost, several to an email. Nothing from before alerting was switched on is ever alerted.
 
 **Digest**:
 The daily email of what happened the day before, including any alert that could not be sent.
