@@ -32,6 +32,10 @@ PAGE = 100
 # Where this sync's own walk of notifications last stopped. Not the table's
 # newest inbound row: the notifications check writes those too.
 INBOUND_SYNCED_KEY = "interactions_inbound_synced_to"
+# The marker's value when this sync has never walked inbound: no stop point,
+# read history in full. Distinct from an absent marker, which means a database
+# from before the notifications check (see `sync`).
+NEVER_SYNCED = ""
 # Reasons that say something about a relationship. `follow` is already tracked
 # by the sweep, and starterpack/verified notifications are not interactions.
 INTERESTING = {"like", "repost", "reply", "quote", "mention"}
@@ -198,17 +202,31 @@ async def sync(client: BlueskyClient | None = None, *,
         # database from before the check existed), which keeps this sync the
         # backstop for anything a capped check skipped; outbound stops at the
         # newest outbound row, which only this sync writes.
-        inbound_stop = (await store.get_meta(INBOUND_SYNCED_KEY)
-                        or await store.latest_interaction_at("inbound"))
+        #
+        # The marker has three states. Absent: the check has never run, so
+        # every inbound row is this sync's and the table's newest is where it
+        # stopped. NEVER_SYNCED: the check pinned it on a database with no
+        # inbound rows, so walk everything. Otherwise: where this sync stopped.
+        marker = await store.get_meta(INBOUND_SYNCED_KEY)
+        if marker is None:
+            inbound_stop = await store.latest_interaction_at("inbound")
+        else:
+            inbound_stop = marker or None
         registry.progress("interactions", 0, 2, "sources", "notifications")
+        # Authors get an actors row (never a follower_state row), as in the
+        # check: a stranger only this sync saw must still be judged notable.
+        authors: dict[str, dict] = {}
         inbound, in_pages = await ingest_notifications(
-            client, max_pages=max_pages, stop_at=None if full else inbound_stop)
+            client, max_pages=max_pages, stop_at=None if full else inbound_stop,
+            authors=authors)
 
         registry.progress("interactions", 1, 2, "sources", "my own feed")
         outbound, out_pages = await ingest_outbound(
             client, max_pages=max_pages,
             stop_at=None if full else await store.latest_interaction_at("outbound"))
 
+        for profile in authors.values():
+            await store.upsert_actor(profile)
         stored = await store.record_interactions(inbound + outbound)
         if inbound:
             newest = max(r["occurred_at"] for r in inbound)

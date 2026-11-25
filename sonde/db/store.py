@@ -1732,6 +1732,7 @@ async def authors_needing_counts(*, since_hours: int, max_age_days: int) -> list
              FROM interactions i JOIN actors a ON a.did = i.did
             WHERE i.direction = 'inbound' AND i.kind IN ('like', 'repost')
               AND julianday(i.occurred_at) >= julianday('now') - ? / 24.0
+              AND a.unservable_since IS NULL
               AND (a.followers_count IS NULL OR a.profile_fetched_at IS NULL
                    OR julianday('now') - julianday(a.profile_fetched_at) >= ?)
             ORDER BY a.did""",
@@ -4356,16 +4357,22 @@ async def mark_alerts_failed(event_ids: Sequence[int], error: str) -> None:
     await db.commit()
 
 
-async def abandoned_alerts(max_attempts: int = ALERT_MAX_ATTEMPTS) -> list[dict]:
-    """Alerts that used up their attempts. The digest reports these."""
+async def abandoned_alerts(max_attempts: int = ALERT_MAX_ATTEMPTS, *,
+                           since_iso: str | None = None) -> list[dict]:
+    """Alerts that used up their attempts. The digest reports these.
+
+    With `since_iso`, only those given up since then: the last attempt's claim
+    is when an alert was given up on, so a daily digest names each one once.
+    """
     db = await _db()
     async with db.execute(
         """SELECT va.event_id, va.did, va.attempts, va.error, a.handle
              FROM verified_alerts va
         LEFT JOIN actors a USING (did)
             WHERE va.sent_at IS NULL AND va.attempts >= ?
+              AND (? IS NULL OR julianday(va.claimed_at) >= julianday(?))
             ORDER BY va.event_id DESC""",
-        (max_attempts,),
+        (max_attempts, since_iso, since_iso),
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]
 
@@ -4488,9 +4495,10 @@ async def mark_interaction_alerts_failed(ids: Sequence[int], error: str) -> None
 
 
 async def abandoned_interaction_alerts(
-    max_attempts: int = ALERT_MAX_ATTEMPTS,
+    max_attempts: int = ALERT_MAX_ATTEMPTS, *, since_iso: str | None = None,
 ) -> list[dict]:
-    """Like and repost alerts that used up their attempts, for the digest."""
+    """Like and repost alerts that used up their attempts, for the digest.
+    `since_iso` as in `abandoned_alerts`."""
     db = await _db()
     async with db.execute(
         """SELECT ia.interaction_id, ia.did, ia.attempts, ia.error, a.handle,
@@ -4499,8 +4507,9 @@ async def abandoned_interaction_alerts(
         LEFT JOIN actors a ON a.did = ia.did
         LEFT JOIN interactions i ON i.id = ia.interaction_id
             WHERE ia.sent_at IS NULL AND ia.attempts >= ?
+              AND (? IS NULL OR julianday(ia.claimed_at) >= julianday(?))
             ORDER BY ia.interaction_id DESC""",
-        (max_attempts,),
+        (max_attempts, since_iso, since_iso),
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]
 

@@ -172,8 +172,20 @@ def render_text(rows: list[dict], limit: int | None = None) -> str:
         "vouched for who they are, nothing more."
     )
     out.append("")
-    out.append(f"https://{settings.service_host}/verified")
+    out.append(_footer_link(rows))
     return "\n".join(out)
+
+
+def _footer_link(rows: list[dict]) -> str:
+    """/verified lists verified followers only, so it is the link only when
+    every arrival is there; otherwise the one follower's page, or the site."""
+    base = f"https://{settings.service_host}"
+    if all(r.get("verified_status") == "valid"
+           or r.get("trusted_verifier_status") == "valid" for r in rows):
+        return f"{base}/verified"
+    if len(rows) == 1:
+        return f"{base}/followers/{rows[0]['did']}"
+    return f"{base}/"
 
 
 def build_message(rows: list[dict]) -> EmailMessage:

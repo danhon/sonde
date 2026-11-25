@@ -389,3 +389,38 @@ async def test_given_up_alerts_of_both_kinds_are_reported():
     problems = (await dg.gather()).problems
     assert any("arrival alert" in p for p in problems), problems
     assert any("like and repost alert" in p for p in problems), problems
+
+
+async def test_a_subject_with_only_notable_likes_says_so_with_counts_only():
+    await healthy()
+    await someone("did:plc:v", is_verified=True)
+    await someone("did:plc:big", followers=25_400)
+    await interacted("did:plc:v", "like", POST_A, hours_ago(3))
+    await interacted("did:plc:big", "like", POST_A, hours_ago(2))
+    await interacted("did:plc:big", "repost", POST_B, hours_ago(1))
+
+    subject = (await dg.gather()).subject
+
+    assert "no change" not in subject
+    assert "2 notable likes, 1 repost" in subject
+    assert "did:plc" not in subject and "@" not in subject
+
+
+async def test_alerts_given_up_before_the_digest_window_are_not_reported_again():
+    await healthy()
+    await follower("did:plc:arr", 0, is_verified=True)
+    await store.add_event("did:plc:arr", "followed")
+    await store.commit()
+    event_id = await store.max_event_id()
+    for _ in range(store.ALERT_MAX_ATTEMPTS):
+        await store.claim_alerts([{"event_id": event_id, "did": "did:plc:arr"}])
+    await someone("did:plc:v", is_verified=True)
+    await given_up_like("did:plc:v")
+    db = await store._db()
+    await db.execute("UPDATE verified_alerts SET claimed_at = ?", (hours_ago(30),))
+    await db.execute("UPDATE interaction_alerts SET claimed_at = ?", (hours_ago(30),))
+    await store.commit()
+
+    problems = (await dg.gather()).problems
+
+    assert not any("alert" in p for p in problems), problems
