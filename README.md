@@ -123,6 +123,9 @@ API_RATE_LIMIT_PER_SECOND=3        # cap is 3000 req / 5 min / IP, shared house-
 HEAD_SWEEP_MINUTES=15              # cheap check for new followers (1–2 calls)
 FULL_SWEEP_HOURS=6                 # whole list; also sets unfollow latency: 2 sweeps = 12h
 PROFILE_TTL_DAYS=7                 # how often to re-fetch each follower's counts
+FOLLOWER_COUNT_MAX_AGE_DAYS=7      # same, for anyone who likes or reposts (strangers too)
+NOTIFICATION_CHECK_MAX_PAGES=5     # pages the 15-minute notifications check reads at most
+LARGE_ACCOUNT_FOLLOWERS=10000      # more than this counts as notable, verified or not
 
 # Display policy for followers who turned off logged-out visibility (1,838 of them).
 # false = show them, marked "private". true = count them, withhold from tables/exports.
@@ -202,7 +205,9 @@ changed or sonde did — both worth knowing.
 Two kinds, both off unless `SMTP_HOST`, `SMTP_USERNAME` and `NOTIFY_TO` are set.
 
 **The daily digest** (14:00 local) reports the day: arrivals ranked by
-influence, departures, returns, renames, and anything unhealthy. A quiet day
+influence, departures, returns, renames, the day's notable likes and reposts
+of your posts (grouped by post, alerted or not), and anything unhealthy,
+including any alert of either kind given up on. A quiet day
 sends nothing; a broken day always sends.
 
 **Verified-arrival alerts** fire as they happen — one head sweep of latency,
@@ -228,6 +233,16 @@ The awkward parts are all about not being annoying:
 
 Set `ENABLE_VERIFIED_ALERTS=false` to turn them off, or `VERIFIED_ALERT_TO` to
 send them somewhere other than the digest.
+
+**Notable like and repost alerts** (`ENABLE_INTERACTION_ALERTS`, off by
+default) email every like or repost of your posts by a notable account —
+verified, a trusted verifier, or more than `LARGE_ACCOUNT_FOLLOWERS` — after
+the light notifications check that follows each head sweep. Same rules as
+arrival alerts (watermark on first enabled run, claim before send, three
+attempts, `INTERACTION_ALERT_LOOKBACK_HOURS`), plus: every event is listed,
+grouped by post; the subject gives counts, never names; and nothing is sent
+23:00–07:00 Pacific, when the night arrives as one email at 07:00. Same address
+as arrival alerts. It never marks your Bluesky notifications as read.
 ## Snapshots
 
 `follow_events` is the only data here that can't be re-fetched from Bluesky, so a

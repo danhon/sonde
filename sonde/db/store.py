@@ -1680,9 +1680,20 @@ async def rebuild_affiliations() -> dict:
 
 # ------------------------------------------- M14 relationships
 
-async def latest_interaction_at() -> str | None:
+async def latest_interaction_at(direction: str | None = None) -> str | None:
+    """Newest stored interaction, optionally in one direction.
+
+    The sync walks inbound and outbound separately and must stop each at its
+    own newest row: the notifications check stores inbound rows between syncs,
+    so a shared stop point would skip outbound posts made in the meantime.
+    """
     db = await _db()
-    async with db.execute("SELECT MAX(occurred_at) AS m FROM interactions") as cur:
+    sql = "SELECT MAX(occurred_at) AS m FROM interactions"
+    params: tuple = ()
+    if direction is not None:
+        sql += " WHERE direction = ?"
+        params = (direction,)
+    async with db.execute(sql, params) as cur:
         row = await cur.fetchone()
     return row["m"] if row else None
 
@@ -1707,6 +1718,27 @@ async def record_interactions(rows: list[dict]) -> int:
     )
     await db.commit()
     return len(rows)
+
+
+async def authors_needing_counts(*, since_hours: int, max_age_days: int) -> list[str]:
+    """Recent like and repost authors whose follower count is missing or old.
+
+    Strangers included: notability needs a count for anyone who likes a post,
+    not just followers, and the follower hydration never reaches strangers.
+    """
+    db = await _db()
+    async with db.execute(
+        """SELECT DISTINCT a.did
+             FROM interactions i JOIN actors a ON a.did = i.did
+            WHERE i.direction = 'inbound' AND i.kind IN ('like', 'repost')
+              AND julianday(i.occurred_at) >= julianday('now') - ? / 24.0
+              AND a.unservable_since IS NULL
+              AND (a.followers_count IS NULL OR a.profile_fetched_at IS NULL
+                   OR julianday('now') - julianday(a.profile_fetched_at) >= ?)
+            ORDER BY a.did""",
+        (since_hours, max_age_days),
+    ) as cur:
+        return [r["did"] for r in await cur.fetchall()]
 
 
 async def conversation_counts() -> dict[str, int]:
@@ -4221,6 +4253,25 @@ ALERT_MAX_ATTEMPTS = 3
 ALERT_EVENTS = ("followed", "returned")
 
 
+def notable_rule(actor: str = "a", state: str = "fs") -> tuple[str, list]:
+    """The one definition of notable (GLOSSARY.md), as a SQL condition.
+
+    Verified, a trusted verifier, or a large account (followers strictly
+    greater than `settings.large_account_followers`), and not hidden. Returns
+    `(sql, params)`; splice the sql into a WHERE with AND and the params at
+    that position. `actor` aliases `actors`; `state` aliases a LEFT JOIN of
+    `follower_state` on the same did, so a stranger (no state row) is not
+    hidden. The threshold is read per call, so tests may patch it.
+    """
+    sql = (
+        f"(({actor}.verified_status = 'valid'"
+        f" OR {actor}.trusted_verifier_status = 'valid'"
+        f" OR COALESCE({actor}.followers_count, 0) > ?)"
+        f" AND {state}.ignored_at IS NULL)"
+    )
+    return sql, [settings.large_account_followers]
+
+
 async def max_event_id() -> int:
     """The high-water mark of the event log. 0 on an empty database."""
     db = await _db()
@@ -4233,12 +4284,13 @@ async def alert_candidates(
     *, since_iso: str, after_event_id: int,
     max_attempts: int = ALERT_MAX_ATTEMPTS, limit: int = 200,
 ) -> list[dict]:
-    """Verified arrivals that still owe an email — new ones and retries alike.
+    """Notable arrivals that still owe an email — new ones and retries alike.
 
     Hidden followers are excluded: something the moderation lists took out of
     every table has no business arriving in your inbox instead.
     """
     db = await _db()
+    notable, notable_params = notable_rule("a", "fs")
     async with db.execute(
         f"""SELECT e.id AS event_id, e.did, e.event, e.detected_at,
                    a.handle, a.display_name, a.description, a.followers_count,
@@ -4252,14 +4304,13 @@ async def alert_candidates(
              WHERE e.event IN ({','.join('?' for _ in ALERT_EVENTS)})
                AND e.id > ?
                AND e.detected_at >= ?
-               AND (a.verified_status = 'valid'
-                    OR a.trusted_verifier_status = 'valid')
-               AND fs.ignored_at IS NULL
+               AND {notable}
                AND (va.event_id IS NULL
                     OR (va.sent_at IS NULL AND va.attempts < ?))
              ORDER BY e.id ASC
              LIMIT ?""",
-        (*ALERT_EVENTS, after_event_id, since_iso, max_attempts, limit),
+        (*ALERT_EVENTS, after_event_id, since_iso, *notable_params,
+         max_attempts, limit),
     ) as cur:
         rows = [dict(r) for r in await cur.fetchall()]
     for row in rows:
@@ -4306,15 +4357,185 @@ async def mark_alerts_failed(event_ids: Sequence[int], error: str) -> None:
     await db.commit()
 
 
-async def abandoned_alerts(max_attempts: int = ALERT_MAX_ATTEMPTS) -> list[dict]:
-    """Alerts that used up their attempts. The digest reports these."""
+async def abandoned_alerts(max_attempts: int = ALERT_MAX_ATTEMPTS, *,
+                           since_iso: str | None = None) -> list[dict]:
+    """Alerts that used up their attempts. The digest reports these.
+
+    With `since_iso`, only those given up since then: the last attempt's claim
+    is when an alert was given up on, so a daily digest names each one once.
+    """
     db = await _db()
     async with db.execute(
         """SELECT va.event_id, va.did, va.attempts, va.error, a.handle
              FROM verified_alerts va
         LEFT JOIN actors a USING (did)
             WHERE va.sent_at IS NULL AND va.attempts >= ?
+              AND (? IS NULL OR julianday(va.claimed_at) >= julianday(?))
             ORDER BY va.event_id DESC""",
-        (max_attempts,),
+        (max_attempts, since_iso, since_iso),
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]
+
+
+# ------------------------------------------- notable like and repost alerts
+
+# The interaction kinds a notable account can be alerted for (sonde#11).
+# Replies, quotes and mentions are a separate decision.
+NOTABLE_INTERACTION_KINDS = ("like", "repost")
+
+
+async def max_interaction_id() -> int:
+    """The high-water mark of `interactions`. 0 on an empty database."""
+    db = await _db()
+    async with db.execute("SELECT COALESCE(MAX(id), 0) AS m FROM interactions") as cur:
+        row = await cur.fetchone()
+    return int(row["m"])
+
+
+async def interaction_alert_candidates(
+    *, since_iso: str, after_id: int,
+    max_attempts: int = ALERT_MAX_ATTEMPTS, limit: int = 1000,
+) -> list[dict]:
+    """Notable likes and reposts that still owe an email, new and retries alike.
+
+    Strangers count (no `follower_state` row, so not hidden); hidden
+    followers don't. Oldest first, so the email reads in the order it happened.
+    """
+    db = await _db()
+    notable, notable_params = notable_rule("a", "fs")
+    kinds = ",".join("?" for _ in NOTABLE_INTERACTION_KINDS)
+    async with db.execute(
+        f"""SELECT i.id AS interaction_id, i.did, i.kind, i.subject,
+                   i.occurred_at, a.handle, a.display_name, a.followers_count,
+                   a.verified_status, a.trusted_verifier_status,
+                   COALESCE(ia.attempts, 0) AS attempts
+              FROM interactions i
+              JOIN actors a ON a.did = i.did
+         LEFT JOIN follower_state fs ON fs.did = i.did
+         LEFT JOIN interaction_alerts ia ON ia.interaction_id = i.id
+             WHERE i.direction = 'inbound'
+               AND i.kind IN ({kinds})
+               AND i.id > ?
+               AND julianday(i.occurred_at) >= julianday(?)
+               AND {notable}
+               AND (ia.interaction_id IS NULL
+                    OR (ia.sent_at IS NULL AND ia.attempts < ?))
+             ORDER BY i.occurred_at ASC, i.id ASC
+             LIMIT ?""",
+        (*NOTABLE_INTERACTION_KINDS, after_id, since_iso, *notable_params,
+         max_attempts, limit),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def notable_interactions_since(since_iso: str) -> list[dict]:
+    """Every notable like and repost since a moment, for the digest.
+
+    The same rule as the alerts, but no watermark, lookback or claim: the
+    digest is the complete record, alerted or not. Oldest first.
+    """
+    db = await _db()
+    notable, notable_params = notable_rule("a", "fs")
+    kinds = ",".join("?" for _ in NOTABLE_INTERACTION_KINDS)
+    async with db.execute(
+        f"""SELECT i.id AS interaction_id, i.did, i.kind, i.subject,
+                   i.occurred_at, a.handle, a.display_name, a.followers_count,
+                   a.verified_status, a.trusted_verifier_status
+              FROM interactions i
+              JOIN actors a ON a.did = i.did
+         LEFT JOIN follower_state fs ON fs.did = i.did
+             WHERE i.direction = 'inbound'
+               AND i.kind IN ({kinds})
+               AND julianday(i.occurred_at) >= julianday(?)
+               AND {notable}
+             ORDER BY i.occurred_at ASC, i.id ASC""",
+        (*NOTABLE_INTERACTION_KINDS, since_iso, *notable_params),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def claim_interaction_alerts(rows: Sequence[dict]) -> None:
+    """Record the attempt BEFORE the email is sent, as `claim_alerts` does."""
+    if not rows:
+        return
+    db = await _db()
+    now = utcnow()
+    await db.executemany(
+        """INSERT INTO interaction_alerts (interaction_id, did, claimed_at, attempts)
+           VALUES (?,?,?,1)
+           ON CONFLICT (interaction_id) DO UPDATE SET
+               attempts   = interaction_alerts.attempts + 1,
+               claimed_at = excluded.claimed_at""",
+        [(r["interaction_id"], r["did"], now) for r in rows],
+    )
+    await db.commit()
+
+
+async def mark_interaction_alerts_sent(ids: Sequence[int]) -> None:
+    if not ids:
+        return
+    db = await _db()
+    await db.executemany(
+        "UPDATE interaction_alerts SET sent_at = ?, error = NULL "
+        "WHERE interaction_id = ?",
+        [(utcnow(), i) for i in ids],
+    )
+    await db.commit()
+
+
+async def mark_interaction_alerts_failed(ids: Sequence[int], error: str) -> None:
+    if not ids:
+        return
+    db = await _db()
+    await db.executemany(
+        "UPDATE interaction_alerts SET error = ? WHERE interaction_id = ?",
+        [(error[:300], i) for i in ids],
+    )
+    await db.commit()
+
+
+async def abandoned_interaction_alerts(
+    max_attempts: int = ALERT_MAX_ATTEMPTS, *, since_iso: str | None = None,
+) -> list[dict]:
+    """Like and repost alerts that used up their attempts, for the digest.
+    `since_iso` as in `abandoned_alerts`."""
+    db = await _db()
+    async with db.execute(
+        """SELECT ia.interaction_id, ia.did, ia.attempts, ia.error, a.handle,
+                  i.kind, i.subject, i.occurred_at
+             FROM interaction_alerts ia
+        LEFT JOIN actors a ON a.did = ia.did
+        LEFT JOIN interactions i ON i.id = ia.interaction_id
+            WHERE ia.sent_at IS NULL AND ia.attempts >= ?
+              AND (? IS NULL OR julianday(ia.claimed_at) >= julianday(?))
+            ORDER BY ia.interaction_id DESC""",
+        (max_attempts, since_iso, since_iso),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def post_previews(uris: Sequence[str]) -> dict[str, str | None]:
+    """Cached post text by URI; a URI never fetched is absent."""
+    if not uris:
+        return {}
+    db = await _db()
+    async with db.execute(
+        f"SELECT uri, text FROM post_previews WHERE uri IN "
+        f"({','.join('?' for _ in uris)})",
+        tuple(uris),
+    ) as cur:
+        return {r["uri"]: r["text"] for r in await cur.fetchall()}
+
+
+async def save_post_previews(texts: dict[str, str | None]) -> None:
+    if not texts:
+        return
+    db = await _db()
+    now = utcnow()
+    await db.executemany(
+        """INSERT INTO post_previews (uri, text, fetched_at) VALUES (?,?,?)
+           ON CONFLICT (uri) DO UPDATE SET text = excluded.text,
+                                           fetched_at = excluded.fetched_at""",
+        [(uri, text, now) for uri, text in texts.items()],
+    )
+    await db.commit()

@@ -23,6 +23,9 @@ from html import escape
 
 from sonde.config import settings
 from sonde.db import store
+from sonde.notify.interaction_alerts import describe as describe_interaction
+from sonde.notify.interaction_alerts import post_link
+from sonde.notify.interaction_alerts import subject as interaction_counts
 
 log = logging.getLogger("sonde.digest")
 
@@ -36,15 +39,23 @@ class Digest:
     departures: list[dict] = field(default_factory=list)
     returns: list[dict] = field(default_factory=list)
     renames: list[dict] = field(default_factory=list)
+    # Notable likes and reposts of the operator's posts, oldest first (sonde#11).
+    notable_interactions: list[dict] = field(default_factory=list)
+    # Cached first lines of those posts; a post never fetched is absent.
+    previews: dict[str, str | None] = field(default_factory=dict)
     counts: dict = field(default_factory=dict)
     problems: list[str] = field(default_factory=list)
     last_sync_hours: float | None = None
     since: str = ""
 
     @property
-    def has_news(self) -> bool:
+    def has_follower_news(self) -> bool:
         """Departures don't count: the digest only reports additions and the total."""
         return bool(self.arrivals or self.returns or self.renames)
+
+    @property
+    def has_news(self) -> bool:
+        return self.has_follower_news or bool(self.notable_interactions)
 
     @property
     def worth_sending(self) -> bool:
@@ -55,7 +66,12 @@ class Digest:
     def subject(self) -> str:
         if self.problems and not self.has_news:
             return f"sonde: {len(self.problems)} thing(s) need attention"
-        summary = f"+{len(self.arrivals)}" if self.arrivals else "no change"
+        parts = [f"+{len(self.arrivals)}"] if self.arrivals else []
+        if self.notable_interactions:
+            # Counts only, as in the alert: the subject shows on a lock screen.
+            parts.append(interaction_counts(self.notable_interactions)
+                         .removeprefix("sonde: "))
+        summary = " · ".join(parts) or "no change"
         warn = f" · {len(self.problems)} warning(s)" if self.problems else ""
         return f"sonde: {summary} · {self.counts.get('tracked', 0):,} followers{warn}"
 
@@ -84,6 +100,12 @@ async def gather(hours: int = 24) -> Digest:
     digest.returns = by_kind.get("returned", [])
     digest.renames = by_kind.get("handle_changed", [])
 
+    # The same window as the follower events, so "yesterday" means one thing.
+    digest.notable_interactions = await store.notable_interactions_since(since_iso)
+    digest.previews = await store.post_previews(
+        sorted({r["subject"] for r in digest.notable_interactions if r.get("subject")})
+    )
+
     # Health. These are the things that fail silently.
     age = await store.last_sync_age_seconds()
     digest.last_sync_hours = round(age / 3600, 1) if age is not None else None
@@ -105,13 +127,26 @@ async def gather(hours: int = 24) -> Digest:
 
     # The digest is the backstop for alerting, so it has to say when alerting
     # gave up — otherwise a dead mailer looks exactly like a quiet week.
-    abandoned = await store.abandoned_alerts()
+    # Only those given up within this digest's window, so each is reported
+    # once rather than in every digest from then on.
+    abandoned = await store.abandoned_alerts(since_iso=since_iso)
     if abandoned:
         handles = ", ".join(f"@{a['handle']}" for a in abandoned[:5] if a["handle"])
         digest.problems.append(
-            f"{len(abandoned)} verified-arrival alert(s) were abandoned after "
-            f"repeated send failures{' — ' + handles if handles else ''}. They are "
-            f"listed below and on /changes; only the instant email was lost."
+            f"{len(abandoned)} arrival alert(s) were abandoned in the last "
+            f"{hours} hours after repeated send failures"
+            f"{' — ' + handles if handles else ''}. Only the instant email was "
+            f"lost; the arrivals are on /changes."
+        )
+    given_up = await store.abandoned_interaction_alerts(since_iso=since_iso)
+    if given_up:
+        handles = ", ".join(
+            sorted({f"@{a['handle']}" for a in given_up if a["handle"]})[:5])
+        digest.problems.append(
+            f"{len(given_up)} like and repost alert(s) were abandoned in the "
+            f"last {hours} hours after repeated send failures"
+            f"{' — ' + handles if handles else ''}. Only the instant email was "
+            f"lost; those from the last {hours} hours are listed below."
         )
 
     for run in await store.recent_runs(12):
@@ -174,6 +209,22 @@ def _line_html(person: dict) -> str:
     return " · ".join(bits)
 
 
+NOTABLE_TITLE = "NOTABLE LIKES AND REPOSTS YESTERDAY"
+
+
+def _by_post(rows: list[dict]) -> dict[str, list[dict]]:
+    """Group events by the post they were about, posts in order of first event."""
+    groups: dict[str, list[dict]] = {}
+    for row in rows:
+        groups.setdefault(row.get("subject") or "", []).append(row)
+    return groups
+
+
+def _first_line(digest: Digest, uri: str) -> str | None:
+    lines = (digest.previews.get(uri) or "").strip().splitlines()
+    return lines[0][:160] if lines else None
+
+
 def render_text(digest: Digest, limit: int = 25) -> str:
     out: list[str] = []
     counts = digest.counts
@@ -217,7 +268,16 @@ def render_text(digest: Digest, limit: int = 25) -> str:
             out.append(f"  {person.get('detail') or _line(person)}")
         out.append("")
 
-    if not digest.has_news:
+    if digest.notable_interactions:
+        out.append(f"{NOTABLE_TITLE} ({len(digest.notable_interactions)})")
+        for uri, events in _by_post(digest.notable_interactions).items():
+            first = _first_line(digest, uri)
+            out.append(f"  “{first}”" if first else "  A post of yours")
+            out.append(f"    {post_link(uri)}")
+            out += [f"  {describe_interaction(r)}" for r in events]
+        out.append("")
+
+    if not digest.has_follower_news:
         out.append("No follower changes in the last 24 hours.")
         out.append("")
 
@@ -267,7 +327,19 @@ def render_html(digest: Digest, limit: int = 25) -> str:
             out.append(f"<li>{escape(person.get('detail') or '') or _line_html(person)}</li>")
         out.append("</ul>")
 
-    if not digest.has_news:
+    if digest.notable_interactions:
+        out.append(f"<p><strong>{NOTABLE_TITLE} "
+                   f"({len(digest.notable_interactions)})</strong></p><ul>")
+        for uri, events in _by_post(digest.notable_interactions).items():
+            first = _first_line(digest, uri)
+            link = escape(post_link(uri))
+            label = escape(f"“{first}”" if first else "A post of yours")
+            out.append(f'<li><a href="{link}">{label}</a><ul>')
+            out += [f"<li>{escape(describe_interaction(r).strip())}</li>" for r in events]
+            out.append("</ul></li>")
+        out.append("</ul>")
+
+    if not digest.has_follower_news:
         out.append("<p>No follower changes in the last 24 hours.</p>")
 
     out.append(f'<p><a href="https://{settings.service_host}/">https://{settings.service_host}/</a></p>')

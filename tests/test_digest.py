@@ -261,3 +261,166 @@ async def test_forcing_a_send_bypasses_the_quiet_check():
 
     assert result["sent"] is True
     assert len(sent) == 1
+
+
+# ------------------------------------- notable likes and reposts (sonde#11)
+
+POST_A = "at://did:plc:me/app.bsky.feed.post/aaa"
+POST_B = "at://did:plc:me/app.bsky.feed.post/bbb"
+
+
+def hours_ago(hours: float) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    when = datetime.now(timezone.utc) - timedelta(hours=hours)
+    return when.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+async def someone(did: str, *, is_verified=False, followers=None) -> None:
+    """An account that isn't a follower: likes come from strangers too."""
+    await store.upsert_actor(verified(did) if is_verified else actor(did))
+    db = await store._db()
+    await db.execute("UPDATE actors SET followers_count = ? WHERE did = ?",
+                     (followers, did))
+    await store.commit()
+
+
+async def interacted(did: str, kind: str, post: str, when: str) -> None:
+    await store.record_interactions([{
+        "did": did, "direction": "inbound", "kind": kind,
+        "uri": f"at://{did}/app.bsky.feed.{kind}/{when}",
+        "subject": post, "occurred_at": when,
+    }])
+
+
+def notable_section(body: str) -> str:
+    """The digest's notable likes and reposts section, up to the next blank line."""
+    start = body.index("NOTABLE LIKES AND REPOSTS YESTERDAY")
+    end = body.find("\n\n", start)
+    return body[start:end if end != -1 else None]
+
+
+async def test_notable_likes_and_reposts_are_listed_grouped_by_post():
+    await healthy()
+    await someone("did:plc:v", is_verified=True)
+    await someone("did:plc:big", followers=25_400)
+    await store.save_post_previews({POST_A: "First line of A\nsecond line",
+                                    POST_B: "Post B"})
+    await interacted("did:plc:v", "like", POST_A, hours_ago(3))
+    await interacted("did:plc:big", "repost", POST_B, hours_ago(2))
+    await interacted("did:plc:big", "like", POST_A, hours_ago(1))
+
+    section = notable_section(dg.render_text(await dg.gather()))
+
+    assert "NOTABLE LIKES AND REPOSTS YESTERDAY (3)" in section
+    lines = section.splitlines()
+    a = lines.index("  “First line of A”")
+    b = lines.index("  “Post B”")
+    assert "second line" not in section
+    assert lines[a + 1] == "    https://bsky.app/profile/did:plc:me/post/aaa"
+    under_a = lines[a + 2:b] if a < b else lines[a + 2:]
+    assert len(under_a) == 2
+    assert any("verified" in l and "liked" in l and "PT" in l for l in under_a)
+    assert any("about 25k followers" in l and "liked" in l for l in under_a)
+    assert "reposted" in lines[b + 2]
+
+
+async def test_hidden_and_ordinary_accounts_and_older_likes_are_left_out():
+    await healthy()
+    await someone("did:plc:v", is_verified=True)
+    await someone("did:plc:ten", followers=10_000)
+    await someone("did:plc:plain", followers=50)
+    await follower("did:plc:hidden", 0, is_verified=True)
+    await store.set_ignored("did:plc:hidden", True, reason="moderation")
+    await interacted("did:plc:v", "like", POST_A, hours_ago(30))
+    await interacted("did:plc:ten", "like", POST_A, hours_ago(2))
+    await interacted("did:plc:plain", "repost", POST_A, hours_ago(2))
+    await interacted("did:plc:hidden", "like", POST_A, hours_ago(2))
+    await store.commit()
+
+    d = await dg.gather()
+    assert d.notable_interactions == []
+    assert "NOTABLE LIKES AND REPOSTS" not in dg.render_text(d)
+    assert d.worth_sending is False
+
+
+async def test_notable_likes_alone_make_the_digest_worth_sending():
+    await healthy()
+    await someone("did:plc:v", is_verified=True)
+    await interacted("did:plc:v", "like", POST_A, hours_ago(2))
+
+    d = await dg.gather()
+    assert d.worth_sending is True
+    html = dg.render_html(d)
+    assert "NOTABLE LIKES AND REPOSTS YESTERDAY (1)" in html
+    assert 'href="https://bsky.app/profile/did:plc:me/post/aaa"' in html
+
+
+async def given_up_like(did: str) -> None:
+    """A like alert that used up every attempt."""
+    await interacted(did, "like", POST_A, hours_ago(2))
+    rows = await store.notable_interactions_since(hours_ago(3))
+    for _ in range(store.ALERT_MAX_ATTEMPTS):
+        await store.claim_interaction_alerts(rows)
+    await store.mark_interaction_alerts_failed(
+        [r["interaction_id"] for r in rows], "smtp down")
+
+
+async def test_given_up_like_and_repost_alerts_are_reported():
+    await healthy()
+    await someone("did:plc:v", is_verified=True)
+    await given_up_like("did:plc:v")
+
+    problems = (await dg.gather()).problems
+    assert any("1 like and repost alert" in p and "@" in p for p in problems), problems
+
+
+async def test_given_up_alerts_of_both_kinds_are_reported():
+    await healthy()
+    await follower("did:plc:arr", 0, is_verified=True)
+    await store.add_event("did:plc:arr", "followed")
+    await store.commit()
+    event_id = await store.max_event_id()
+    for _ in range(store.ALERT_MAX_ATTEMPTS):
+        await store.claim_alerts([{"event_id": event_id, "did": "did:plc:arr"}])
+    await someone("did:plc:v", is_verified=True)
+    await given_up_like("did:plc:v")
+
+    problems = (await dg.gather()).problems
+    assert any("arrival alert" in p for p in problems), problems
+    assert any("like and repost alert" in p for p in problems), problems
+
+
+async def test_a_subject_with_only_notable_likes_says_so_with_counts_only():
+    await healthy()
+    await someone("did:plc:v", is_verified=True)
+    await someone("did:plc:big", followers=25_400)
+    await interacted("did:plc:v", "like", POST_A, hours_ago(3))
+    await interacted("did:plc:big", "like", POST_A, hours_ago(2))
+    await interacted("did:plc:big", "repost", POST_B, hours_ago(1))
+
+    subject = (await dg.gather()).subject
+
+    assert "no change" not in subject
+    assert "2 notable likes, 1 repost" in subject
+    assert "did:plc" not in subject and "@" not in subject
+
+
+async def test_alerts_given_up_before_the_digest_window_are_not_reported_again():
+    await healthy()
+    await follower("did:plc:arr", 0, is_verified=True)
+    await store.add_event("did:plc:arr", "followed")
+    await store.commit()
+    event_id = await store.max_event_id()
+    for _ in range(store.ALERT_MAX_ATTEMPTS):
+        await store.claim_alerts([{"event_id": event_id, "did": "did:plc:arr"}])
+    await someone("did:plc:v", is_verified=True)
+    await given_up_like("did:plc:v")
+    db = await store._db()
+    await db.execute("UPDATE verified_alerts SET claimed_at = ?", (hours_ago(30),))
+    await db.execute("UPDATE interaction_alerts SET claimed_at = ?", (hours_ago(30),))
+    await store.commit()
+
+    problems = (await dg.gather()).problems
+
+    assert not any("alert" in p for p in problems), problems

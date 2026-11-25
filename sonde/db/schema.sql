@@ -364,3 +364,25 @@ CREATE TABLE IF NOT EXISTS verified_alerts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_valerts_unsent ON verified_alerts (sent_at);
+
+-- Notable like and repost alerts (sonde#11): one row per interaction emailed,
+-- written BEFORE the send, like `verified_alerts`. Keyed by the interaction,
+-- not the person, so a repeat like from the same account is news again.
+CREATE TABLE IF NOT EXISTS interaction_alerts (
+    interaction_id INTEGER PRIMARY KEY,   -- interactions.id
+    did        TEXT NOT NULL,
+    claimed_at TEXT NOT NULL,
+    sent_at    TEXT,                      -- NULL until the email actually left
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    error      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ialerts_unsent ON interaction_alerts (sent_at);
+
+-- The first line of the operator's own posts, for the alert email. getPosts
+-- once per post, not once per email: a popular post is liked all day.
+CREATE TABLE IF NOT EXISTS post_previews (
+    uri        TEXT PRIMARY KEY,
+    text       TEXT,
+    fetched_at TEXT NOT NULL
+);

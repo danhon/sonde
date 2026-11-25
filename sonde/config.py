@@ -87,6 +87,16 @@ class Settings:
     interaction_max_pages: int = field(
         default_factory=lambda: _int("INTERACTION_MAX_PAGES", 250))
 
+    # The light notifications check that runs after each head sweep. About
+    # 480 likes and reposts arrive a day, so 15 minutes is a page or two; the
+    # cap only matters after an outage, when the 6-hourly sync is the backstop.
+    notification_check_max_pages: int = field(
+        default_factory=lambda: _int("NOTIFICATION_CHECK_MAX_PAGES", 5))
+    # How old a like or repost author's follower count may be before the check
+    # asks getProfiles again. Crossing the large-account line is slow.
+    follower_count_max_age_days: int = field(
+        default_factory=lambda: _int("FOLLOWER_COUNT_MAX_AGE_DAYS", 7))
+
     # Exact relevance (getKnownFollowers) — auth only, 1+ calls per actor.
     relevance_top_n: int = field(default_factory=lambda: _int("RELEVANCE_TOP_N", 1000))
 
@@ -165,6 +175,22 @@ class Settings:
     verified_alert_to: str = field(
         default_factory=lambda: os.environ.get("VERIFIED_ALERT_TO", "")
     )
+    # Notable likes and reposts of the operator's posts, emailed after each
+    # head sweep (sonde#11). Off until switched on: deploying must not start
+    # emailing. Sent to the same address as arrival alerts.
+    enable_interaction_alerts: bool = field(
+        default_factory=lambda: _bool("ENABLE_INTERACTION_ALERTS", False)
+    )
+    # Older than this is left to the digest rather than emailed late.
+    interaction_alert_lookback_hours: int = field(
+        default_factory=lambda: _int("INTERACTION_ALERT_LOOKBACK_HOURS", 48)
+    )
+    # A large account has strictly more followers than this, and counts as
+    # notable even unverified (GLOSSARY.md). 10,000 is from sonde#10: in the
+    # 30 days measured, accounts above it were 70% of notable likes and reposts.
+    large_account_followers: int = field(
+        default_factory=lambda: _int("LARGE_ACCOUNT_FOLLOWERS", 10_000)
+    )
 
     # Web
     web_host: str = field(default_factory=lambda: os.environ.get("WEB_HOST", "0.0.0.0"))
@@ -204,6 +230,13 @@ class Settings:
     def verified_alerts_configured(self) -> bool:
         return bool(
             self.enable_verified_alerts
+            and self.smtp_host and self.smtp_username and self.alert_to
+        )
+
+    @property
+    def interaction_alerts_configured(self) -> bool:
+        return bool(
+            self.enable_interaction_alerts
             and self.smtp_host and self.smtp_username and self.alert_to
         )
 

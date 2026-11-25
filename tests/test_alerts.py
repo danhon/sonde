@@ -133,6 +133,81 @@ async def test_a_hidden_follower_does_not_reach_the_inbox(outbox):
     assert (await alerts.run_alerts())["sent"] == 0
 
 
+async def large_arrival(did: str, followers: int) -> None:
+    """An unverified account whose follower count has been fetched."""
+    await arrival(did, is_verified=False)
+    await store.apply_detailed_profile(did, actor(did, followersCount=followers))
+    await store.commit()
+
+
+async def test_a_large_unverified_arrival_is_emailed(outbox):
+    """Notable includes large accounts, not only verified ones (GLOSSARY)."""
+    await started()
+    await large_arrival("did:plc:big", 10_001)
+
+    assert (await alerts.run_alerts())["sent"] == 1
+    assert [r["did"] for r in outbox[0]] == ["did:plc:big"]
+
+
+async def test_the_email_says_why_each_arrival_is_notable(outbox):
+    """The email covers large accounts too, so it says "notable", not
+    "verified", and gives each person's reason."""
+    await started()
+    await large_arrival("did:plc:big", 25_400)
+    await arrival("did:plc:v")
+    await alerts.run_alerts()
+
+    body = alerts.render_text(outbox[0])
+    assert body.startswith("2 notable accounts just followed you.")
+    assert "verified followers" not in body
+    assert "about 25k followers" in body
+    assert "· verified" in body
+
+
+async def test_a_large_unverified_arrival_links_to_their_page_not_verified(outbox):
+    """/verified lists verified followers; a large account isn't on it."""
+    await started()
+    await large_arrival("did:plc:big", 25_400)
+    await alerts.run_alerts()
+
+    last = alerts.render_text(outbox[0]).splitlines()[-1]
+    assert last == f"https://{settings.service_host}/followers/did:plc:big"
+
+
+async def test_a_verified_arrival_still_links_to_verified(outbox):
+    await started()
+    await arrival("did:plc:v")
+    await alerts.run_alerts()
+
+    last = alerts.render_text(outbox[0]).splitlines()[-1]
+    assert last == f"https://{settings.service_host}/verified"
+
+
+async def test_exactly_ten_thousand_followers_is_not_large(outbox):
+    await started()
+    await large_arrival("did:plc:edge", 10_000)
+
+    assert (await alerts.run_alerts())["sent"] == 0
+    assert outbox == []
+
+
+async def test_the_large_account_threshold_is_a_setting(outbox, monkeypatch):
+    configure(monkeypatch, large_account_followers=500)
+    await started()
+    await large_arrival("did:plc:mid", 501)
+
+    assert (await alerts.run_alerts())["sent"] == 1
+
+
+async def test_a_hidden_large_account_does_not_reach_the_inbox(outbox):
+    await started()
+    await large_arrival("did:plc:bigspam", 50_000)
+    await store.set_ignored("did:plc:bigspam", True, reason="moderation")
+    await store.commit()
+
+    assert (await alerts.run_alerts())["sent"] == 0
+
+
 # ------------------------------------------------- never report the past
 
 async def test_the_first_enabled_run_alerts_nothing_that_came_before_it(outbox):
@@ -210,7 +285,7 @@ async def test_a_burst_names_some_and_counts_the_rest(outbox):
 
     body = alerts.render_text(outbox[0], limit=10)
     assert "and 2 more" in body
-    assert alerts.subject(outbox[0]) == "sonde: 12 verified followers"
+    assert alerts.subject(outbox[0]) == "sonde: 12 notable followers"
 
 
 # ------------------------------------------------------------- when it fails
@@ -301,7 +376,7 @@ async def test_a_single_arrival_is_named_in_the_subject(outbox):
     await arrival("did:plc:v", handle="ana.example.com")
     await alerts.run_alerts()
 
-    assert alerts.subject(outbox[0]) == "sonde: verified follower — @ana.example.com"
+    assert alerts.subject(outbox[0]) == "sonde: notable follower — @ana.example.com"
 
 
 async def test_the_message_is_addressed_and_plain_text(outbox):

@@ -1,4 +1,8 @@
-"""Email the moment a verified account follows you.
+"""Email the moment a notable account follows you.
+
+Notable (GLOSSARY.md): verified, a trusted verifier, or a large account, and
+not hidden. `store.notable_rule` is the one definition; `why_notable` says
+which of those applies, in words.
 
 The daily digest answers "what happened yesterday". This answers "someone worth
 knowing about just arrived", which is a different question with a different
@@ -80,26 +84,53 @@ def issuers(row: dict) -> list[str]:
     return [n for n in names if n]
 
 
+def approx_count(n: int) -> str:
+    """25,400 → "25k"; 1,240,000 → "1.2M"."""
+    if round(n / 1000) >= 1000:
+        return f"{n / 1_000_000:.1f}".removesuffix(".0") + "M"
+    if n >= 1000:
+        return f"{round(n / 1000)}k"
+    return f"{n:,}"
+
+
+def why_notable(row: dict) -> list[str]:
+    """Why an account counts as notable (GLOSSARY.md), in a few words each.
+
+    Mirrors `store.notable_rule`; the query has already decided they are
+    notable, this only says why.
+    """
+    why = []
+    if row.get("verified_status") == "valid":
+        why.append("verified")
+    if row.get("trusted_verifier_status") == "valid":
+        why.append("a trusted verifier")
+    count = row.get("followers_count")
+    if count is not None and count > settings.large_account_followers:
+        why.append(f"about {approx_count(count)} followers")
+    return why
+
+
 def describe(row: dict) -> list[str]:
     """The lines describing one arrival."""
     handle = row.get("handle") or row.get("did", "?")
     head = [f"@{handle}"]
     if row.get("display_name"):
         head.append(row["display_name"])
-    if row.get("followers_count") is not None:
-        head.append(f"{row['followers_count']:,} followers")
+    why = why_notable(row)
+    count = row.get("followers_count")
+    if count is not None and not any(w.endswith(" followers") for w in why):
+        head.append(f"{count:,} followers")
     if row.get("influence_score") is not None:
         head.append(f"score {row['influence_score']:.0f}")
 
+    # Why they are notable. A valid status with no record exposed stays plain
+    # "verified": "verified by nobody" would be wrong, and saying nothing
+    # would lose the reason the email exists.
     who = issuers(row)
-    if who:
-        head.append("verified by " + ", ".join(sorted(set(who))))
-    elif row.get("verified_status") == "valid":
-        # Valid status, no record exposed. Saying "verified by nobody" would be
-        # wrong; saying nothing would lose the reason the email exists.
-        head.append("verified")
-    if row.get("trusted_verifier_status") == "valid":
-        head.append("a trusted verifier")
+    for reason in why:
+        if reason == "verified" and who:
+            reason = "verified by " + ", ".join(sorted(set(who)))
+        head.append(reason)
     if row.get("event") == "returned":
         head.append("returned — they had followed before")
 
@@ -115,17 +146,17 @@ def describe(row: dict) -> list[str]:
 def subject(rows: list[dict]) -> str:
     if len(rows) == 1:
         handle = rows[0].get("handle") or rows[0].get("did", "?")
-        return f"sonde: verified follower — @{handle}"
-    return f"sonde: {len(rows)} verified followers"
+        return f"sonde: notable follower — @{handle}"
+    return f"sonde: {len(rows)} notable followers"
 
 
 def render_text(rows: list[dict], limit: int | None = None) -> str:
     limit = settings.verified_alert_max_listed if limit is None else limit
     out: list[str] = []
     out.append(
-        "A verified account just followed you."
+        "A notable account just followed you."
         if len(rows) == 1
-        else f"{len(rows)} verified accounts just followed you."
+        else f"{len(rows)} notable accounts just followed you."
     )
     out.append("")
     for row in rows[:limit]:
@@ -135,12 +166,26 @@ def render_text(rows: list[dict], limit: int | None = None) -> str:
         out.append(f"… and {len(rows) - limit} more.")
         out.append("")
     out.append(
-        "Verification is Bluesky's, not a judgement about the person — it says "
-        "an issuer vouched for who they are, nothing more."
+        "Notable means verified, a trusted verifier, or more than "
+        f"{settings.large_account_followers:,} followers. Verification is "
+        "Bluesky's, not a judgement about the person — it says an issuer "
+        "vouched for who they are, nothing more."
     )
     out.append("")
-    out.append(f"https://{settings.service_host}/verified")
+    out.append(_footer_link(rows))
     return "\n".join(out)
+
+
+def _footer_link(rows: list[dict]) -> str:
+    """/verified lists verified followers only, so it is the link only when
+    every arrival is there; otherwise the one follower's page, or the site."""
+    base = f"https://{settings.service_host}"
+    if all(r.get("verified_status") == "valid"
+           or r.get("trusted_verifier_status") == "valid" for r in rows):
+        return f"{base}/verified"
+    if len(rows) == 1:
+        return f"{base}/followers/{rows[0]['did']}"
+    return f"{base}/"
 
 
 def build_message(rows: list[dict]) -> EmailMessage:

@@ -24,6 +24,12 @@ async def run_alerts() -> dict:
     return await registry.run("alerts", alerts.run_alerts)
 
 
+async def run_interaction_alerts() -> dict:
+    from sonde.notify import interaction_alerts
+
+    return await registry.run("like-alerts", interaction_alerts.run_interaction_alerts)
+
+
 async def _alert_after_sweep() -> None:
     """Turn whatever the sweep just recorded into email, if it earned one.
 
@@ -35,7 +41,14 @@ async def _alert_after_sweep() -> None:
     try:
         await run_alerts()
     except Exception:  # noqa: BLE001 - a broken mailer must not break syncing
-        log.exception("verified-follower alerts failed")
+        log.exception("notable arrival alerts failed")
+    # The light notifications check, then notable like and repost alerts
+    # (sonde#11). Its own try: a failure here must not cost arrival alerts,
+    # nor the other way round.
+    try:
+        await run_interaction_alerts()
+    except Exception:  # noqa: BLE001
+        log.exception("notable like and repost alerts failed")
 
 
 async def run_head() -> dict:
