@@ -4421,6 +4421,32 @@ async def interaction_alert_candidates(
         return [dict(r) for r in await cur.fetchall()]
 
 
+async def notable_interactions_since(since_iso: str) -> list[dict]:
+    """Every notable like and repost since a moment, for the digest.
+
+    The same rule as the alerts, but no watermark, lookback or claim: the
+    digest is the complete record, alerted or not. Oldest first.
+    """
+    db = await _db()
+    notable, notable_params = notable_rule("a", "fs")
+    kinds = ",".join("?" for _ in NOTABLE_INTERACTION_KINDS)
+    async with db.execute(
+        f"""SELECT i.id AS interaction_id, i.did, i.kind, i.subject,
+                   i.occurred_at, a.handle, a.display_name, a.followers_count,
+                   a.verified_status, a.trusted_verifier_status
+              FROM interactions i
+              JOIN actors a ON a.did = i.did
+         LEFT JOIN follower_state fs ON fs.did = i.did
+             WHERE i.direction = 'inbound'
+               AND i.kind IN ({kinds})
+               AND julianday(i.occurred_at) >= julianday(?)
+               AND {notable}
+             ORDER BY i.occurred_at ASC, i.id ASC""",
+        (*NOTABLE_INTERACTION_KINDS, since_iso, *notable_params),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
 async def claim_interaction_alerts(rows: Sequence[dict]) -> None:
     """Record the attempt BEFORE the email is sent, as `claim_alerts` does."""
     if not rows:

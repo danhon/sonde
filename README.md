@@ -125,6 +125,7 @@ FULL_SWEEP_HOURS=6                 # whole list; also sets unfollow latency: 2 s
 PROFILE_TTL_DAYS=7                 # how often to re-fetch each follower's counts
 FOLLOWER_COUNT_MAX_AGE_DAYS=7      # same, for anyone who likes or reposts (strangers too)
 NOTIFICATION_CHECK_MAX_PAGES=5     # pages the 15-minute notifications check reads at most
+LARGE_ACCOUNT_FOLLOWERS=10000      # more than this counts as notable, verified or not
 
 # Display policy for followers who turned off logged-out visibility (1,838 of them).
 # false = show them, marked "private". true = count them, withhold from tables/exports.
@@ -204,7 +205,9 @@ changed or sonde did — both worth knowing.
 Two kinds, both off unless `SMTP_HOST`, `SMTP_USERNAME` and `NOTIFY_TO` are set.
 
 **The daily digest** (14:00 local) reports the day: arrivals ranked by
-influence, departures, returns, renames, and anything unhealthy. A quiet day
+influence, departures, returns, renames, the day's notable likes and reposts
+of your posts (grouped by post, alerted or not), and anything unhealthy,
+including any alert of either kind given up on. A quiet day
 sends nothing; a broken day always sends.
 
 **Verified-arrival alerts** fire as they happen — one head sweep of latency,
