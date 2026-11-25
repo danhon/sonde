@@ -29,6 +29,9 @@ from sonde.jobs import registry
 log = logging.getLogger("sonde.interactions")
 
 PAGE = 100
+# Where this sync's own walk of notifications last stopped. Not the table's
+# newest inbound row: the notifications check writes those too.
+INBOUND_SYNCED_KEY = "interactions_inbound_synced_to"
 # Reasons that say something about a relationship. `follow` is already tracked
 # by the sweep, and starterpack/verified notifications are not interactions.
 INTERESTING = {"like", "repost", "reply", "quote", "mention"}
@@ -41,8 +44,15 @@ def _thread_of(record: dict) -> str | None:
 
 
 async def ingest_notifications(client: BlueskyClient, *, max_pages: int,
-                               stop_at: str | None) -> tuple[list[dict], int]:
-    """Walk notifications newest-first, stopping at what we already have."""
+                               stop_at: str | None,
+                               authors: dict[str, dict] | None = None,
+                               ) -> tuple[list[dict], int]:
+    """Walk notifications newest-first, stopping at what we already have.
+
+    Pass `authors` to collect the profileView of everyone behind a stored
+    interaction, keyed by DID (newest sighting wins). It carries
+    `verification`, which the rows themselves do not.
+    """
     rows: list[dict] = []
     cursor: str | None = None
     pages = 0
@@ -69,6 +79,8 @@ async def ingest_notifications(client: BlueskyClient, *, max_pages: int,
             author = (note.get("author") or {}).get("did")
             if not author:
                 continue
+            if authors is not None:
+                authors.setdefault(author, note["author"])
             record = note.get("record") or {}
             rows.append({
                 "did": author, "direction": "inbound", "kind": reason,
@@ -180,16 +192,28 @@ async def sync(client: BlueskyClient | None = None, *,
     stored = 0
     try:
         # Incremental by default: walk back only to what we already hold.
-        stop_at = None if full else await store.latest_interaction_at()
+        # The notifications check stores inbound rows between syncs, so the
+        # table's newest row is no longer where this sync stopped. Inbound
+        # resumes from its own marker (falling back to the table for a
+        # database from before the check existed), which keeps this sync the
+        # backstop for anything a capped check skipped; outbound stops at the
+        # newest outbound row, which only this sync writes.
+        inbound_stop = (await store.get_meta(INBOUND_SYNCED_KEY)
+                        or await store.latest_interaction_at("inbound"))
         registry.progress("interactions", 0, 2, "sources", "notifications")
         inbound, in_pages = await ingest_notifications(
-            client, max_pages=max_pages, stop_at=stop_at)
+            client, max_pages=max_pages, stop_at=None if full else inbound_stop)
 
         registry.progress("interactions", 1, 2, "sources", "my own feed")
         outbound, out_pages = await ingest_outbound(
-            client, max_pages=max_pages, stop_at=stop_at)
+            client, max_pages=max_pages,
+            stop_at=None if full else await store.latest_interaction_at("outbound"))
 
         stored = await store.record_interactions(inbound + outbound)
+        if inbound:
+            newest = max(r["occurred_at"] for r in inbound)
+            if not inbound_stop or newest > inbound_stop:
+                await store.set_meta(INBOUND_SYNCED_KEY, newest)
         await store.score_relationships()
         await store.commit()
     except Exception as exc:  # noqa: BLE001

@@ -1680,9 +1680,20 @@ async def rebuild_affiliations() -> dict:
 
 # ------------------------------------------- M14 relationships
 
-async def latest_interaction_at() -> str | None:
+async def latest_interaction_at(direction: str | None = None) -> str | None:
+    """Newest stored interaction, optionally in one direction.
+
+    The sync walks inbound and outbound separately and must stop each at its
+    own newest row: the notifications check stores inbound rows between syncs,
+    so a shared stop point would skip outbound posts made in the meantime.
+    """
     db = await _db()
-    async with db.execute("SELECT MAX(occurred_at) AS m FROM interactions") as cur:
+    sql = "SELECT MAX(occurred_at) AS m FROM interactions"
+    params: tuple = ()
+    if direction is not None:
+        sql += " WHERE direction = ?"
+        params = (direction,)
+    async with db.execute(sql, params) as cur:
         row = await cur.fetchone()
     return row["m"] if row else None
 
@@ -1707,6 +1718,26 @@ async def record_interactions(rows: list[dict]) -> int:
     )
     await db.commit()
     return len(rows)
+
+
+async def authors_needing_counts(*, since_hours: int, max_age_days: int) -> list[str]:
+    """Recent like and repost authors whose follower count is missing or old.
+
+    Strangers included: notability needs a count for anyone who likes a post,
+    not just followers, and the follower hydration never reaches strangers.
+    """
+    db = await _db()
+    async with db.execute(
+        """SELECT DISTINCT a.did
+             FROM interactions i JOIN actors a ON a.did = i.did
+            WHERE i.direction = 'inbound' AND i.kind IN ('like', 'repost')
+              AND julianday(i.occurred_at) >= julianday('now') - ? / 24.0
+              AND (a.followers_count IS NULL OR a.profile_fetched_at IS NULL
+                   OR julianday('now') - julianday(a.profile_fetched_at) >= ?)
+            ORDER BY a.did""",
+        (since_hours, max_age_days),
+    ) as cur:
+        return [r["did"] for r in await cur.fetchall()]
 
 
 async def conversation_counts() -> dict[str, int]:
