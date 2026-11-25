@@ -149,8 +149,7 @@ it measures.
 
 ## Alerting never reports the past, and claims before it sends
 
-`sonde/notify/alerts.py` emails when a verified account (or a trusted verifier)
-arrives. Two invariants, both load-bearing:
+`sonde/notify/alerts.py` emails when a notable account (GLOSSARY.md) arrives. Two invariants, both load-bearing:
 
 **The watermark is only stamped when alerting is actually enabled.** It records
 where the event log stood the first time alerting ran, and nothing before it is
@@ -170,6 +169,18 @@ a sweep and an SMTP error must not fail one. The retry path is driven by the
 15-minute head sweep, so there is no separate timer. A new alertable event kind
 goes in `store.ALERT_EVENTS`; keying the claim table on the event id rather
 than the DID is what lets someone leave and come back and be news twice.
+
+**Likes and reposts** (`sonde/notify/interaction_alerts.py`, sonde#11) follow
+the same two rules with their own state: a watermark on the highest
+`interactions.id` (`interaction_alert_watermark` in `meta`) and a claim table,
+`interaction_alerts`, keyed by interaction, so a repeat like is news again. The
+15-minute notifications check runs after every head sweep **even with
+`ENABLE_INTERACTION_ALERTS` off**, because the digest's notable likes section
+needs the rows and follower counts. Nothing is claimed or sent 23:00–07:00
+Pacific; the night goes out as one email at 07:00. Because the check writes
+inbound rows between syncs, the 6-hourly interactions sync resumes inbound from
+its own meta marker, `interactions_inbound_synced_to`, not from the table's
+newest row — otherwise anything a capped check skipped would never be backfilled.
 
 ## A route test must stub `registry.spawn`
 

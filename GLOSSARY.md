@@ -127,10 +127,10 @@ An account that is verified, a trusted verifier, or a large account, and not hid
 A notable account starting to follow the operator.
 
 **Notable like or repost**:
-A notable account liking or reposting one of the operator's posts. Planned (sonde#10), not yet built.
+A notable account liking or reposting one of the operator's posts.
 
 **Alert**:
-An email telling the operator, soon after it happens, about a notable arrival or (once sonde#10 is built) every notable like or repost, several to an email. Nothing from before alerting was switched on is ever alerted.
+An email telling the operator, soon after it happens, about a notable arrival or every notable like or repost, several to an email. Nothing from before alerting was switched on is ever alerted.
 
 **Digest**:
 The daily email of what happened the day before, including any alert that could not be sent.
