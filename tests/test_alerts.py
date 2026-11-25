@@ -133,6 +133,47 @@ async def test_a_hidden_follower_does_not_reach_the_inbox(outbox):
     assert (await alerts.run_alerts())["sent"] == 0
 
 
+async def large_arrival(did: str, followers: int) -> None:
+    """An unverified account whose follower count has been fetched."""
+    await arrival(did, is_verified=False)
+    await store.apply_detailed_profile(did, actor(did, followersCount=followers))
+    await store.commit()
+
+
+async def test_a_large_unverified_arrival_is_emailed(outbox):
+    """Notable includes large accounts, not only verified ones (GLOSSARY)."""
+    await started()
+    await large_arrival("did:plc:big", 10_001)
+
+    assert (await alerts.run_alerts())["sent"] == 1
+    assert [r["did"] for r in outbox[0]] == ["did:plc:big"]
+
+
+async def test_exactly_ten_thousand_followers_is_not_large(outbox):
+    await started()
+    await large_arrival("did:plc:edge", 10_000)
+
+    assert (await alerts.run_alerts())["sent"] == 0
+    assert outbox == []
+
+
+async def test_the_large_account_threshold_is_a_setting(outbox, monkeypatch):
+    configure(monkeypatch, large_account_followers=500)
+    await started()
+    await large_arrival("did:plc:mid", 501)
+
+    assert (await alerts.run_alerts())["sent"] == 1
+
+
+async def test_a_hidden_large_account_does_not_reach_the_inbox(outbox):
+    await started()
+    await large_arrival("did:plc:bigspam", 50_000)
+    await store.set_ignored("did:plc:bigspam", True, reason="moderation")
+    await store.commit()
+
+    assert (await alerts.run_alerts())["sent"] == 0
+
+
 # ------------------------------------------------- never report the past
 
 async def test_the_first_enabled_run_alerts_nothing_that_came_before_it(outbox):
