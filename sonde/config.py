@@ -165,6 +165,12 @@ class Settings:
     verified_alert_to: str = field(
         default_factory=lambda: os.environ.get("VERIFIED_ALERT_TO", "")
     )
+    # A large account has strictly more followers than this, and counts as
+    # notable even unverified (GLOSSARY.md). 10,000 is from sonde#10: in the
+    # 30 days measured, accounts above it were 70% of notable likes and reposts.
+    large_account_followers: int = field(
+        default_factory=lambda: _int("LARGE_ACCOUNT_FOLLOWERS", 10_000)
+    )
 
     # Web
     web_host: str = field(default_factory=lambda: os.environ.get("WEB_HOST", "0.0.0.0"))

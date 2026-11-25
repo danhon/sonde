@@ -4221,6 +4221,25 @@ ALERT_MAX_ATTEMPTS = 3
 ALERT_EVENTS = ("followed", "returned")
 
 
+def notable_rule(actor: str = "a", state: str = "fs") -> tuple[str, list]:
+    """The one definition of notable (GLOSSARY.md), as a SQL condition.
+
+    Verified, a trusted verifier, or a large account (followers strictly
+    greater than `settings.large_account_followers`), and not hidden. Returns
+    `(sql, params)`; splice the sql into a WHERE with AND and the params at
+    that position. `actor` aliases `actors`; `state` aliases a LEFT JOIN of
+    `follower_state` on the same did, so a stranger (no state row) is not
+    hidden. The threshold is read per call, so tests may patch it.
+    """
+    sql = (
+        f"(({actor}.verified_status = 'valid'"
+        f" OR {actor}.trusted_verifier_status = 'valid'"
+        f" OR COALESCE({actor}.followers_count, 0) > ?)"
+        f" AND {state}.ignored_at IS NULL)"
+    )
+    return sql, [settings.large_account_followers]
+
+
 async def max_event_id() -> int:
     """The high-water mark of the event log. 0 on an empty database."""
     db = await _db()
@@ -4233,12 +4252,13 @@ async def alert_candidates(
     *, since_iso: str, after_event_id: int,
     max_attempts: int = ALERT_MAX_ATTEMPTS, limit: int = 200,
 ) -> list[dict]:
-    """Verified arrivals that still owe an email — new ones and retries alike.
+    """Notable arrivals that still owe an email — new ones and retries alike.
 
     Hidden followers are excluded: something the moderation lists took out of
     every table has no business arriving in your inbox instead.
     """
     db = await _db()
+    notable, notable_params = notable_rule("a", "fs")
     async with db.execute(
         f"""SELECT e.id AS event_id, e.did, e.event, e.detected_at,
                    a.handle, a.display_name, a.description, a.followers_count,
@@ -4252,14 +4272,13 @@ async def alert_candidates(
              WHERE e.event IN ({','.join('?' for _ in ALERT_EVENTS)})
                AND e.id > ?
                AND e.detected_at >= ?
-               AND (a.verified_status = 'valid'
-                    OR a.trusted_verifier_status = 'valid')
-               AND fs.ignored_at IS NULL
+               AND {notable}
                AND (va.event_id IS NULL
                     OR (va.sent_at IS NULL AND va.attempts < ?))
              ORDER BY e.id ASC
              LIMIT ?""",
-        (*ALERT_EVENTS, after_event_id, since_iso, max_attempts, limit),
+        (*ALERT_EVENTS, after_event_id, since_iso, *notable_params,
+         max_attempts, limit),
     ) as cur:
         rows = [dict(r) for r in await cur.fetchall()]
     for row in rows:
