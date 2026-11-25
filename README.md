@@ -230,6 +230,16 @@ The awkward parts are all about not being annoying:
 
 Set `ENABLE_VERIFIED_ALERTS=false` to turn them off, or `VERIFIED_ALERT_TO` to
 send them somewhere other than the digest.
+
+**Notable like and repost alerts** (`ENABLE_INTERACTION_ALERTS`, off by
+default) email every like or repost of your posts by a notable account —
+verified, a trusted verifier, or more than `LARGE_ACCOUNT_FOLLOWERS` — after
+the light notifications check that follows each head sweep. Same rules as
+arrival alerts (watermark on first enabled run, claim before send, three
+attempts, `INTERACTION_ALERT_LOOKBACK_HOURS`), plus: every event is listed,
+grouped by post; the subject gives counts, never names; and nothing is sent
+23:00–07:00 Pacific, when the night arrives as one email at 07:00. Same address
+as arrival alerts. It never marks your Bluesky notifications as read.
 ## Snapshots
 
 `follow_events` is the only data here that can't be re-fetched from Bluesky, so a
