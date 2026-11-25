@@ -123,6 +123,8 @@ API_RATE_LIMIT_PER_SECOND=3        # cap is 3000 req / 5 min / IP, shared house-
 HEAD_SWEEP_MINUTES=15              # cheap check for new followers (1–2 calls)
 FULL_SWEEP_HOURS=6                 # whole list; also sets unfollow latency: 2 sweeps = 12h
 PROFILE_TTL_DAYS=7                 # how often to re-fetch each follower's counts
+FOLLOWER_COUNT_MAX_AGE_DAYS=7      # same, for anyone who likes or reposts (strangers too)
+NOTIFICATION_CHECK_MAX_PAGES=5     # pages the 15-minute notifications check reads at most
 
 # Display policy for followers who turned off logged-out visibility (1,838 of them).
 # false = show them, marked "private". true = count them, withhold from tables/exports.

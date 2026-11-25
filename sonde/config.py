@@ -87,6 +87,16 @@ class Settings:
     interaction_max_pages: int = field(
         default_factory=lambda: _int("INTERACTION_MAX_PAGES", 250))
 
+    # The light notifications check that runs after each head sweep. About
+    # 480 likes and reposts arrive a day, so 15 minutes is a page or two; the
+    # cap only matters after an outage, when the 6-hourly sync is the backstop.
+    notification_check_max_pages: int = field(
+        default_factory=lambda: _int("NOTIFICATION_CHECK_MAX_PAGES", 5))
+    # How old a like or repost author's follower count may be before the check
+    # asks getProfiles again. Crossing the large-account line is slow.
+    follower_count_max_age_days: int = field(
+        default_factory=lambda: _int("FOLLOWER_COUNT_MAX_AGE_DAYS", 7))
+
     # Exact relevance (getKnownFollowers) — auth only, 1+ calls per actor.
     relevance_top_n: int = field(default_factory=lambda: _int("RELEVANCE_TOP_N", 1000))
 
