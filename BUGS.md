@@ -26,9 +26,16 @@ the same evening with BUG-15, BUG-17 and BUG-18. Every finding was reproduced ag
 running code before being written here, and one candidate was checked and
 withdrawn; HISTORY.md says which, and what the scan covered and found clean.
 
+Re-checked 2026-11-26 against the production database and `main`, and mirrored
+into the issue tracker: each entry below names its issue. Two entries did not
+survive the check. BUG-24's test had already been fixed in `a9bcf7b`, so it is
+gone. BUG-11's cause was wrong — the institution tables were seeded four days
+after the snapshot it measured — and it is rewritten here with what the data
+actually shows.
+
 Everything below is **reproduced, not suspected**, except where an entry says
 it is preventive. Where a number appears it was measured against the 2026-07-29
-snapshot.
+snapshot unless the entry says otherwise.
 
 Ranked by what it costs to leave alone.
 
@@ -41,28 +48,36 @@ has one, which is why it was never noticed there. The operator believes they
 tagged someone and did not. Reproduced: `POST /followers/{did}/tags` with an
 archived name returns 303, writes nothing, and the page says nothing.
 *Fix:* give the profile the `_notices.html` treatment, or pass the outcome back
-as a query parameter the way `/circles` does.
+as a query parameter the way `/circles` does. **sonde#17.**
 
 ### P2 — misleading, or friction the design meant to remove
 
-**BUG-11 · Institution matching is switched off in production.** `institutions`
-and `institution_roster` are both empty in the 2026-07-29 snapshot, so
-`institution_name` is NULL for all 10,038 followers and the M6/M15a/M20 path
-contributes nothing. Handle-domain matching — worth 0.95 confidence, the
-strongest employer signal sonde has — therefore never fires. Employer coverage
-is currently 41 people, all of it Wikidata `affiliations`. Found while
-investigating byline sources: the question "which outlet does this journalist
-write for" is unanswered mostly because a feature that answers it is dormant.
-*Fix:* find out why seeding never ran — `seed_institutions()` exists — then run
-it and the matcher. Check whether this is a fresh-deploy gap or something that
-wiped.
+**BUG-11 · Handle-domain institution matching matches nobody, because followers
+use their own domains.** Rewritten 2026-11-26; the original cause — "seeding
+never ran" — was wrong, and its fix would have changed nothing. Measured against
+the production database: `institutions` holds 22 rows and `institution_roster`
+810, seeded 2026-08-02, four days *after* the 2026-07-29 snapshot the entry
+measured. `institution_name` is set for 59 current followers — 38 `claimed`, 6
+`claimed (verified)`, 15 `attested` — so the path contributes. What contributes
+nothing is the `domain` method: zero actors, in any state, out of 13,581.
+
+That is not a seeding gap, it is the population. Across every seeded domain,
+exactly **one** current follower's handle sits on an institution domain
+(`tomhannen.ft.com`), and `attested` at 1.0 outranks `domain` at 0.95 for it.
+1,876 followers have custom handles; they are their own domains, not their
+employer's. `_handle_matches_domain` encodes an assumption the data does not
+support, and the 0.95 signal described as "the strongest employer signal sonde
+has" has almost nothing to match.
+*Fix (needs a decision):* take the domain from the actor's bio links rather than
+the handle, where employer domains actually appear, or drop the `domain` method
+and stop calling it the strongest signal. **sonde#23.**
 
 **BUG-02 · Batch tagging still bounces you to the top of the list.** M32 fixed
 this for profiles by redirecting to `#circles`; the batch bar still redirects to
 `#tagged`, and nothing on any page has that id. Confirmed by grep. Less painful
 than the profile case only because the bar is `position: sticky`.
 *Fix:* give the batch tables an anchor and pass it, exactly as the profile
-route now does.
+route now does. **sonde#18.**
 
 **BUG-03 · Restoring a merged circle leaves it claiming it was merged.**
 `archive_group(slug, archived=False)` clears `archived_at` but not
@@ -71,15 +86,16 @@ people went elsewhere — and they are now in both. Reproduced. Nothing warns
 before restoring a merged circle.
 *Fix (decided 2026-11-24, see GLOSSARY.md "Merged circle"):* a merged circle
 cannot be restored. Refuse the restore and show where its people went; undoing
-a merge means making a new circle.
+a merge means making a new circle. **sonde#19.**
 
 **BUG-04 · Dead phrase candidates accumulate forever.** Discovery only inserts
-and updates; nothing prunes. 18 undecided candidates currently match nobody, and
-re-running "Find new circles" will not remove them — the corrected rules stop
-them being *proposed again*, but the rows stay. They have to be rejected by
-hand.
+and updates; nothing prunes. 146 candidates are undecided on 2026-11-26 and 68
+of those have `member_count = 0` — up from the 18 measured on 2026-07-29, so the
+number grows with every discovery run. Re-running "Find new circles" will not
+remove them: the corrected rules stop them being *proposed again*, but the rows
+stay. They have to be rejected by hand.
 *Fix:* a job that rejects undecided candidates matching nobody under current
-rules. Bounded and auditable, and it must leave decided ones alone.
+rules. Bounded and auditable, and it must leave decided ones alone. **sonde#20.**
 
 **BUG-16 · `/export.csv` writes formulas straight through.** `handle` and
 `display_name` are chosen by the follower, and a leading `=`, `+`, `-` or `@`
@@ -96,6 +112,7 @@ machine, not a remote attack. It is the only route where a follower controls a
 byte sequence that another program executes.
 *Fix:* prefix a cell beginning `= + - @` or a control character with `'`. Do it
 in the writer, not the query, or the same text leaks through the next exporter.
+**sonde#21.**
 
 ### P3 — cosmetic, dead, or preventive
 
@@ -113,19 +130,7 @@ twelve distinct ones, every one benign. So this is preventive — and it is one
 being.
 *Fix:* read both from `os.environ` where they are used, the way `apikey.clients()`
 does. Or keep the fields and add the test that no template renders `settings`
-whole — but the first is the rule the codebase already wrote down.
-
-**BUG-24 · A test carries a hardcoded date and has now expired.**
-`tests/test_interaction_ranking.py` sets `NOW = datetime(2026, 7, 28)` and
-`test_the_window_filters_by_age` asserts that an event "5 days ago" falls inside
-a 30-day window. As of 2026-08-31 that event is 34 days old, the window returns
-nothing, and the test fails with `IndexError`. The suite is 941 passed, 1
-failed. Still the only failure on 2026-10-25, at 950 passed, after the
-alerting and digest commits landed. Nothing is wrong with `interaction_leaderboard`; the filter is doing
-exactly what it says. Left in the list rather than fixed in passing because a
-red suite is the thing that stops the next real failure being noticed.
-*Fix:* build the fixture off `datetime.now(timezone.utc)` rather than a literal.
-
+whole — but the first is the rule the codebase already wrote down. **sonde#22.**
 
 **BUG-06 · Stored `why` text still says "group".** Existing candidates keep the
 wording they were written with; only a fresh discovery run rewrites them. Self-

@@ -1689,3 +1689,45 @@ clamped to 1.0. **BUG-21**'s remainder: HTML responses carry
 `Cache-Control: private`. Not `no-store`, which would also switch off the
 browser's back/forward cache; the API keeps its own `private, no-store`.
 
+
+## 2026-11-26 — the bug list meets the issue tracker, and two entries don't survive
+
+BUGS.md had thirteen open entries and the issue tracker had none of them: only
+BUG-20/21 had ever been filed (as #6, closed with the fix). `fleet-issues list`
+therefore reported four sonde issues while the ranked list said thirteen, and
+answering "what can be done next" meant reading the file by hand. Seven are now
+filed — #17 BUG-01, #18 BUG-02, #19 BUG-03, #20 BUG-04, #21 BUG-16, #22 BUG-23,
+#23 BUG-11 — each body short and pointing back here rather than copying the
+entry, so the two lists cannot drift apart in detail. BUG-06 to BUG-10 stay
+notes, not work, and filing them would have drowned the list.
+
+Checking each entry against `main` and the production database before filing it
+was the point of the exercise, and it removed two.
+
+**BUG-24 was already fixed** in `a9bcf7b` — `NOW` is built from
+`datetime.now(timezone.utc)` — and the entry outlived the fix, which is exactly
+what the file's own first line forbids. Deleted. The suite is 1,131 passed.
+
+**BUG-11's cause was wrong.** The entry said institution matching was switched
+off because `institutions` and `institution_roster` were empty. In production
+they hold 22 and 810 rows, seeded 2026-08-02 — four days *after* the 2026-07-29
+snapshot the entry measured. Running the seeder, its stated fix, would have
+changed nothing; it had already run. `institution_name` is set for 59 current
+followers, so the path contributes.
+
+What does not contribute is the `domain` method: zero actors, any state, of
+13,581. The reason is the population, not a bug in the matcher. Across every
+seeded domain exactly one current follower's handle is an institution
+subdomain — `tomhannen.ft.com` — and that one is matched by `attested` at 1.0,
+which `consider()` prefers. 1,876 followers have custom handles and they are
+their own domains. `_handle_matches_domain` assumes a person's handle is a
+subdomain of their employer; in this population it almost never is. The 0.95
+signal called "the strongest employer signal sonde has" had nothing to match,
+and the fix is to move where the domain comes from — bio links — or to drop the
+method and stop calling it that. Filed as #23, `needs-triage`, because choosing
+between those is a design call.
+
+Measured by copying the live database out of the container to a temporary
+directory and querying it read-only with `sqlite3`; the copy was deleted
+afterwards. The numbers above are from that copy on 2026-11-26, not from a
+snapshot five months old.
