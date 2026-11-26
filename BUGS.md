@@ -26,9 +26,9 @@ the same evening with BUG-15, BUG-17 and BUG-18. Every finding was reproduced ag
 running code before being written here, and one candidate was checked and
 withdrawn; HISTORY.md says which, and what the scan covered and found clean.
 
-Re-checked 2026-11-26 against the production database and `main`, and mirrored
-into the issue tracker: each entry below names its issue. Two entries did not
-survive the check. BUG-24's test had already been fixed in `a9bcf7b`, so it is
+Re-checked 2026-11-26 against the production database and `main`, and the ones
+that are ready to be worked were mirrored into the issue tracker, each naming
+its issue below. Two entries did not survive the check. BUG-24's test had already been fixed in `a9bcf7b`, so it is
 gone. BUG-11's cause was wrong — the institution tables were seeded four days
 after the snapshot it measured — and it is rewritten here with what the data
 actually shows.
@@ -70,7 +70,8 @@ support, and the 0.95 signal described as "the strongest employer signal sonde
 has" has almost nothing to match.
 *Fix (needs a decision):* take the domain from the actor's bio links rather than
 the handle, where employer domains actually appear, or drop the `domain` method
-and stop calling it the strongest signal. **sonde#23.**
+and stop calling it the strongest signal. This one stays here rather than in
+the tracker: choosing between those is a design call, not a piece of work.
 
 **BUG-02 · Batch tagging still bounces you to the top of the list.** M32 fixed
 this for profiles by redirecting to `#circles`; the batch bar still redirects to

@@ -1695,11 +1695,11 @@ browser's back/forward cache; the API keeps its own `private, no-store`.
 BUGS.md had thirteen open entries and the issue tracker had none of them: only
 BUG-20/21 had ever been filed (as #6, closed with the fix). `fleet-issues list`
 therefore reported four sonde issues while the ranked list said thirteen, and
-answering "what can be done next" meant reading the file by hand. Seven are now
-filed — #17 BUG-01, #18 BUG-02, #19 BUG-03, #20 BUG-04, #21 BUG-16, #22 BUG-23,
-#23 BUG-11 — each body short and pointing back here rather than copying the
-entry, so the two lists cannot drift apart in detail. BUG-06 to BUG-10 stay
-notes, not work, and filing them would have drowned the list.
+answering "what can be done next" meant reading the file by hand. Six are now
+filed — #17 BUG-01, #18 BUG-02, #19 BUG-03, #20 BUG-04, #21 BUG-16, #22 BUG-23 —
+each body short and pointing back here rather than copying the entry, so the two
+lists cannot drift apart in detail. BUG-06 to BUG-10 stay notes, not work, and
+filing them would have drowned the list.
 
 Checking each entry against `main` and the production database before filing it
 was the point of the exercise, and it removed two.
@@ -1724,8 +1724,9 @@ their own domains. `_handle_matches_domain` assumes a person's handle is a
 subdomain of their employer; in this population it almost never is. The 0.95
 signal called "the strongest employer signal sonde has" had nothing to match,
 and the fix is to move where the domain comes from — bio links — or to drop the
-method and stop calling it that. Filed as #23, `needs-triage`, because choosing
-between those is a design call.
+method and stop calling it that. BUG-11 stays in BUGS.md rather than moving to
+the tracker, because choosing between those is a design call, not a piece of
+work to hand to an agent. It was filed as #23 first and closed for that reason.
 
 Measured by copying the live database out of the container to a temporary
 directory and querying it read-only with `sqlite3`; the copy was deleted
