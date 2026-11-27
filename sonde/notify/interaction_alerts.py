@@ -44,7 +44,9 @@ from zoneinfo import ZoneInfo
 from sonde.api.client import BlueskyClient
 from sonde.config import settings
 from sonde.db import store
+from sonde.notify import email_html
 from sonde.notify.alerts import why_notable
+from sonde.notify.avatars import avatars
 from sonde.sync.notifications import check_notifications, fetch_previews
 
 log = logging.getLogger("sonde.interaction_alerts")
@@ -165,12 +167,19 @@ def render_text(rows: list[dict], previews: dict[str, str | None]) -> str:
     return "\n".join(out)
 
 
-def build_message(rows: list[dict], previews: dict[str, str | None]) -> EmailMessage:
+def build_message(rows: list[dict], previews: dict[str, str | None],
+                  images: dict[str, bytes] | None = None) -> EmailMessage:
     message = EmailMessage()
     message["Subject"] = subject(rows)
     message["From"] = settings.smtp_username
     message["To"] = settings.alert_to
+    # The plain part first and unchanged: a watch and a lock screen read it.
     message.set_content(render_text(rows, previews))
+    email_html.attach(
+        message,
+        email_html.render_interactions(rows, previews, images or {}),
+        images or {},
+    )
     return message
 
 
@@ -240,7 +249,7 @@ async def _alert(client: BlueskyClient, now: datetime, after: int,
         retries = sum(1 for r in rows if r["attempts"])
         previews = await fetch_previews(
             client, list(dict.fromkeys(r["subject"] for r in rows if r["subject"])))
-        message = build_message(rows, previews)
+        message = build_message(rows, previews, await avatars(rows))
         await store.claim_interaction_alerts(rows)
         ids = [r["interaction_id"] for r in rows]
         try:

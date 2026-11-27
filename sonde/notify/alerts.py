@@ -40,6 +40,8 @@ from email.message import EmailMessage
 
 from sonde.config import settings
 from sonde.db import store
+from sonde.notify import email_html
+from sonde.notify.avatars import avatars
 
 log = logging.getLogger("sonde.alerts")
 
@@ -188,12 +190,16 @@ def _footer_link(rows: list[dict]) -> str:
     return f"{base}/"
 
 
-def build_message(rows: list[dict]) -> EmailMessage:
+def build_message(rows: list[dict],
+                  images: dict[str, bytes] | None = None) -> EmailMessage:
     message = EmailMessage()
     message["Subject"] = subject(rows)
     message["From"] = settings.smtp_username
     message["To"] = settings.alert_to
+    # The plain part first and unchanged: a watch and a lock screen read it.
     message.set_content(render_text(rows))
+    email_html.attach(message, email_html.render_arrivals(rows, images or {}),
+                      images or {})
     return message
 
 
@@ -202,7 +208,7 @@ async def send(rows: list[dict]) -> bool:
     import aiosmtplib
 
     await aiosmtplib.send(
-        build_message(rows),
+        build_message(rows, await avatars(rows)),
         hostname=settings.smtp_host,
         port=settings.smtp_port,
         username=settings.smtp_username,

@@ -72,12 +72,18 @@ def outbox(monkeypatch):
         sent.append(message)
         return True
 
+    async def no_avatars(rows):
+        return {}
+
     monkeypatch.setattr(ia, "send", fake_send)
+    # No test here may reach the network for a picture.
+    monkeypatch.setattr(ia, "avatars", no_avatars)
     return sent
 
 
 def body(message) -> str:
-    return message.get_content()
+    """The plain-text part: the email is multipart now, with an HTML twin."""
+    return message.get_body(("plain",)).get_content()
 
 
 class FakeBluesky:
@@ -319,7 +325,7 @@ async def test_it_goes_to_the_arrival_alert_address(monkeypatch, bsky, outbox):
     await run(bsky, pacific(10))
 
     assert outbox[0]["To"] == "phone@example.com"
-    assert outbox[0].get_content_type() == "text/plain"
+    assert outbox[0].get_content_type() == "multipart/alternative"
 
 
 async def test_post_text_is_fetched_once_and_cached(bsky, outbox):
@@ -523,3 +529,44 @@ async def test_each_line_carries_the_accounts_bio(bsky, outbox):
     assert "Second line" not in "\n".join(lines)
     # A long bio says it was cut.
     assert lines[at["Cy"] + 1] == f"    “{'x' * 160}…”"
+
+
+# --------------------------------------------- the HTML alternative (sonde#16)
+
+def test_the_like_email_carries_an_html_alternative():
+    rows = [{"interaction_id": 1, "did": "did:plc:a", "kind": "like",
+             "subject": POST_A, "occurred_at": "2026-11-26T17:09:53.000Z",
+             "handle": "ana.example.com", "display_name": "Ana",
+             "description": None, "followers_count": 41_000,
+             "verified_status": "valid", "trusted_verifier_status": "none",
+             "attempts": 0, "avatar_url": "https://cdn.example/a.jpg"}]
+    message = ia.build_message(rows, {POST_A: "First line"})
+    assert message.get_body(("html",)) is not None
+
+
+def test_the_plain_text_part_is_unchanged():
+    rows = [{"interaction_id": 1, "did": "did:plc:a", "kind": "like",
+             "subject": POST_A, "occurred_at": "2026-11-26T17:09:53.000Z",
+             "handle": "ana.example.com", "display_name": "Ana",
+             "description": None, "followers_count": 41_000,
+             "verified_status": "valid", "trusted_verifier_status": "none",
+             "attempts": 0}]
+    previews = {POST_A: "First line"}
+    message = ia.build_message(rows, previews)
+    assert (message.get_body(("plain",)).get_content().rstrip("\n")
+            == ia.render_text(rows, previews))
+
+
+async def test_a_run_attaches_an_avatar(bsky, outbox, monkeypatch):
+    async def fake(rows):
+        return {"did:plc:v": b"\xff\xd8\xff\xd9"}
+
+    monkeypatch.setattr(ia, "avatars", fake)
+    await started()
+    bsky.add(verified("did:plc:v", handle="v.bsky.social"), "like", pacific(9, 40))
+
+    await run(bsky, pacific(10))
+
+    images = [p for p in outbox[0].walk() if p.get_content_type() == "image/jpeg"]
+    assert len(images) == 1
+    assert images[0]["Content-Disposition"].startswith("inline")

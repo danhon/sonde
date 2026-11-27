@@ -4293,7 +4293,8 @@ async def alert_candidates(
     notable, notable_params = notable_rule("a", "fs")
     async with db.execute(
         f"""SELECT e.id AS event_id, e.did, e.event, e.detected_at,
-                   a.handle, a.display_name, a.description, a.followers_count,
+                   a.handle, a.display_name, a.description, a.avatar_url,
+                   a.followers_count,
                    a.influence_score, a.verified_status,
                    a.trusted_verifier_status, a.verifications,
                    COALESCE(va.attempts, 0) AS attempts
@@ -4407,7 +4408,7 @@ async def interaction_alert_candidates(
     async with db.execute(
         f"""SELECT i.id AS interaction_id, i.did, i.kind, i.subject,
                    i.occurred_at, a.handle, a.display_name, a.description,
-                   a.followers_count, a.verified_status,
+                   a.avatar_url, a.followers_count, a.verified_status,
                    a.trusted_verifier_status,
                    COALESCE(ia.attempts, 0) AS attempts
               FROM interactions i

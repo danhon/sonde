@@ -379,14 +379,15 @@ async def test_a_single_arrival_is_named_in_the_subject(outbox):
     assert alerts.subject(outbox[0]) == "sonde: notable follower — @ana.example.com"
 
 
-async def test_the_message_is_addressed_and_plain_text(outbox):
+async def test_the_message_is_addressed_and_carries_plain_text(outbox):
     await started()
     await arrival("did:plc:v")
     await alerts.run_alerts()
 
     message = alerts.build_message(outbox[0])
     assert message["To"] == "me@example.com"
-    assert message.get_content_type() == "text/plain"
+    assert message.get_content_type() == "multipart/alternative"
+    assert message.get_body(("plain",)) is not None
 
 
 async def test_alerts_can_be_addressed_somewhere_other_than_the_digest(monkeypatch, outbox):
@@ -396,3 +397,59 @@ async def test_alerts_can_be_addressed_somewhere_other_than_the_digest(monkeypat
     await alerts.run_alerts()
 
     assert alerts.build_message(outbox[0])["To"] == "phone@example.com"
+
+
+# --------------------------------------------- the HTML alternative (sonde#16)
+
+IMG = b"\xff\xd8\xff\xd9"
+THUMB = b"\xff\xd8" + b"x" * 1500          # a realistic shrunk avatar
+
+
+def rows_for(did: str = "did:plc:v") -> list[dict]:
+    return [{
+        "event_id": 1, "did": did, "event": "followed",
+        "detected_at": "2026-11-26T17:09:53.000Z", "handle": "v.bsky.social",
+        "display_name": None, "description": None, "followers_count": 10,
+        "influence_score": 0.0, "verified_status": "valid",
+        "trusted_verifier_status": "none", "verifications": "[]",
+        "attempts": 0, "avatar_url": "https://cdn.example/a.jpg",
+    }]
+
+
+async def test_candidates_carry_the_avatar_url(outbox):
+    await started()
+    await arrival("did:plc:v", avatar="https://cdn.example/a.jpg")
+    rows = await store.alert_candidates(
+        since_iso="2000-01-01T00:00:00+00:00", after_event_id=0)
+    assert rows[0]["avatar_url"] == "https://cdn.example/a.jpg"
+
+
+def test_the_email_carries_an_html_alternative():
+    message = alerts.build_message(rows_for(), {"did:plc:v": IMG})
+    assert message.get_body(("html",)) is not None
+
+
+def test_the_plain_text_part_is_unchanged():
+    message = alerts.build_message(rows_for(), {})
+    assert (message.get_body(("plain",)).get_content().rstrip("\n")
+            == alerts.render_text(rows_for()))
+
+
+def test_every_avatar_reference_has_its_part_and_vice_versa():
+    from sonde.notify.email_html import cid_for
+
+    message = alerts.build_message(rows_for(), {"did:plc:v": IMG})
+    html = message.get_body(("html",)).get_content()
+    parts = {p["Content-ID"].strip("<>") for p in message.walk()
+             if p.get_content_type() == "image/jpeg"}
+    assert parts == {cid_for("did:plc:v")}
+    assert f"cid:{cid_for('did:plc:v')}" in html
+
+
+def test_the_message_stays_under_sixty_kb_with_twelve_avatars(monkeypatch):
+    configure(monkeypatch, verified_alert_max_listed=12)
+    rows = [{**rows_for()[0], "did": f"did:plc:{i}"} for i in range(12)]
+    message = alerts.build_message(rows, {r["did"]: THUMB for r in rows})
+    images = [p for p in message.walk() if p.get_content_type() == "image/jpeg"]
+    assert len(images) == 12
+    assert len(message.as_bytes()) < 60_000

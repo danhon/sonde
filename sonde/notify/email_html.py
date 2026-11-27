@@ -30,8 +30,9 @@ from html import escape
 from typing import Sequence
 
 from sonde.config import settings
-from sonde.notify import alerts as arrival_alerts
-from sonde.notify import interaction_alerts as interaction_alerts
+
+# The two alert modules import this one, so these are imported inside the
+# renderers rather than at module load: a top-level import would be a cycle.
 
 MARKUP_BUDGET = 20_000
 
@@ -173,6 +174,8 @@ def render_arrivals(
     rows: Sequence[dict], images: dict[str, bytes], *, limit: int | None = None
 ) -> str:
     """A notable account followed you: one row each, the arrivals shape."""
+    from sonde.notify import alerts as arrival_alerts
+
     limit = settings.verified_alert_max_listed if limit is None else limit
     subject_line = (
         "A notable account just followed you."
@@ -210,6 +213,9 @@ def render_interactions(
     rows: Sequence[dict], previews: dict[str, str | None], images: dict[str, bytes]
 ) -> str:
     """Notable likes and reposts, one card per post of yours."""
+    from sonde.notify import interaction_alerts
+    from sonde.notify.alerts import why_notable
+
     headline = (interaction_alerts.subject(rows)
                 .removeprefix("sonde: ").capitalize() + " on your posts.")
     out = [_page(headline), '<tr><td style="padding:0 2px 10px;">']
@@ -227,7 +233,7 @@ def render_interactions(
         out.append(_card_open(title, interaction_alerts.post_link(uri)))
         for row in events:
             verb = "liked" if row.get("kind") == "like" else "reposted"
-            why = ", ".join(arrival_alerts.why_notable(row)) or "notable"
+            why = ", ".join(why_notable(row)) or "notable"
             fact = f"{why} · {verb} · {interaction_alerts._when(row['occurred_at'])}"
             out.append(_person(row, images, fact=fact))
         out.append(_note(
