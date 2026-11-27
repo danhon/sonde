@@ -170,7 +170,12 @@ class Settings:
     )
     # How many are named in the email before it says "and N more".
     verified_alert_max_listed: int = field(
-        default_factory=lambda: _int("VERIFIED_ALERT_MAX_LISTED", 10)
+        default_factory=lambda: _int("VERIFIED_ALERT_MAX_LISTED", 12)
+    )
+    # At most one alert email this often, both kinds together. The head sweep
+    # keeps running every 15 minutes; this is how often it may turn into mail.
+    alert_interval_minutes: int = field(
+        default_factory=lambda: _int("ALERT_INTERVAL_MINUTES", 30)
     )
     verified_alert_to: str = field(
         default_factory=lambda: os.environ.get("VERIFIED_ALERT_TO", "")

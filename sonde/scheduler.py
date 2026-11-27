@@ -37,7 +37,20 @@ async def _alert_after_sweep() -> None:
     a sweep and an SMTP failure must not fail one. Hanging off the sweeps rather
     than a timer of its own also means the 15-minute head sweep is what drives
     the retry path, so there is no second schedule to reason about.
+
+    One email per `alert_interval_minutes`, both kinds together (sonde#16). The
+    gate reads when an email last actually left, not when a sweep last tried:
+    most sweeps have nothing to say, and a sweep that emailed nothing must not
+    hold the next real alert back. A failed send leaves `sent_at` NULL, so it
+    is simply retried on the next sweep.
     """
+    last = await store.last_alert_email_at()
+    if last is not None:
+        age = (datetime.now(timezone.utc) - last).total_seconds()
+        if age < settings.alert_interval_minutes * 60:
+            log.debug("alert email %.0fs ago; holding this sweep", age)
+            return
+
     try:
         await run_alerts()
     except Exception:  # noqa: BLE001 - a broken mailer must not break syncing

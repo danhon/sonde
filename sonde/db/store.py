@@ -1013,6 +1013,28 @@ async def record_progress(run_id: int, *, pages: int | None = None,
     await db.commit()
 
 
+async def last_alert_email_at() -> datetime | None:
+    """When an alert email last left, of either kind, or None if never.
+
+    Both kinds share one gate, so this is one query over both claim tables. A
+    failed send leaves `sent_at` NULL, which is the point: no email went, so
+    nothing is held back.
+    """
+    db = await _db()
+    async with db.execute(
+        "SELECT MAX(sent_at) AS last FROM ("
+        "  SELECT sent_at FROM verified_alerts"
+        "  UNION ALL SELECT sent_at FROM interaction_alerts)"
+    ) as cur:
+        row = await cur.fetchone()
+    if not row or not row["last"]:
+        return None
+    try:
+        return datetime.fromisoformat(row["last"])
+    except ValueError:
+        return None
+
+
 async def last_run_ages() -> dict[str, float]:
     """Seconds since each job kind last completed successfully.
 
