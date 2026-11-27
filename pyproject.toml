@@ -21,6 +21,7 @@ dependencies = [
     # raises in the container while working fine on a dev Mac. The digest is
     # scheduled in Pacific time, so this is load-bearing.
     "tzdata>=2024.1",
+    "pillow>=13.0.0",
 ]
 
 [project.scripts]
