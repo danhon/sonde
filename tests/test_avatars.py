@@ -98,3 +98,23 @@ async def test_a_failed_fetch_does_not_cost_the_others():
     ]
     got = await av.avatars(rows, transport=httpx.MockTransport(handler))
     assert list(got) == ["did:plc:good"]
+
+
+async def test_a_decoder_that_raises_is_no_picture(monkeypatch):
+    """The contract is "any failure means initials", so no decode error escapes."""
+    def boom(raw, size=av.SIZE):
+        raise RuntimeError("Pillow fell over")
+
+    monkeypatch.setattr(av, "shrink", boom)
+    rows = [{"did": "did:plc:a", "avatar_url": "https://cdn.example/a.jpg"}]
+    assert await av.avatars(rows, transport=transport_for(png())) == {}
+
+
+async def test_a_redirect_away_from_https_is_refused():
+    def handler(request):
+        if request.url.scheme == "https":
+            return httpx.Response(302, headers={"Location": "http://cdn.example/a.jpg"})
+        return httpx.Response(200, content=png())
+
+    rows = [{"did": "did:plc:a", "avatar_url": "https://cdn.example/a.jpg"}]
+    assert await av.avatars(rows, transport=httpx.MockTransport(handler)) == {}

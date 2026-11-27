@@ -257,7 +257,12 @@ async def _alert(client: BlueskyClient, now: datetime, after: int,
         retries = sum(1 for r in rows if r["attempts"])
         previews = await fetch_previews(
             client, list(dict.fromkeys(r["subject"] for r in rows if r["subject"])))
-        message = build_message(rows, previews, await avatars(rows))
+        try:
+            images = await avatars(rows)
+        except Exception:  # noqa: BLE001 - a picture is never worth the email
+            log.exception("avatar fetch failed; sending the email with initials")
+            images = {}
+        message = build_message(rows, previews, images)
         await store.claim_interaction_alerts(rows)
         ids = [r["interaction_id"] for r in rows]
         try:

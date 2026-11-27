@@ -203,9 +203,12 @@ third party. `make email-preview` renders both from made-up data.
 
 **One email every `ALERT_INTERVAL_MINUTES` (30), both kinds together.** The gate
 is `_alert_due()` in `scheduler.py`, keyed on the newest `sent_at` in either
-claim table — when an email last left, not last was attempted, so a failed send
-retries on the next sweep. The notifications *read* is deliberately not gated:
-the digest's notable-likes section needs those rows at 15 minutes.
+claim table, and re-read after the arrival email so two kinds due at once can't
+send twice in one sweep. It keys on when an email last left, not last was
+attempted, so a failed send retries on the next sweep, and it allows five
+minutes of slack because a sweep always measures the age a few seconds short.
+The notifications *read* is deliberately not gated: the digest's notable-likes
+section needs those rows at 15 minutes.
 
 ## A route test must stub `registry.spawn`
 

@@ -117,14 +117,17 @@ at 30 minutes.
 **One gate, both kinds, 30 minutes.** `ALERT_INTERVAL_MINUTES`, default 30,
 beside the sweep settings. The gate keys on when an email actually left — the
 newest `sent_at` across both claim tables — so a failed send is retried on the
-next sweep and a restart cannot reset it. Both kinds share the one gate: a like
+next sweep and a restart cannot reset it. The age is measured when a sweep
+begins, always a few seconds short of the interval, so the comparison allows
+five minutes of slack; without it every email would wait a third sweep. Both kinds share the one gate: a like
 email therefore holds a notable arrival back for up to 30 minutes, which the
 digest backstops. The notification *read* inside `run_interaction_alerts` is not
 gated: the digest's notable-likes section needs those rows at 15 minutes, and it
 costs no email.
 
-**Retries stay at three attempts.** At 30 minutes that is 90 before an alert is
-abandoned; the digest is the backstop and already reports it.
+**Retries stay at three attempts.** A failed send is not an email, so the gate
+does not hold it back: the next head sweep tries again, and three attempts span
+about 45 minutes. The digest is the backstop and already reports the failure.
 
 **No caching of avatar bytes.** At most a handful of new people per email, and
 a cache means a table, storage growth and invalidation to keep right.
@@ -147,7 +150,9 @@ webfont. The HTML references only `cid:` and sonde's own URLs.
 - Every `<img>` is a `cid:` reference; every reference has exactly one part and
   every part is referenced.
 - The HTML part stays under 20 KB and the whole message under 60 KB, so the
-  102 KB clip cannot come back through a template that grows.
+  102 KB clip cannot come back through a template that grows. The overnight
+  batch — likes held through quiet hours, up to 07:00 — is not capped, so a
+  separate test keeps 30 events under the clip as well.
 - At most 12 avatars; past that, initials.
 - 5 s per avatar, 8 s total, and the send proceeds regardless.
 

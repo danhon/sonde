@@ -43,7 +43,7 @@ def calls(monkeypatch):
     return seen
 
 
-async def sent_arrival(minutes_ago: int) -> None:
+async def sent_arrival(minutes_ago: float) -> None:
     """One arrival that really was emailed, then aged."""
     await store.upsert_actor(verified("did:plc:v"))
     await store.mark_seen("did:plc:v", 0)
@@ -108,3 +108,48 @@ async def test_a_like_email_holds_an_arrival_email_back(calls):
 
     await scheduler._alert_after_sweep()
     assert calls == ["likes (read only)"]
+
+
+async def test_two_kinds_waiting_together_is_still_one_email(monkeypatch):
+    """The gate must be re-read after the first email, not computed once."""
+    seen = []
+
+    async def arrivals():
+        seen.append("arrivals")
+        now = datetime.now(timezone.utc).isoformat()
+        db = await store._db()
+        await db.execute(
+            "INSERT INTO verified_alerts (event_id, did, claimed_at, sent_at)"
+            " VALUES (1, 'did:plc:x', ?, ?)", (now, now))
+        await store.commit()
+
+    async def likes(*, send=True):
+        seen.append(("likes", send))
+
+    monkeypatch.setattr(scheduler, "run_alerts", arrivals)
+    monkeypatch.setattr(scheduler, "run_interaction_alerts", likes)
+
+    await scheduler._alert_after_sweep()
+    assert seen == ["arrivals", ("likes", False)]
+
+
+async def test_a_sweep_that_finished_a_little_early_still_counts_as_thirty_minutes(calls):
+    """The age is measured when a sweep starts, so it is always a few seconds short."""
+    await sent_arrival(minutes_ago=29.9)
+    await scheduler._alert_after_sweep()
+    assert calls == ["arrivals", "likes"]
+
+
+async def test_slack_does_not_let_an_email_out_at_fifteen_minutes(calls):
+    await sent_arrival(minutes_ago=15)
+    await scheduler._alert_after_sweep()
+    assert calls == ["likes (read only)"]
+
+
+async def test_a_broken_gate_does_not_fail_the_sweep(calls, monkeypatch):
+    async def boom():
+        raise RuntimeError("database is gone")
+
+    monkeypatch.setattr(store, "last_alert_email_at", boom)
+    await scheduler._alert_after_sweep()
+    assert calls == ["arrivals", "likes"]

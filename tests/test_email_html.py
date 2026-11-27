@@ -121,3 +121,25 @@ def test_the_markup_budget_holds_for_a_twelve_person_card():
     html = h.render_interactions(
         people, {"at://did:plc:me/app.bsky.feed.post/1": "One post, twelve people"}, {})
     assert len(html.encode()) < h.MARKUP_BUDGET
+
+
+def test_long_unbroken_text_can_wrap_on_a_phone():
+    """A bio that is one long URL must not widen the card past the screen."""
+    html = h.render_arrivals(rows(), {})
+    assert "overflow-wrap:anywhere" in html
+
+
+def test_the_notable_note_is_said_once_an_email():
+    html = h.render_interactions(interactions(), {}, {})
+    assert html.count("Notable means") == 1
+
+
+def test_a_nights_worth_of_likes_stays_under_gmails_clip():
+    people = []
+    for i in range(30):
+        people.append({**ROW, "did": f"did:plc:{i:02d}", "kind": "like",
+                       "subject": "at://did:plc:me/app.bsky.feed.post/1",
+                       "occurred_at": "2026-11-26T17:09:53.000Z"})
+    html = h.render_interactions(
+        people, {"at://did:plc:me/app.bsky.feed.post/1": "A post that took off"}, {})
+    assert len(html.encode()) < 102_000

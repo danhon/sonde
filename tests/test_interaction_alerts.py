@@ -583,3 +583,18 @@ async def test_a_gated_run_still_reads_notifications(bsky, outbox):
     assert outbox == []
     rows = await store.notable_interactions_since("2000-01-01T00:00:00+00:00")
     assert [r["did"] for r in rows] == ["did:plc:v"]
+
+
+async def test_a_broken_avatar_does_not_stop_the_like_email(bsky, outbox, monkeypatch):
+    """One person's undecodable picture must not silence every like alert."""
+    async def boom(rows):
+        raise RuntimeError("Pillow fell over")
+
+    monkeypatch.setattr(ia, "avatars", boom)
+    await started()
+    bsky.add(verified("did:plc:v"), "like", pacific(9, 40))
+
+    result = await ia.run_interaction_alerts(bsky.client, now=pacific(10))
+
+    assert result["sent"] == 1
+    assert len(outbox) == 1

@@ -113,7 +113,7 @@ def _person(row: dict, images: dict[str, bytes], *, fact: str) -> str:
     return f"""
     <tr>
       <td width="{AVATAR + 12}" valign="top" style="padding:10px 0 10px 14px;">{_avatar(row, images)}</td>
-      <td valign="top" style="padding:10px 14px 10px 0;">
+      <td valign="top" style="padding:10px 14px 10px 0;word-break:break-word;overflow-wrap:anywhere;">
         <div style="font:600 14px/1.35 {SANS};color:{INK};">{escape(name)}{name_extra}</div>
         <div style="font:12px/1.45 {SANS};color:{MUTED};padding-top:2px;">{escape(fact)}</div>
         {_bio(row)}
@@ -140,7 +140,8 @@ def _card_open(title_html: str, href: str) -> str:
             f'cellspacing="0" border="0" style="background:{CARD};border:1px solid '
             f'{RULE};border-radius:8px;margin:0 0 14px;">'
             f'<tr><td colspan="2" style="padding:14px 14px 0;">'
-            f'<div style="font:15px/1.4 {SANS};color:{INK};">{title_html}</div>'
+            f'<div style="font:15px/1.4 {SANS};color:{INK};word-break:break-word;'
+            f'overflow-wrap:anywhere;">{title_html}</div>'
             f"{view}</td></tr>")
 
 
@@ -236,12 +237,12 @@ def render_interactions(
             why = ", ".join(why_notable(row)) or "notable"
             fact = f"{why} · {verb} · {interaction_alerts._when(row['occurred_at'])}"
             out.append(_person(row, images, fact=fact))
-        out.append(_note(
-            "Notable means verified, a trusted verifier, or more than "
-            f"{settings.large_account_followers:,} followers."
-        ))
         out.append("</table></td></tr>")
 
+    out.append(_note(
+        "Notable means verified, a trusted verifier, or more than "
+        f"{settings.large_account_followers:,} followers."
+    ))
     out.append(_close(f"https://{settings.service_host}/"))
     return "\n".join(out)
 

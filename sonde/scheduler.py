@@ -53,6 +53,9 @@ async def _alert_after_sweep() -> None:
             await run_alerts()
         except Exception:  # noqa: BLE001 - a broken mailer must not break syncing
             log.exception("notable arrival alerts failed")
+        # Re-read: the arrival email may just have gone, and the two kinds share
+        # one gate. Computing `send` once would let both out in one sweep.
+        send = await _alert_due()
     # The light notifications check always runs, then the like and repost alert
     # (sonde#11) if it is due. The check is not gated because the digest's
     # notable-likes section reads the rows it writes; only email is held back.
@@ -64,13 +67,29 @@ async def _alert_after_sweep() -> None:
         log.exception("notable like and repost alerts failed")
 
 
+# A sweep takes a few seconds to notice it is due and a few more to record that
+# the email left, so the age measured two sweeps later is always slightly short
+# of the interval. Without this the email waits a third sweep: 45 minutes.
+GATE_SLACK_SECONDS = 5 * 60
+
+
 async def _alert_due() -> bool:
-    """Whether an alert email may go out now: not more than one per interval."""
-    last = await store.last_alert_email_at()
+    """Whether an alert email may go out now: not more than one per interval.
+
+    A failure here must not fail the sweep, which is the rule this whole
+    function already lives under. If the gate cannot be read it is treated as
+    open: the send path fails safely on its own (claims are written before the
+    send and the digest backstops anything missed).
+    """
+    try:
+        last = await store.last_alert_email_at()
+    except Exception:  # noqa: BLE001
+        log.exception("could not read the alert gate; treating it as open")
+        return True
     if last is None:
         return True
     age = (datetime.now(timezone.utc) - last).total_seconds()
-    if age < settings.alert_interval_minutes * 60:
+    if age < settings.alert_interval_minutes * 60 - GATE_SLACK_SECONDS:
         log.debug("alert email %.0fs ago; holding this sweep", age)
         return False
     return True

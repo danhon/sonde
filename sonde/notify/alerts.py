@@ -207,8 +207,14 @@ async def send(rows: list[dict]) -> bool:
     """Returns True if an email actually went out."""
     import aiosmtplib
 
+    try:
+        images = await avatars(rows)
+    except Exception:  # noqa: BLE001 - a picture is never worth the email
+        log.exception("avatar fetch failed; sending the email with initials")
+        images = {}
+
     await aiosmtplib.send(
-        build_message(rows, await avatars(rows)),
+        build_message(rows, images),
         hostname=settings.smtp_host,
         port=settings.smtp_port,
         username=settings.smtp_username,

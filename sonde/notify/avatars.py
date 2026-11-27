@@ -52,7 +52,10 @@ def shrink(raw: bytes, size: int = SIZE) -> bytes | None:
             out = io.BytesIO()
             image.save(out, "JPEG", quality=QUALITY, optimize=True)
             return out.getvalue()
-    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError):
+    except Exception:  # noqa: BLE001 - the contract is "any failure, no picture"
+        # Pillow's decoders raise whatever they like on a crafted file:
+        # SyntaxError, struct.error, EOFError, MemoryError. One person's broken
+        # avatar must never cost the email.
         return None
 
 
@@ -61,6 +64,11 @@ async def _fetch(client: httpx.AsyncClient, url: str) -> bytes | None:
     try:
         async with client.stream("GET", url) as response:
             if response.status_code != 200:
+                return None
+            # A redirect can leave https; the bytes are ours to choose, but a
+            # plaintext fetch is not something this app does.
+            if response.url.scheme != "https":
+                log.debug("avatar redirect left https: %s", response.url)
                 return None
             body = bytearray()
             async for chunk in response.aiter_bytes():
@@ -110,8 +118,14 @@ async def avatars(
         exc = task.exception()
         if exc is not None or not task.result():
             continue
-        # Decoding is CPU-bound; a thread keeps the mail job responsive.
-        jpeg = await asyncio.to_thread(shrink, task.result())
+        # Decoding is CPU-bound; a thread keeps the mail job responsive. A
+        # decode that still raises despite shrink()'s own guard costs this one
+        # picture and nothing else.
+        try:
+            jpeg = await asyncio.to_thread(shrink, task.result())
+        except Exception:  # noqa: BLE001
+            log.exception("could not decode an avatar; using initials")
+            continue
         if jpeg:
             out[did] = jpeg
     return out
