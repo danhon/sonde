@@ -101,9 +101,13 @@ def _images(count: int) -> dict[str, bytes]:
 
 def _inline(html: str, images: dict[str, bytes]) -> str:
     """Swap every `cid:` for the JPEG it stands for, in a data URI."""
-    for did, jpeg in images.items():
-        token = email_html.cid_for(did)
-        data = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
+    pictures = dict(images)
+    if email_html.CHECK_CID in html:
+        pictures[email_html.CHECK_CID] = email_html.check_png()
+    for did, jpeg in pictures.items():
+        token = email_html.cid_for(did) if did in images else did
+        mime = "jpeg" if did in images else "png"
+        data = f"data:image/{mime};base64," + base64.b64encode(jpeg).decode()
         html = html.replace(f"cid:{token}", data)
     return html
 

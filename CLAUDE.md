@@ -195,11 +195,13 @@ alternative to related`.
 **`filename=` on a related part makes it an attachment.** Then the avatar is a
 paperclip. No filename, and the disposition comes out `inline`.
 
-**Gmail clips a message over 102 KB.** So `MARKUP_BUDGET` (20 KB) and a 60 KB
+**Gmail clips a message over 102 KB.** So `MARKUP_BUDGET` (24 KB) and a 60 KB
 whole-message test are asserted; avatars are fetched, re-encoded by Pillow at
 64 px, and embedded as `cid:` parts at most 12 per email, with initials for
-anyone past the cap or whose fetch failed. Nothing in the HTML loads from a
-third party. `make email-preview` renders both from made-up data.
+anyone past the cap or whose fetch failed, and one shared PNG blue check for a
+verified account (drawn in `email_html.check_png()`, attached only when the HTML
+refers to it). Nothing in the HTML loads from a third party. `make
+email-preview` renders both from made-up data.
 
 **One email every `ALERT_INTERVAL_MINUTES` (30), both kinds together.** The gate
 is `_alert_due()` in `scheduler.py`, keyed on the newest `sent_at` in either

@@ -51,7 +51,7 @@ def test_a_person_with_a_picture_gets_a_cid_reference():
 
 def test_a_person_without_a_picture_gets_initials_not_an_image():
     html = h.render_arrivals(rows(), {})
-    assert "<img" not in html
+    assert f'src="cid:{h.cid_for("did:plc:00")}"' not in html
     assert ">AE<" in html
 
 
@@ -143,3 +143,36 @@ def test_a_nights_worth_of_likes_stays_under_gmails_clip():
     html = h.render_interactions(
         people, {"at://did:plc:me/app.bsky.feed.post/1": "A post that took off"}, {})
     assert len(html.encode()) < 102_000
+
+
+# ------------------------------------------------- Bluesky's blue check (sonde#16)
+
+def verified() -> list[dict]:
+    return [{**ROW, "verified_status": "valid"}]
+
+
+def test_a_verified_person_shows_the_blue_check():
+    html = h.render_arrivals(verified(), {})
+    assert f'src="cid:{h.CHECK_CID}"' in html
+    assert 'alt="verified"' in html
+
+
+def test_an_unverified_person_shows_no_check():
+    rows = [{**ROW, "verified_status": "none"}]
+    assert h.CHECK_CID not in h.render_arrivals(rows, {})
+
+
+def test_the_check_is_attached_once_when_the_html_uses_it():
+    message = EmailMessage()
+    message.set_content("plain")
+    h.attach(message, h.render_arrivals(verified(), {}), {})
+    icons = [p for p in message.walk() if p.get("Content-ID", "").strip("<>") == h.CHECK_CID]
+    assert len(icons) == 1
+    assert icons[0]["Content-Disposition"].startswith("inline")
+
+
+def test_a_check_is_only_attached_if_the_html_refers_to_one():
+    message = EmailMessage()
+    message.set_content("plain")
+    h.attach(message, h.render_arrivals([{**ROW, "verified_status": "none"}], {}), {})
+    assert [p for p in message.walk() if p.get_content_type() == "image/png"] == []

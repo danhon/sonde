@@ -24,17 +24,25 @@ the colours here are chosen to survive that rather than to be a dark theme.
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import io
 from email.message import EmailMessage
 from html import escape
 from typing import Sequence
+
+from PIL import Image, ImageDraw
 
 from sonde.config import settings
 
 # The two alert modules import this one, so these are imported inside the
 # renderers rather than at module load: a top-level import would be a cycle.
 
-MARKUP_BUDGET = 20_000
+# The real limit is Gmail's 102 KB clip; this is a guard so a template that
+# grows is caught here rather than in someone's inbox. Sized for a 12-person
+# alert (arrivals is capped there; likes are not, and a 30-event test pins the
+# clip separately) — the blue check costs about 100 bytes per person.
+MARKUP_BUDGET = 24_000
 
 # One red for accents, slate for everything else, and no pure black or white so
 # Gmail's inversion has something to interpolate from.
@@ -50,6 +58,45 @@ MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
 SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
 
 AVATAR = 44
+
+# Bluesky's verified badge, drawn here rather than fetched: an email may not
+# load a remote icon, and the check is one shared picture per message, not one
+# per person. Two parts, not one: a 28px PNG shown at 14px, so a retina screen
+# has something to draw.
+CHECK_CID = "check@sonde"
+CHECK_PX = 28
+CHECK_SHOWN = 14
+BLUESKY_BLUE = "#1d9bf0"
+
+
+@functools.lru_cache(maxsize=1)
+def check_png() -> bytes:
+    """The blue check, as a transparent PNG.
+
+    A circle rather than Bluesky's scalloped seal: at 14px the difference is
+    not what anyone sees, and a faithful trace would be a binary asset in the
+    repo for one icon.
+    """
+    scale = 4
+    size = CHECK_PX * scale
+    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.ellipse((0, 0, size - 1, size - 1), fill=BLUESKY_BLUE)
+    draw.line(
+        [(size * 0.28, size * 0.52), (size * 0.44, size * 0.68),
+         (size * 0.74, size * 0.34)],
+        fill="white", width=int(size * 0.11), joint="curve",
+    )
+    out = io.BytesIO()
+    image.save(out, "PNG", optimize=True)
+    return out.getvalue()
+
+
+def _check() -> str:
+    # Kept terse on purpose: this repeats once per person, and the whole
+    # message has a Gmail-clip budget.
+    return (f'<img src="cid:{CHECK_CID}" width="{CHECK_SHOWN}" height="{CHECK_SHOWN}" '
+            f'alt="verified" style="vertical-align:middle;margin-left:4px;">')
 
 
 def cid_for(did: str) -> str:
@@ -114,7 +161,7 @@ def _person(row: dict, images: dict[str, bytes], *, fact: str) -> str:
     <tr>
       <td width="{AVATAR + 12}" valign="top" style="padding:10px 0 10px 14px;">{_avatar(row, images)}</td>
       <td valign="top" style="padding:10px 14px 10px 0;word-break:break-word;overflow-wrap:anywhere;">
-        <div style="font:600 14px/1.35 {SANS};color:{INK};">{escape(name)}{name_extra}</div>
+        <div style="font:600 14px/1.35 {SANS};color:{INK};">{escape(name)}{name_extra}{_check() if row.get("verified_status") == "valid" else ""}</div>
         <div style="font:12px/1.45 {SANS};color:{MUTED};padding-top:2px;">{escape(fact)}</div>
         {_bio(row)}
         <div style="font:11px/1.6 {SANS};color:{FAINT};padding-top:3px;">{links}</div>
@@ -251,6 +298,9 @@ def attach(message: EmailMessage, html: str, images: dict[str, bytes]) -> EmailM
     """Add the HTML alternative and the pictures it refers to."""
     message.add_alternative(html, subtype="html")
     related = message.get_payload()[-1]
+    if f"cid:{CHECK_CID}" in html:
+        related.add_related(check_png(), maintype="image", subtype="png",
+                            cid=f"<{CHECK_CID}>")
     for did, jpeg in images.items():
         if f"cid:{cid_for(did)}" not in html:
             continue

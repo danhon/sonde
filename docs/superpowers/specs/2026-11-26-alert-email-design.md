@@ -149,7 +149,7 @@ webfont. The HTML references only `cid:` and sonde's own URLs.
 
 - Every `<img>` is a `cid:` reference; every reference has exactly one part and
   every part is referenced.
-- The HTML part stays under 20 KB and the whole message under 60 KB, so the
+- The HTML part stays under 24 KB and the whole message under 60 KB, so the
   102 KB clip cannot come back through a template that grows. The overnight
   batch — likes held through quiet hours, up to 07:00 — is not capped, so a
   separate test keeps 30 events under the clip as well.
