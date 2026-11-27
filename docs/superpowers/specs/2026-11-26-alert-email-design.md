@@ -1,7 +1,7 @@
 # A designed HTML alert email, with pictures — design
 
 **Date:** 2026-11-26
-**Status:** approved, not yet implemented
+**Status:** implemented, not yet deployed
 **Issue:** sonde#16
 
 Both alert emails are plain text. This gives them an HTML alternative with

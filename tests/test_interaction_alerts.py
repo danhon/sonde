@@ -570,3 +570,16 @@ async def test_a_run_attaches_an_avatar(bsky, outbox, monkeypatch):
     images = [p for p in outbox[0].walk() if p.get_content_type() == "image/jpeg"]
     assert len(images) == 1
     assert images[0]["Content-Disposition"].startswith("inline")
+
+
+async def test_a_gated_run_still_reads_notifications(bsky, outbox):
+    """The 30-minute interval gates email, not the read the digest depends on."""
+    await started()
+    bsky.add(verified("did:plc:v"), "like", pacific(9, 40))
+
+    result = await ia.run_interaction_alerts(bsky.client, now=pacific(10), send=False)
+
+    assert result["skipped"] == "inside the alert interval"
+    assert outbox == []
+    rows = await store.notable_interactions_since("2000-01-01T00:00:00+00:00")
+    assert [r["did"] for r in rows] == ["did:plc:v"]

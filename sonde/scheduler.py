@@ -24,10 +24,13 @@ async def run_alerts() -> dict:
     return await registry.run("alerts", alerts.run_alerts)
 
 
-async def run_interaction_alerts() -> dict:
+async def run_interaction_alerts(*, send: bool = True) -> dict:
+    """Read notifications always; email only if `send` — see _alert_after_sweep."""
     from sonde.notify import interaction_alerts
 
-    return await registry.run("like-alerts", interaction_alerts.run_interaction_alerts)
+    return await registry.run(
+        "like-alerts", lambda: interaction_alerts.run_interaction_alerts(send=send)
+    )
 
 
 async def _alert_after_sweep() -> None:
@@ -44,24 +47,33 @@ async def _alert_after_sweep() -> None:
     hold the next real alert back. A failed send leaves `sent_at` NULL, so it
     is simply retried on the next sweep.
     """
-    last = await store.last_alert_email_at()
-    if last is not None:
-        age = (datetime.now(timezone.utc) - last).total_seconds()
-        if age < settings.alert_interval_minutes * 60:
-            log.debug("alert email %.0fs ago; holding this sweep", age)
-            return
-
+    send = await _alert_due()
+    if send:
+        try:
+            await run_alerts()
+        except Exception:  # noqa: BLE001 - a broken mailer must not break syncing
+            log.exception("notable arrival alerts failed")
+    # The light notifications check always runs, then the like and repost alert
+    # (sonde#11) if it is due. The check is not gated because the digest's
+    # notable-likes section reads the rows it writes; only email is held back.
+    # Its own try: a failure here must not cost arrival alerts, nor the other
+    # way round.
     try:
-        await run_alerts()
-    except Exception:  # noqa: BLE001 - a broken mailer must not break syncing
-        log.exception("notable arrival alerts failed")
-    # The light notifications check, then notable like and repost alerts
-    # (sonde#11). Its own try: a failure here must not cost arrival alerts,
-    # nor the other way round.
-    try:
-        await run_interaction_alerts()
+        await run_interaction_alerts(send=send)
     except Exception:  # noqa: BLE001
         log.exception("notable like and repost alerts failed")
+
+
+async def _alert_due() -> bool:
+    """Whether an alert email may go out now: not more than one per interval."""
+    last = await store.last_alert_email_at()
+    if last is None:
+        return True
+    age = (datetime.now(timezone.utc) - last).total_seconds()
+    if age < settings.alert_interval_minutes * 60:
+        log.debug("alert email %.0fs ago; holding this sweep", age)
+        return False
+    return True
 
 
 async def run_head() -> dict:

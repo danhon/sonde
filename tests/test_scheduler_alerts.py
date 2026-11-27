@@ -35,8 +35,8 @@ def calls(monkeypatch):
     async def arrivals():
         seen.append("arrivals")
 
-    async def likes():
-        seen.append("likes")
+    async def likes(*, send=True):
+        seen.append("likes" if send else "likes (read only)")
 
     monkeypatch.setattr(scheduler, "run_alerts", arrivals)
     monkeypatch.setattr(scheduler, "run_interaction_alerts", likes)
@@ -68,7 +68,8 @@ async def test_the_first_email_goes(calls):
 async def test_a_second_email_inside_thirty_minutes_is_skipped(calls):
     await sent_arrival(minutes_ago=5)
     await scheduler._alert_after_sweep()
-    assert calls == []
+    # No arrival email, no like email — but the notifications read still runs.
+    assert calls == ["likes (read only)"]
 
 
 async def test_an_email_after_thirty_minutes_goes(calls):
@@ -81,7 +82,7 @@ async def test_the_interval_is_a_setting(calls, monkeypatch):
     monkeypatch.setitem(settings.__dict__, "alert_interval_minutes", 60)
     await sent_arrival(minutes_ago=45)
     await scheduler._alert_after_sweep()
-    assert calls == []
+    assert calls == ["likes (read only)"]
 
 
 async def test_a_failed_send_does_not_hold_the_next_one(calls):
@@ -106,4 +107,4 @@ async def test_a_like_email_holds_an_arrival_email_back(calls):
     await store.commit()
 
     await scheduler._alert_after_sweep()
-    assert calls == []
+    assert calls == ["likes (read only)"]

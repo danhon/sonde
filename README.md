@@ -149,7 +149,8 @@ SMTP_HOST=
 SMTP_USERNAME=
 SMTP_PASSWORD=
 NOTIFY_TO=
-ENABLE_VERIFIED_ALERTS=true        # instant email when a verified account follows
+ENABLE_VERIFIED_ALERTS=true        # instant email when a NOTABLE account follows
+ALERT_INTERVAL_MINUTES=30          # at most one alert email this often, both kinds
 
 # Database — set by Dockerfile default; only override if needed
 # DB_PATH=/data/sonde.db
@@ -226,18 +227,26 @@ The awkward parts are all about not being annoying:
   than a duplicate one. That is the cheaper failure because the digest lists the
   same arrival anyway — and after three failed attempts it gives up and the
   digest says so, rather than retrying forever in silence.
-- **A burst is one email.** Twelve verified arrivals in a sweep is one message
-  naming ten of them.
+- **A burst is one email.** Twelve notable arrivals in a sweep is one message
+  naming twelve of them, and no more than one alert email goes out every
+  `ALERT_INTERVAL_MINUTES` (30), whether arrivals or likes.
 - **Hidden followers stay hidden.** Anything the moderation lists removed from
   the tables doesn't turn up in your inbox instead.
+
+Both alert emails carry an HTML part with each person's avatar embedded in it
+(no remote images: nothing loads when the email is opened, and Gmail's
+102 KB clip is a test, not a hope). The plain-text part is the whole email it
+has always been, because that is what a watch and a lock screen show. Run
+`make email-preview` to look at both layouts with made-up people in them.
 
 Set `ENABLE_VERIFIED_ALERTS=false` to turn them off, or `VERIFIED_ALERT_TO` to
 send them somewhere other than the digest.
 
 **Notable like and repost alerts** (`ENABLE_INTERACTION_ALERTS`, off by
 default) email every like or repost of your posts by a notable account —
-verified, a trusted verifier, or more than `LARGE_ACCOUNT_FOLLOWERS` — after
-the light notifications check that follows each head sweep. Same rules as
+verified, a trusted verifier, or more than `LARGE_ACCOUNT_FOLLOWERS` — read
+after every notifications check (every 15 minutes), and emailed at most once
+every `ALERT_INTERVAL_MINUTES`. Same rules as
 arrival alerts (watermark on first enabled run, claim before send, three
 attempts, `INTERACTION_ALERT_LOOKBACK_HOURS`), plus: every event is listed,
 grouped by post; the subject gives counts, never names; and nothing is sent

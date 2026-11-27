@@ -182,6 +182,31 @@ inbound rows between syncs, the 6-hourly interactions sync resumes inbound from
 its own meta marker, `interactions_inbound_synced_to`, not from the table's
 newest row — otherwise anything a capped check skipped would never be backfilled.
 
+## Both alert emails are multipart, and the pictures are inside
+
+`sonde/notify/email_html.py` renders both shapes — cards for likes and reposts,
+a list of people for arrivals — and attaches them. Three things about composing
+that message cost an afternoon each to learn:
+
+**`add_related()` on the message raises.** Call it on the HTML part
+(`message.get_payload()[-1]`); on the message it is `Cannot convert
+alternative to related`.
+
+**`filename=` on a related part makes it an attachment.** Then the avatar is a
+paperclip. No filename, and the disposition comes out `inline`.
+
+**Gmail clips a message over 102 KB.** So `MARKUP_BUDGET` (20 KB) and a 60 KB
+whole-message test are asserted; avatars are fetched, re-encoded by Pillow at
+64 px, and embedded as `cid:` parts at most 12 per email, with initials for
+anyone past the cap or whose fetch failed. Nothing in the HTML loads from a
+third party. `make email-preview` renders both from made-up data.
+
+**One email every `ALERT_INTERVAL_MINUTES` (30), both kinds together.** The gate
+is `_alert_due()` in `scheduler.py`, keyed on the newest `sent_at` in either
+claim table — when an email last left, not last was attempted, so a failed send
+retries on the next sweep. The notifications *read* is deliberately not gated:
+the digest's notable-likes section needs those rows at 15 minutes.
+
 ## A route test must stub `registry.spawn`
 
 A POST to `/settings/sync/{kind}` or `/settings/batch/{key}` starts a real

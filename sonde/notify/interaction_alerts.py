@@ -202,8 +202,13 @@ async def send(message: EmailMessage) -> bool:
 # ------------------------------------------------------------------ the run
 
 async def run_interaction_alerts(client: BlueskyClient | None = None, *,
-                                 now: datetime | None = None) -> dict:
-    """Read notifications, then email every notable like or repost owed one."""
+                                 now: datetime | None = None,
+                                 send: bool = True) -> dict:
+    """Read notifications, then email every notable like or repost owed one.
+
+    `send=False` still reads: the read is what feeds the digest's notable-likes
+    section, and the 30-minute alert interval gates email, not work.
+    """
     owns_client = client is None
     client = client or BlueskyClient()
     now = now or datetime.now(timezone.utc)
@@ -225,6 +230,9 @@ async def run_interaction_alerts(client: BlueskyClient | None = None, *,
         after, stamped_at = await _watermark(now)
         if in_quiet_hours(now):
             result["skipped"] = "quiet hours"
+            return result
+        if not send:
+            result["skipped"] = "inside the alert interval"
             return result
         return {**result, **await _alert(client, now, after, stamped_at)}
     finally:
