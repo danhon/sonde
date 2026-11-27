@@ -78,12 +78,12 @@ Chosen: **sonde-light**. A pale slate background reads as a grey box under
 Gmail's inversion, and maintaining two designs for one reader is cost without
 payoff.
 
-**Cadence.** *A gate on the send, keyed on the last attempt* (one schedule, the
-sweeps, still drive everything) or *a cron at :00/:30* (a second schedule, with
-its own misfires and overlaps, that can no longer fire straight after the sweep
-that found the event).
+**Cadence.** *A gate on the send* (one schedule, the sweeps, still drive
+everything) or *a cron at :00/:30* (a second schedule, with its own misfires and
+overlaps, that can no longer fire straight after the sweep that found the
+event).
 
-Chosen: **the gate**. Not more than one attempt every 30 minutes.
+Chosen: **the gate**. Not more than one email every 30 minutes.
 
 ## Decisions
 
@@ -115,11 +115,13 @@ the email exists to report. Both are bounded by the window in practice: about 8
 at 30 minutes.
 
 **One gate, both kinds, 30 minutes.** `ALERT_INTERVAL_MINUTES`, default 30,
-beside the sweep settings. The gate keys on the last *attempt* of either kind,
-so a failing SMTP does not retry every 15 minutes, and it reads the run log, so
-a restart cannot reset it. The notification *read* inside
-`run_interaction_alerts` is not gated: the digest's notable-likes section needs
-those rows at 15 minutes, and it costs no email.
+beside the sweep settings. The gate keys on when an email actually left — the
+newest `sent_at` across both claim tables — so a failed send is retried on the
+next sweep and a restart cannot reset it. Both kinds share the one gate: a like
+email therefore holds a notable arrival back for up to 30 minutes, which the
+digest backstops. The notification *read* inside `run_interaction_alerts` is not
+gated: the digest's notable-likes section needs those rows at 15 minutes, and it
+costs no email.
 
 **Retries stay at three attempts.** At 30 minutes that is 90 before an alert is
 abandoned; the digest is the backstop and already reports it.
