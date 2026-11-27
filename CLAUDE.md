@@ -235,6 +235,14 @@ nightly `VACUUM INTO` writes a snapshot to `/backup` (a host bind mount, 14 kept
 
 The deployment decides where the snapshots go after that.
 
+Reading the live database from the host: it runs in **WAL mode**, so
+`docker cp sonde-app-1:/data/sonde.db /tmp/x.db` alone gives you a database
+that silently lacks the newest transactions — a sweep can have run and the copy
+will not show it. Copy `sonde.db-wal` alongside it, or query in place read-only
+(`docker exec -i sonde-app-1 python -c` with
+`sqlite3.connect("file:/data/sonde.db?mode=ro", uri=True)`), or take a
+`VACUUM INTO` snapshot.
+
 ## Agent skills
 
 ### Issue tracker
