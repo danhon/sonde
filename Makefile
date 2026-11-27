@@ -12,7 +12,7 @@ deploy install-units: fleet-missing
 .DEFAULT_GOAL := $(_FLEET_SAVED_GOAL)
 endif
 
-.PHONY: test run css css-check
+.PHONY: test run css css-check email-preview
 
 test:
 	uv run pytest -q
@@ -24,6 +24,11 @@ css:
 
 css-check:
 	scripts/tailwind.sh --check
+
+# Both alert emails, rendered from made-up data into a mode-700 temp folder
+# (sonde#16). The look is judged here, on a phone, before any of it is sent.
+email-preview:
+	uv run python -m sonde.notify.preview --out $$(mktemp -d -t sonde-email-preview-XXXXXX)
 
 # Run it yourself, in Docker: http://127.0.0.1:8090 (compose.override.yml).
 # Needs a .env (cp .env.example .env, then set BLUESKY_ACTOR). Its own compose

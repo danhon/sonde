@@ -109,3 +109,15 @@ def test_attach_adds_inline_parts_with_no_filename():
     assert disposition.startswith("inline")
     assert "filename" not in disposition
     assert message.get_body(("html",)) is not None
+
+
+def test_the_markup_budget_holds_for_a_twelve_person_card():
+    """The card shape is the bigger of the two, so it gets its own guard."""
+    people = []
+    for i in range(12):
+        people.append({**ROW, "did": f"did:plc:{i:02d}", "kind": "like",
+                       "subject": "at://did:plc:me/app.bsky.feed.post/1",
+                       "occurred_at": "2026-11-26T17:09:53.000Z"})
+    html = h.render_interactions(
+        people, {"at://did:plc:me/app.bsky.feed.post/1": "One post, twelve people"}, {})
+    assert len(html.encode()) < h.MARKUP_BUDGET
