@@ -93,6 +93,12 @@ re-encode is also what strips metadata from an image anyone can upload. A
 missing URL, a timeout, a failed decode or a row past the avatar budget renders
 initials instead, and the email still goes.
 
+**A verified account shows Bluesky's blue check.** Added by Dan on 2026-11-27,
+after approval. Drawn here (`email_html.check_png()`) rather than fetched, one
+28px PNG per message shown at 14px, attached only when the HTML refers to one.
+A circle rather than Bluesky's scalloped seal: at 14px, a faithful trace would
+be a binary asset in the repo for one icon.
+
 **No dark variant.** Gmail will invert what we send and there is nothing to do
 about it, so the design is one light layout that survives inversion: no pure
 white, no pure black, red used for text and rules rather than fills.
